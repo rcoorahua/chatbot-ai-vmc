@@ -1,0 +1,26 @@
+# Entorno dev 100% local (decision T5, PLAN.md §5): sin cuenta AWS ni credenciales reales.
+# La API corre como uvicorn directo; los workers como script local consumiendo de LocalStack.
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:latest # imagen oficial de AWS
+    container_name: chatbot-dynamodb
+    # -sharedDb es obligatorio: sin el, DynamoDB Local crea una base distinta
+    # por par de credenciales y las tablas "desaparecen" entre ejecuciones.
+    # -inMemory evita el volumen: los datos de dev se pierden al reiniciar el
+    # contenedor, que es lo que queremos aqui (el script que crea las 5 tablas
+    # del MVP llega en F1). Un volumen montado se crea como root y el
+    # proceso, que corre como uid 1000, no puede escribir su archivo SQLite.
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+    working_dir: /home/dynamodblocal
+    ports:
+      - "8001:8000" # host 8001 para no chocar con uvicorn en 8000
+
+  # AWS no publica imagenes oficiales locales de SQS/S3; LocalStack community los cubre
+  # en un solo contenedor (alternativa descartada: elasticmq + MinIO, dos contenedores).
+  localstack:
+    image: localstack/localstack:latest
+    container_name: chatbot-localstack
+    environment:
+      - SERVICES=sqs,s3
+    ports:
+      - "4566:4566" # endpoint unico para sqs y s3 (endpoint_url en .env)

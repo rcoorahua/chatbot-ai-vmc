@@ -1,0 +1,11 @@
+{
+  "app": "python app.py",
+  "watch": {
+    "include": ["../backend/**"],
+    "exclude": ["**/__pycache__/**", "**/.venv/**"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}

@@ -1,0 +1,67 @@
+# CD — MAQUETADO Y APAGADO (if: false) hasta cerrar PLAN.md §6 con el equipo AWS.
+#
+# Para activarlo hace falta (en este orden):
+#   1. Cuenta(s) AWS + region + `cdk bootstrap` (PLAN.md §6.1-6.2).
+#   2. Un rol IAM para GitHub OIDC por entorno, con confianza en este repo y permiso
+#      sts:AssumeRole sobre arn:aws:iam::*:role/cdk-* (PLAN.md §6.3). SIN access keys en secrets.
+#   3. Variables de repo: AWS_STAGE_DEPLOY_ROLE_ARN, AWS_PROD_DEPLOY_ROLE_ARN, AWS_REGION.
+#   4. Environments en GitHub: `stage` (sin gate) y `prod` (required reviewers).
+#   5. Quitar los `if: false` de abajo.
+#
+# Mapeo rama → entorno AWS:  develop → stage  ·  main → prod  (dev es local, no se despliega).
+name: deploy
+
+on:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+  id-token: write # OIDC hacia AWS
+
+jobs:
+  deploy-stage:
+    if: false # ← BLOQUEADO: activar al cerrar PLAN.md §6
+    runs-on: ubuntu-latest
+    environment: stage
+    steps:
+      - uses: actions/checkout@v4
+        if: github.ref == 'refs/heads/develop'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_STAGE_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: pip install -r infra/requirements.txt
+      - run: npx -y aws-cdk@2 deploy -c stage=stage --require-approval never
+        working-directory: infra
+
+  deploy-prod:
+    if: false # ← BLOQUEADO: activar al cerrar PLAN.md §6 + environment `prod` con reviewers
+    runs-on: ubuntu-latest
+    environment: prod # gate manual: required reviewers aprueban aqui
+    steps:
+      - uses: actions/checkout@v4
+        if: github.ref == 'refs/heads/main'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: pip install -r infra/requirements.txt
+      - run: npx -y aws-cdk@2 diff -c stage=prod
+        working-directory: infra
+      - run: npx -y aws-cdk@2 deploy -c stage=prod --require-approval never
+        working-directory: infra

@@ -1,0 +1,41 @@
+[project]
+name = "chatbot-ai-vmc"
+version = "0.2.0"
+description = "Subastin - plataforma de atencion propia de VMC (backend serverless del MVP)"
+requires-python = ">=3.12"
+# OJO: lo que CDK bundlea en las Lambdas es backend/requirements.txt. Este archivo define el
+# entorno LOCAL de desarrollo (mismas deps runtime + uvicorn + tooling). Mantener en sync.
+dependencies = [
+    "fastapi",
+    "mangum",
+    "uvicorn[standard]",
+    "pydantic-settings",
+    "boto3",
+    "httpx",
+    "anthropic",
+    "google-genai",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+# Sin esto, setuptools ve varios directorios top-level (backend, infra, tests) y aborta.
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# .claude/hooks contiene codigo vendoreado (hook de seguridad, MIT) que no se reformatea.
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Depends()/Query() en los defaults es el patron idiomatico de FastAPI.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

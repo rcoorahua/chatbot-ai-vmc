@@ -1,0 +1,10 @@
+# Dependencias que PythonFunction bundlea dentro de las Lambdas (TD-005: si esto supera
+# ~250 MB descomprimido, migrar a DockerImageFunction).
+fastapi
+mangum
+pydantic-settings
+boto3
+httpx
+anthropic          # Haiku (claude-haiku-4-5) — clasificacion/orquestacion (T9; acceso TD-002)
+google-genai       # Gemini — redaccion (T9)
+# pinecone         # habilitar en F3 (RAG)
