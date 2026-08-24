@@ -5,6 +5,7 @@ on:
   pull_request:
   push:
     branches: [main, develop]
+  workflow_dispatch: # permite re-correr el CI a mano desde la pestana Actions
 
 permissions:
   contents: read
