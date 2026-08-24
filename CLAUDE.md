@@ -13,10 +13,10 @@ DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).**
   abiertas, criterio de aceptación primero, autonomía acotada (cuándo parar y escalar).
 - **testing**: después de cada implementación — suite COMPLETA en verde + evaluar ampliar tests
   a lo nuevo (default sí).
-- **commit**: TBD adaptado — `develop` = trunk de integración (deploy → stage), `main` =
-  producción protegida (deploy → prod, PR desde develop), ramas `feature/`/`fix/` ≤ 2–3 días;
-  Conventional Commits (`<type>(scope): descripción`) con trazabilidad `Implementa RF-xxx` /
-  `Cierra D-xxx`.
+- **commit**: protocolo "implementa X" = pull develop → rama `feature/`/`fix/` → spec-driven →
+  implementar → tests en verde → push → PR a `develop` (nunca push directo). `develop` = trunk
+  (deploy → stage), `main` = producción protegida (PR de release, deploy → prod). Conventional
+  Commits con trazabilidad `Implementa RF-xxx` / `Cierra D-xxx`.
 - **deploy**: CDK stage/prod con precondiciones; prod solo con confirmación explícita.
 
 **Especializadas (cargar según el tema):** `llm-cost-optimizer` (toda llamada IA: AIUsage,

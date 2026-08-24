@@ -269,6 +269,15 @@ cdk destroy -c stage=stage
 - Contendrá tres superficies: widget de chat embebible en VMC (mecánica de embed depende de
   **D-001**), app del asesor (login Cognito) y dashboard.
 
+### Flujo de ramas y CI/CD (detalle en las skills `commit` y `ci-cd`)
+
+- Repo: `https://github.com/rcoorahua/chatbot-ai-vmc`. Ramas `feature/*` / `fix/*` (≤ 2–3 días)
+  → PR a **`develop`** (trunk de integración) → PR de release a **`main`** (protegida).
+- **CI** (`.github/workflows/ci.yml`): ruff + pytest (con dynamodb-local/localstack como
+  services) + `cdk synth` — corre en todo PR y push a develop/main, **sin credenciales AWS**.
+- **CD** (`.github/workflows/deploy.yml`): develop → stage, main → prod (gate de reviewers), con
+  OIDC. Maquetado y **apagado (`if: false`) hasta cerrar §6**.
+
 ---
 
 ## 6. Qué solicitar al equipo de AWS (keys y accesos)
@@ -346,6 +355,8 @@ chatbot-ai-vmc/
 │   └── stacks/
 │       └── subastin_stack.py   # tablas, colas, lambdas, HTTP API, Cognito, S3, alarmas
 ├── frontend/                   # Next.js (App Router, TS, Tailwind) — vacío por ahora
+├── tests/                      # pytest (smoke hoy; cada fase agrega los tests de sus AC)
+├── .github/workflows/          # ci.yml (ruff·pytest·synth en PRs) · deploy.yml (CD maquetado, apagado hasta §6)
 ├── docker-compose.yml          # dev local: dynamodb-local + localstack (sqs, s3)
 ├── .claude/                    # skills (spec-driven, testing, commit, deploy, llm-cost-optimizer,
 │                               #   rag-architect, prompt-governance, ci-cd, docker-dev,
