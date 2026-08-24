@@ -278,6 +278,41 @@ cdk destroy -c stage=stage
 - **CD** (`.github/workflows/deploy.yml`): develop → stage, main → prod (gate de reviewers), con
   OIDC. Maquetado y **apagado (`if: false`) hasta cerrar §6**.
 
+**Estado de las protecciones** (configurado el 2026-08-24): default branch `develop`, borrado de
+rama al mergear, environments `stage` y `prod` creados. La **protección de ramas del servidor no
+está activa**: GitHub no la permite en repos privados con plan Free (403 `Upgrade to GitHub
+Pro`), y tampoco los rulesets ni los required reviewers del environment `prod`. Sustituto local:
+el hook versionado `.githooks/pre-push` bloquea pushes directos a `main`/`develop`
+(`git config core.hooksPath .githooks` una vez por clon).
+
+Al pasar a GitHub Pro (o mover el repo a una organización con plan Team), activar en el servidor:
+
+```bash
+export GITHUB_TOKEN=<token>          # solo en la terminal, nunca en un archivo
+R=https://api.github.com/repos/rcoorahua/chatbot-ai-vmc
+H=(-H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json")
+
+curl -s -X PUT "${H[@]}" $R/branches/main/protection -d '{
+  "required_status_checks":{"strict":true,"contexts":["lint","test","synth"]},
+  "enforce_admins":true,
+  "required_pull_request_reviews":{"required_approving_review_count":0,"dismiss_stale_reviews":true},
+  "restrictions":null,"allow_force_pushes":false,"allow_deletions":false,
+  "required_conversation_resolution":true}'
+
+curl -s -X PUT "${H[@]}" $R/branches/develop/protection -d '{
+  "required_status_checks":{"strict":true,"contexts":["lint","test","synth"]},
+  "enforce_admins":false,
+  "required_pull_request_reviews":{"required_approving_review_count":0},
+  "restrictions":null,"allow_force_pushes":false,"allow_deletions":false}'
+
+# gate manual de prod (requiere Pro): reviewers en el environment
+UID=$(curl -s "${H[@]}" https://api.github.com/users/rcoorahua | grep -m1 '"id"' | tr -dc 0-9)
+curl -s -X PUT "${H[@]}" $R/environments/prod -d "{\"reviewers\":[{\"type\":\"User\",\"id\":$UID}]}"
+```
+
+`required_approving_review_count: 0` es deliberado: siendo un solo dev, GitHub no permite aprobar
+el PR propio; el gate real es el CI en verde.
+
 ---
 
 ## 6. Qué solicitar al equipo de AWS (keys y accesos)
