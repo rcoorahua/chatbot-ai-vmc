@@ -94,6 +94,11 @@ feature/<slug> · fix/<slug>  ──PR──►  develop  ──deploy──► 
 ```
 
 Cada cambio nace de un requerimiento del spec, trae sus tests y pasa el CI antes de integrarse.
+Un hook local impide pushes directos a `main`/`develop` — actívalo al clonar:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ---
 

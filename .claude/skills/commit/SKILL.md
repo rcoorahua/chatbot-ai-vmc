@@ -57,6 +57,16 @@ feat(conversations): mensaje fijo de espera una sola vez por periodo
 Implementa RF-027 / AC-004.
 ```
 
+## Protecciones activas (y su limite)
+
+- **Hook local `pre-push`** (`.githooks/pre-push`, activar con
+  `git config core.hooksPath .githooks` una vez por clon): bloquea pushes directos a `main` y
+  `develop`. Emergencias: `ALLOW_DIRECT_PUSH=1 git push ...`.
+- **En GitHub**: default branch `develop`, borrado de rama al mergear, environments `stage` y
+  `prod` creados. La **protección de ramas del servidor NO está activa**: repo privado con plan
+  Free no la permite (403 "Upgrade to GitHub Pro"). Con Pro o una organización Team se activa —
+  los comandos están en PLAN.md §5. Mientras tanto la disciplina la sostienen el hook y el CI.
+
 ## Reglas de esta base
 
 - Commitear/pushear solo cuando el usuario lo pida; al hacerlo, este protocolo completo.
