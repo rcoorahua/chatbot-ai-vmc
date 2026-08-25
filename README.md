@@ -71,29 +71,116 @@ Esqueleto pre-desarrollo: existen la estructura, la infra como código, el CI y 
 **los endpoints y la lógica se implementan fase por fase** (PLAN.md §8) a medida que se cierran
 las decisiones de negocio (20 `D-xxx`, responsables Silvana + Julio) y se obtiene la cuenta AWS.
 
-## Desarrollo local (sin cuenta AWS)
+## Cómo correr el proyecto (local, sin cuenta AWS)
 
-```bash
-docker compose up -d            # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
-python -m venv .venv            # luego activar: .venv\Scripts\activate (Windows)
-pip install -e ".[dev]"         # entorno local (las Lambdas bundlean backend/requirements.txt)
-cp .env.example .env            # y completar (los valores de dev están en los comentarios)
+Requisitos: **Docker Desktop**, **Python 3.12**, **Node 22** (solo para el frontend) y,
+opcionalmente, **AWS CLI** si quieres consultar los datos a mano.
 
-python -m scripts.local_setup   # crea las 5 tablas, las 2 colas y el bucket
-python -m scripts.seed_data     # carga conversaciones, mensajes, tickets y consumo de IA de prueba
+### Instalación (una sola vez)
 
-python -m ruff check . && python -m pytest -q
-# cuando la API exista: uvicorn backend.api.main:app --reload --port 8000
+```powershell
+git clone https://github.com/rcoorahua/chatbot-ai-vmc.git
+cd chatbot-ai-vmc
+git config core.hooksPath .githooks     # bloquea pushes directos a main/develop
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1               # Linux/macOS: source .venv/bin/activate
+pip install -e ".[dev]"
+
+cd frontend; npm install; cd ..
 ```
 
-Ambos scripts son idempotentes. DynamoDB local corre en memoria, así que **hay que volver a
-ejecutarlos cada vez que se reinician los contenedores**.
+### Arranque diario
 
-Los datos de prueba reproducen los cuatro estados de conversación del spec —bot atendiendo,
-esperando asesor, en atención y cerrada— con sus mensajes, eventos de auditoría, una imagen,
-tickets y registros de consumo de IA. `tests/test_dynamo_queries.py` los usa para verificar
-cada patrón de acceso contra DynamoDB real: si un índice estuviera mal definido, falla ahí y no
-en producción.
+```powershell
+docker compose up -d              # DynamoDB (:8001) + LocalStack SQS/S3 (:4566)
+python -m scripts.local_setup     # crea las 5 tablas, las 2 colas y el bucket
+python -m scripts.seed_data       # carga los datos de prueba
+
+uvicorn backend.api.main:app --reload --port 8000
+```
+
+- API y documentación interactiva: **<http://localhost:8000/docs>** (Swagger UI, con botón
+  *Try it out* para lanzar llamadas). Hoy solo publica `GET /health`: los endpoints se
+  implementan fase por fase.
+- Frontend (en otra terminal): `cd frontend; npm run dev` → <http://localhost:3000>
+- Al terminar: `Ctrl+C` y `docker compose down`.
+
+Los dos scripts son idempotentes y **hay que volver a ejecutarlos cada vez que se reinician los
+contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse.
+
+### Verificar que todo está bien
+
+```powershell
+python -m ruff check .
+python -m pytest -q               # 18 pruebas, las mismas que corre el CI
+```
+
+### Consultar los datos a mano (AWS CLI)
+
+Los scripts y las pruebas **no necesitan configuración**: traen los valores locales por defecto.
+El AWS CLI sí pide credenciales, así que se configura **un perfil una sola vez** — más fiable que
+exportar variables en cada terminal, y deja los comandos cortos:
+
+```powershell
+aws configure set profile.subastin-local.region us-east-1
+aws configure set profile.subastin-local.aws_access_key_id local
+aws configure set profile.subastin-local.aws_secret_access_key local
+aws configure set profile.subastin-local.services subastin-local-endpoints
+```
+
+Y añade este bloque al final de `~/.aws/config` (así el CLI apunta solo a los contenedores y no
+hay que escribir `--endpoint-url` en cada comando):
+
+```ini
+[services subastin-local-endpoints]
+dynamodb =
+  endpoint_url = http://localhost:8001
+sqs =
+  endpoint_url = http://localhost:4566
+s3 =
+  endpoint_url = http://localhost:4566
+```
+
+Hecho eso, todos los comandos son de esta forma:
+
+```powershell
+# Ver el contenido completo de cada tabla
+aws --profile subastin-local dynamodb scan --table-name subastin-dev-conversations --query 'Items[].[conversation_id.S,status.S,user_name.S,assigned_advisor_id.S]' --output table
+aws --profile subastin-local dynamodb scan --table-name subastin-dev-messages      --query 'Items[].[conversation_id.S,created_at.S,sender_type.S,content.S]' --output table
+aws --profile subastin-local dynamodb scan --table-name subastin-dev-tickets       --query 'Items[].[ticket_id.S,conversation_id.S,status.S,handoff_reason.S]' --output table
+aws --profile subastin-local dynamodb scan --table-name subastin-dev-advisors      --query 'Items[].[advisor_id.S,name.S,status.S,cognito_sub.S]' --output table
+aws --profile subastin-local dynamodb scan --table-name subastin-dev-ai-usage      --query 'Items[].[conversation_id.S,execution_type.S,provider.S,estimated_cost_usd.N]' --output table
+
+# Una conversación por su id
+aws --profile subastin-local dynamodb get-item --table-name subastin-dev-conversations --key '{\"conversation_id\":{\"S\":\"conv_002\"}}' --output json
+
+# La bandeja del asesor (índice gsi2_inbox; `status` es palabra reservada, de ahí el alias #s)
+aws --profile subastin-local dynamodb query --table-name subastin-dev-conversations --index-name gsi2_inbox --key-condition-expression "#s = :e" --expression-attribute-names '{\"#s\":\"status\"}' --expression-attribute-values '{\":e\":{\"S\":\"PENDING_ADVISOR\"}}' --output table
+
+# El hilo de mensajes de una conversación, en orden cronológico
+aws --profile subastin-local dynamodb query --table-name subastin-dev-messages --key-condition-expression "conversation_id = :c" --expression-attribute-values '{\":c\":{\"S\":\"conv_002\"}}' --query 'Items[].[created_at.S,sender_type.S,content.S]' --output table
+```
+
+> **En macOS y Linux** quita las barras invertidas de los JSON: PowerShell las necesita para
+> escapar las comillas, bash no. Por ejemplo `--key '{"conversation_id":{"S":"conv_002"}}'`.
+
+`scan` lee la tabla entera: sirve para explorar en local, pero el código de la aplicación siempre
+usa `query` sobre una clave o un índice — que es justo lo que verifican las pruebas.
+
+Nota sobre `.env`: la plantilla `.env.example` es para cuando el código de la aplicación necesite
+configuración (los mismos nombres de variable que inyecta CDK en AWS). Los scripts y las pruebas
+de hoy funcionan sin ella.
+
+### Si algo falla
+
+| Síntoma | Solución |
+|---|---|
+| `ModuleNotFoundError` | Falta activar el entorno: `.venv\Scripts\Activate.ps1` |
+| Las pruebas no encuentran las tablas | `docker compose up -d` y volver a correr `scripts.local_setup` |
+| `WinError 10013` o *address already in use* al arrancar uvicorn | El puerto está ocupado: `Get-NetTCPConnection -LocalPort 8000 \| Select OwningProcess` y `Stop-Process -Id <id> -Force`, o usar `--port 8080` |
+| Errores de Docker en CDK | Docker Desktop no está corriendo |
+| Rechazo al hacer push a `develop`/`main` | Es correcto: hay que abrir un pull request |
 
 ## Flujo de trabajo
 
