@@ -39,3 +39,11 @@ ignore = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # mangum 0.22.0 (la ultima publicada) llama asyncio.get_event_loop() al construir el
+    # adaptador, y Python >= 3.12 lo marca como deprecado. Es ruido de un tercero, no un
+    # problema nuestro: mangum ya captura el RuntimeError que Python 3.14 lanzara en su lugar.
+    # Filtro acotado al mensaje y al modulo exactos — cualquier otro aviso sigue visible.
+    # Revisar al actualizar mangum: si lo corrigen, esta linea sobra.
+    "ignore:There is no current event loop:DeprecationWarning:mangum.adapter",
+]
