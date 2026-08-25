@@ -29,7 +29,7 @@ viven en `.github/workflows/deploy.yml` **bloqueados con `if: false` hasta cerra
 - **Seguridad de inputs**: jamás interpolar `${{ github.event.* }}` (títulos, bodies, branch
   names) directo en `run:` — pasar por `env:` con comillas (el hook de la skill
   `security-guidance` también lo vigila).
-- Pin de versiones: actions por versión mayor (`actions/checkout@v4`), imágenes de servicio por
+- Pin de versiones: actions por versión mayor, imágenes de servicio por
   tag, Python por `3.12`.
 - Cache de dependencias (`actions/setup-python` con `cache: pip`, `setup-node` con
   `cache: npm`).
@@ -38,6 +38,10 @@ viven en `.github/workflows/deploy.yml` **bloqueados con `if: false` hasta cerra
 - Secretos de CI: solo los ARNs/roles de AWS vía OIDC; API keys de IA NUNCA en CI (los tests
   las mockean — skill `testing`).
 - Todo cambio de workflow se valida verde en el PR que lo introduce, no después del merge.
+- **Avisos de runtime deprecado** ("Node.js N is deprecated"): GitHub los muestra como
+  *annotations* del run. Se arreglan subiendo la versión mayor de la acción, no ignorándolos —
+  cuando el runtime se retira del todo, el workflow deja de correr. Consultar la versión vigente
+  con la API (`/repos/actions/checkout/releases/latest`) en vez de asumirla.
 
 ## Validación antes de mergear un workflow
 

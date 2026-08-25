@@ -25,16 +25,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: stage
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.ref == 'refs/heads/develop'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_STAGE_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -47,16 +47,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod # gate manual: required reviewers aprueban aqui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.ref == 'refs/heads/main'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_PROD_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
