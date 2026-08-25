@@ -50,7 +50,8 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 | `backend/` | Código de las Lambdas. Entradas delgadas (`api/`, `workers/`) → dominio (`conversations`, `tickets`, `advisors`) → integraciones hoja (`agent`, `catalog`, `notifications`, `images`) → `core` |
 | `infra/` | Stacks CDK v2 (Python): tablas, colas, Lambdas, HTTP API, Cognito, S3. Un stack por stage (`-c stage=stage` o `prod`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind). Se despliega fuera de CDK (Vercel/Amplify) |
-| `tests/` | Suite pytest (hoy smoke tests; cada fase agrega los tests de sus criterios de aceptación) |
+| `scripts/` | Utilidades de desarrollo local: creación de tablas/colas/bucket y datos de prueba |
+| `tests/` | Suite pytest, incluidas las pruebas de los patrones de acceso a DynamoDB contra servicios locales reales |
 | `.github/workflows/` | `ci.yml` (lint · tests · cdk synth, sin credenciales AWS) y `deploy.yml` (CD maquetado, apagado hasta tener cuenta AWS) |
 | `.claude/` | 12 skills de metodología (spec-driven, testing, commit, deploy, llm-cost-optimizer, rag-architect, prompt-governance, ci-cd, docker-dev, security-guidance, skill-auditor, write-a-skill) + hook de seguridad |
 
@@ -77,9 +78,22 @@ docker compose up -d            # dynamodb-local (:8001) + localstack sqs/s3 (:4
 python -m venv .venv            # luego activar: .venv\Scripts\activate (Windows)
 pip install -e ".[dev]"         # entorno local (las Lambdas bundlean backend/requirements.txt)
 cp .env.example .env            # y completar (los valores de dev están en los comentarios)
+
+python -m scripts.local_setup   # crea las 5 tablas, las 2 colas y el bucket
+python -m scripts.seed_data     # carga conversaciones, mensajes, tickets y consumo de IA de prueba
+
 python -m ruff check . && python -m pytest -q
 # cuando la API exista: uvicorn backend.api.main:app --reload --port 8000
 ```
+
+Ambos scripts son idempotentes. DynamoDB local corre en memoria, así que **hay que volver a
+ejecutarlos cada vez que se reinician los contenedores**.
+
+Los datos de prueba reproducen los cuatro estados de conversación del spec —bot atendiendo,
+esperando asesor, en atención y cerrada— con sus mensajes, eventos de auditoría, una imagen,
+tickets y registros de consumo de IA. `tests/test_dynamo_queries.py` los usa para verificar
+cada patrón de acceso contra DynamoDB real: si un índice estuviera mal definido, falla ahí y no
+en producción.
 
 ## Flujo de trabajo
 
