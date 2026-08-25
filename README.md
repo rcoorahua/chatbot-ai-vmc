@@ -78,9 +78,22 @@ docker compose up -d            # dynamodb-local (:8001) + localstack sqs/s3 (:4
 python -m venv .venv            # luego activar: .venv\Scripts\activate (Windows)
 pip install -e ".[dev]"         # entorno local (las Lambdas bundlean backend/requirements.txt)
 cp .env.example .env            # y completar (los valores de dev están en los comentarios)
+
+python -m scripts.local_setup   # crea las 5 tablas, las 2 colas y el bucket
+python -m scripts.seed_data     # carga conversaciones, mensajes, tickets y consumo de IA de prueba
+
 python -m ruff check . && python -m pytest -q
 # cuando la API exista: uvicorn backend.api.main:app --reload --port 8000
 ```
+
+Ambos scripts son idempotentes. DynamoDB local corre en memoria, así que **hay que volver a
+ejecutarlos cada vez que se reinician los contenedores**.
+
+Los datos de prueba reproducen los cuatro estados de conversación del spec —bot atendiendo,
+esperando asesor, en atención y cerrada— con sus mensajes, eventos de auditoría, una imagen,
+tickets y registros de consumo de IA. `tests/test_dynamo_queries.py` los usa para verificar
+cada patrón de acceso contra DynamoDB real: si un índice estuviera mal definido, falla ahí y no
+en producción.
 
 ## Flujo de trabajo
 
