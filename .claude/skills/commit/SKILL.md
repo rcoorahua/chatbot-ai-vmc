@@ -57,15 +57,19 @@ feat(conversations): mensaje fijo de espera una sola vez por periodo
 Implementa RF-027 / AC-004.
 ```
 
-## Protecciones activas (y su limite)
+## Protecciones activas
 
+- **En GitHub** (repo público, lo que habilita estas reglas en plan Free): `main` y `develop`
+  exigen pull request y los checks `lint`, `test`, `synth` en verde, con la rama al día; force
+  push y borrado bloqueados. En `main` la regla aplica también a administradores — **nadie
+  puede saltarla, ni con permisos de admin**. En `develop` no, para permitir un hotfix.
+- **Environment `prod`**: aprobación manual antes de cualquier despliegue a producción.
 - **Hook local `pre-push`** (`.githooks/pre-push`, activar con
-  `git config core.hooksPath .githooks` una vez por clon): bloquea pushes directos a `main` y
-  `develop`. Emergencias: `ALLOW_DIRECT_PUSH=1 git push ...`.
-- **En GitHub**: default branch `develop`, borrado de rama al mergear, environments `stage` y
-  `prod` creados. La **protección de ramas del servidor NO está activa**: repo privado con plan
-  Free no la permite (403 "Upgrade to GitHub Pro"). Con Pro o una organización Team se activa —
-  los comandos están en PLAN.md §5. Mientras tanto la disciplina la sostienen el hook y el CI.
+  `git config core.hooksPath .githooks`): bloquea el push directo antes de llegar al servidor.
+  Emergencias: `ALLOW_DIRECT_PUSH=1 git push ...`.
+
+Consecuencia práctica: un PR **no se puede mergear** hasta que el CI pase. Si un check falla,
+se arregla en la misma rama y se vuelve a pushear; no hay atajo.
 
 ## Reglas de esta base
 
