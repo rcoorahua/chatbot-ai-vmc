@@ -18,3 +18,6 @@ dist/
 
 # Docker (datos de DynamoDB Local)
 docker/dynamodb-data/
+
+# Chuleta personal de comandos (no se versiona)
+my-usage.md
