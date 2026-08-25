@@ -50,7 +50,8 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 | `backend/` | Código de las Lambdas. Entradas delgadas (`api/`, `workers/`) → dominio (`conversations`, `tickets`, `advisors`) → integraciones hoja (`agent`, `catalog`, `notifications`, `images`) → `core` |
 | `infra/` | Stacks CDK v2 (Python): tablas, colas, Lambdas, HTTP API, Cognito, S3. Un stack por stage (`-c stage=stage` o `prod`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind). Se despliega fuera de CDK (Vercel/Amplify) |
-| `tests/` | Suite pytest (hoy smoke tests; cada fase agrega los tests de sus criterios de aceptación) |
+| `scripts/` | Utilidades de desarrollo local: creación de tablas/colas/bucket y datos de prueba |
+| `tests/` | Suite pytest, incluidas las pruebas de los patrones de acceso a DynamoDB contra servicios locales reales |
 | `.github/workflows/` | `ci.yml` (lint · tests · cdk synth, sin credenciales AWS) y `deploy.yml` (CD maquetado, apagado hasta tener cuenta AWS) |
 | `.claude/` | 12 skills de metodología (spec-driven, testing, commit, deploy, llm-cost-optimizer, rag-architect, prompt-governance, ci-cd, docker-dev, security-guidance, skill-auditor, write-a-skill) + hook de seguridad |
 
