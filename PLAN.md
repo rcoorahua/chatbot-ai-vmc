@@ -278,6 +278,33 @@ cdk destroy -c stage=stage
 - **CD** (`.github/workflows/deploy.yml`): develop → stage, main → prod (gate de reviewers), con
   OIDC. Maquetado y **apagado (`if: false`) hasta cerrar §6**.
 
+**Estado de las protecciones** (activas desde 2026-08-25):
+
+| Regla | `main` | `develop` |
+|---|---|---|
+| Pull request obligatorio | sí | sí |
+| Checks requeridos para mergear | `lint`, `test`, `synth` | `lint`, `test`, `synth` |
+| Rama al día con la base (`strict`) | sí | sí |
+| Force push / borrado de rama | bloqueados | bloqueados |
+| Aplica también a administradores | sí | no (permite hotfix) |
+
+Además: default branch `develop`, borrado automático de la rama al mergear, y el environment
+`prod` con **aprobación manual** (ningún despliegue a producción avanza sin revisión humana).
+Complemento local: el hook versionado `.githooks/pre-push` bloquea pushes directos a
+`main`/`develop` antes de salir de la máquina (`git config core.hooksPath .githooks` una vez por
+clon).
+
+**Condición que las habilita:** el repositorio es **público**. GitHub no ofrece protección de
+ramas en repos privados con plan Free — se eligió publicidad sobre plan de pago para el MVP.
+Consecuencia asumida: `REQUERIMENTS.md` (alcance funcional, reglas de negocio y decisiones
+internas de VMC) es visible públicamente. Si el repo vuelve a privado, las protecciones se
+desactivan solas y queda únicamente el hook local + el CI; la alternativa que conserva ambas
+cosas es moverlo a una organización con plan Team (ver TD-004 y la nota de propiedad del código).
+
+
+`required_approving_review_count: 0` es deliberado: siendo un solo dev, GitHub no permite aprobar
+el PR propio; el gate real es el CI en verde.
+
 ---
 
 ## 6. Qué solicitar al equipo de AWS (keys y accesos)

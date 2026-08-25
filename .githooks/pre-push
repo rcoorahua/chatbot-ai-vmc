@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Bloquea pushes directos a main y develop: todo entra por Pull Request (skill `commit`).
+#
+# Sustituye a la proteccion de ramas de GitHub, que NO esta disponible en repos privados
+# con plan Free. Activarlo (una vez por clon):   git config core.hooksPath .githooks
+#
+# Escape hatch para emergencias (dejar rastro de por que se uso):
+#   ALLOW_DIRECT_PUSH=1 git push origin develop
+
+protegidas="main develop"
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    rama="${remote_ref#refs/heads/}"
+    for p in $protegidas; do
+        if [ "$rama" = "$p" ]; then
+            if [ "$ALLOW_DIRECT_PUSH" = "1" ]; then
+                echo "AVISO: push directo a '$rama' permitido por ALLOW_DIRECT_PUSH=1." >&2
+                continue
+            fi
+            echo "" >&2
+            echo "  BLOQUEADO: push directo a '$rama'." >&2
+            echo "" >&2
+            echo "  El flujo del repo (.claude/skills/commit) es:" >&2
+            echo "    git checkout develop && git pull origin develop" >&2
+            echo "    git checkout -b feature/<slug>     # o fix/, chore/, docs/" >&2
+            echo "    ...implementar + tests en verde..." >&2
+            echo "    git push -u origin feature/<slug>  # y abrir PR a develop" >&2
+            echo "" >&2
+            echo "  Emergencia: ALLOW_DIRECT_PUSH=1 git push ..." >&2
+            echo "" >&2
+            exit 1
+        fi
+    done
+done
+
+exit 0
