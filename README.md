@@ -64,6 +64,9 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
    fases.
 3. **[CLAUDE.md](CLAUDE.md)** — registro vivo de decisiones abiertas/cerradas y metodología.
    Regla central: **nada que dependa de una decisión abierta se implementa asumiendo un valor.**
+4. **[BACKLOG.md](BACKLOG.md)** — el trabajo dividido en tickets tomables, con sus dependencias:
+   qué se puede empezar hoy, qué bloquea cada decisión pendiente y cómo repartirlo entre dos
+   personas sin pisarse.
 
 ## Estado actual
 
