@@ -4,7 +4,8 @@ Plataforma de atención propia de VMC que reemplaza a Intercom: chat web con IA
 (Haiku clasifica, Gemini redacta, RAG en Pinecone, catálogo HERALD) y handoff a asesores humanos.
 Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con CDK v2 Python.
 **Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
-DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).**
+DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
+dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repartir trabajo.
 
 ## Metodología (skills en `.claude/skills/`)
 
