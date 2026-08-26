@@ -1,11 +1,30 @@
 # SUBASTÍN
 
-Documentación del MVP de Subastín.
+Documentación del MVP de Subastín. **Fuente de verdad funcional del proyecto**: todo lo que se
+implementa se mapea a un requerimiento de este documento.
 
-Este README consolida:
+Este documento consolida:
 
 1. **Modelo DynamoDB para el MVP — Versión 1.0**
 2. **Especificación de Requerimientos MVP — Spec-Driven, Versión 0.1**
+
+## Control de versiones
+
+| | |
+|---|---|
+| Última actualización | **26/08/2026** |
+| Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx` |
+| Decisiones abiertas | 20 (`D-001`…`D-020`), responsables Silvana + Julio — §6 |
+| Pendiente sobre el modelo | 5 ajustes detectados en la revisión de arquitectura, aún no incorporados a la v1.0 — ver §1.11 |
+
+| Fecha | Cambio |
+|---|---|
+| 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
+| 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
+
+**Documentos relacionados:** [PLAN.md](PLAN.md) traduce esto a arquitectura ·
+[BACKLOG.md](BACKLOG.md) lo divide en tickets · [CLAUDE.md](CLAUDE.md) registra el estado vivo de
+las decisiones.
 
 ---
 
@@ -266,6 +285,27 @@ SK = created_at#execution_id
 | Campos VMC/JWT | Define qué `user_*` se copia en Conversations | Silvana + Julio + Bruce |
 | Procesamiento de imágenes | Define metadata adicional en `attachment` y límites | Silvana + Julio |
 | Métricas del dashboard | Puede requerir GSIs o agregados adicionales, no necesariamente nuevas tablas | Silvana + Julio |
+
+## 1.11 Ajustes pendientes de incorporar al modelo
+
+Al validar el modelo contra DynamoDB real (ver `tests/test_dynamo_queries.py`) se detectaron
+cinco huecos entre el modelo v1.0 y los requerimientos de §3. **No están incorporados arriba
+todavía**: requieren confirmación del equipo antes de publicar una v1.1. El detalle técnico y su
+justificación están en [PLAN.md](PLAN.md) §4.
+
+| # | Qué falta | Por qué | Impacto |
+|---|---|---|---|
+| 1 | `unread_count` en Conversations | RF-035 exige contador de no leídos en la bandeja | Atributo nuevo |
+| 2 | `wait_message_sent` en Conversations | RF-027 exige que el mensaje de espera salga una sola vez por período | Atributo nuevo |
+| 3 | `expires_at` en Messages | RF-053 aplica retención a mensajes, no solo a conversaciones | Atributo + TTL |
+| 4 | Mecanismo de idempotencia, no solo el campo | `client_message_id` existe, pero la SK lleva el `created_at` del servidor: un reintento generaría otra SK y duplicaría el mensaje. Se resuelve con transacción e item marcador `CMID#<client_message_id>` | Patrón de escritura |
+| 5 | GSI2 de Conversations con atributo *sparse* | La partición `CLOSED` crece sin límite; un atributo presente solo mientras el caso está operativo mantiene el índice acotado | **Cambia un índice — decidir antes de crear tablas en AWS** |
+
+Los cuatro primeros son atributos o patrones de escritura y se pueden añadir en cualquier
+momento. **El quinto cambia la definición de un índice**, y los índices no se pueden rellenar
+retroactivamente: si se adopta, tiene que ser antes de crear las tablas en stage.
+
+Los ajustes 1 a 4 ya están validados con pruebas automatizadas contra DynamoDB.
 
 ## 1.10 Recomendación de nombres físicos
 
