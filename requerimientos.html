@@ -129,6 +129,9 @@ input,select,textarea{font:inherit;color:inherit}
   border:1px solid var(--line-2);color:var(--text-3)}
 
 .stage{position:relative;overflow:hidden;background:var(--bg)}
+/* Arrastrar el mapa mueve la vista; sin esto el navegador selecciona el texto
+   de las tarjetas y el gesto se vuelve incomodo. */
+#graph,#graph text,.phasebar{user-select:none;-webkit-user-select:none}
 /* display:none y no opacity/visibility: con esas dos, trozos de la vista
    inactiva (chips, cabeceras de fase) seguían pintándose sobre la activa.
    La entrada se anima con keyframes, que sí funcionan al cambiar display. */
