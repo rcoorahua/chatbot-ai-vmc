@@ -651,7 +651,8 @@
 
   function renderBubble(message) {
     const mine = message.sender_type === "USER";
-    const who = message.sender_type === "ADVISOR" ? "Asesor" : TEXT.agent;
+    // El asesor firma con su nombre (metadata.sender_name, lo pone la API); si no viene, "Asesor".
+    const who = message.sender_type === "ADVISOR" ? ((message.metadata && message.metadata.sender_name) || "Asesor") : TEXT.agent;
     return h(
       "div",
       { class: "row" + (mine ? " row-mine" : "") },

@@ -108,8 +108,8 @@ cronológicamente y ventana de contexto.
 son T-05 y están bloqueadas.
 Criterio: los tests de consulta existentes pasan usando el repositorio en vez de boto3 directo.
 
-**T-03 · Módulo de asesores**
-Requerimientos: RF-006, RF-007 · Depende de: T-01 · Bloqueado por: nada
+**T-03 · Módulo de asesores** — ✅ hecho 2026-08-27 (`tests/test_advisor_api.py`)
+Requerimientos: RF-006, RF-007 · Depende de: T-01 · Cerrada: D-021 (auto-alta al primer login)
 Archivos: `backend/advisors/*`
 Qué incluye: modelo `Advisor`, repositorio (por id y por `cognito_sub`), y el servicio que
 resuelve un asesor a partir de los claims del JWT y registra `last_login_at`. Rol único `ADVISOR`,
@@ -142,9 +142,12 @@ Qué incluye: criterios de derivación, creación del ticket (tope de 5 activos 
 de la IA, mensaje de espera una sola vez, encolado de la notificación a Slack, y al cerrar: mensaje
 SYSTEM `TICKET_CLOSED` en el hilo + conversación de vuelta a `BOT_ATTENDING`.
 
-**T-08 · Endpoints del asesor**
+**T-08 · Endpoints del asesor** — ✅ mensajería hecha 2026-08-27 (`tests/test_advisor_api.py`)
 Requerimientos: RF-029..RF-039 · Depende de: T-07, T-03
-**Bloqueado por: D-010** (qué campos del usuario ve el asesor) · Requiere Cognito desplegado
+Hecho: bandeja, tomar (atómico), hilo con paginación, responder (idempotente), no leídos y cierre
+mínimo sin ticket (D-021/D-022/D-023). **Pendiente:** el cierre real del ticket (T-07) y los
+campos definitivos del usuario (**D-010** — hoy se exponen los que guarda la conversación).
+En local el authorizer se imita con `ADVISOR_DEV_AUTH=1`; en AWS requiere Cognito desplegado
 Archivos: `backend/api/routers/advisor.py`
 Qué incluye: bandeja, tomar conversación (actualización condicional, ya probada), ver hilo con
 contexto, responder, contador de no leídos, cerrar caso.
