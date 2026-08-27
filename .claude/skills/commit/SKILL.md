@@ -29,15 +29,23 @@ Remoto: `https://github.com/rcoorahua/chatbot-ai-vmc`. Ramas: `main` (producció
 10. **Release**: PR `develop → main`, título `release: <resumen>`, esperar CI y **mergear con
     squash** (sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
 
-**Squash SIEMPRE, también en el release.** Un merge normal crea un commit que solo existe en
-`main`; `develop` queda "N atrás" y tienta a un PR `main → develop` de vuelta, que invierte el
-flujo y ensucia la historia. Con squash no hay commit huérfano: el flujo es siempre en una
-dirección y no hace falta sincronizar nada. El detalle de cada cambio vive en el PR de GitHub.
+**Squash SIEMPRE, también en el release**, y el flujo va en UNA dirección: `develop → main`.
+Nunca un PR `main → develop`.
+
+`develop` y `main` SIEMPRE figuran con "N adelante / M atrás" — con squash y con merge normal.
+Es inevitable: ambos reescriben o agregan commits en el destino. **Ese número no es un problema
+y no se arregla.** Lo único que importa es que el contenido coincida:
+
+```powershell
+git diff --stat origin/main origin/develop   # vacío = ramas equivalentes, todo bien
+```
+
+Si sale vacío, no hay nada que hacer. Un PR `main → develop` para "alinear" invierte el flujo,
+mete un merge commit en el trunk y no cambia el contenido: es ruido, no una corrección.
 
 ### Comandos de PR (GitHub CLI)
 
-`gh` está en `C:\Program Files\GitHub CLI\gh.exe` y autenticado. Una terminal abierta antes de
-instalarlo no lo ve en el PATH: usar la ruta completa o abrir una nueva.
+`gh` está autenticado; una terminal abierta antes de instalarlo no lo ve en el PATH.
 
 ```powershell
 $gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
@@ -47,20 +55,13 @@ $gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
 & $gh pr merge <n> --squash                   # release a main: sin borrar develop
 ```
 
-Dos trampas verificadas: el cuerpo va **siempre en archivo** (`--body-file`) porque los
-here-strings con tablas y rutas hacen saltar filtros del shell; y `gh pr merge` escribe a stderr
-al terminar, así que el resultado se confirma con `gh pr view <n> --json state,mergedAt` antes
-de reportarlo. Sin `gh`: abrir `.../compare/develop...<rama>?expand=1` y que el usuario lo cree.
+Trampas verificadas: el cuerpo va siempre en archivo (`--body-file`) porque los here-strings con
+tablas hacen saltar filtros del shell; y `gh pr merge` escribe a stderr al terminar, así que el
+resultado se confirma con `gh pr view <n> --json state,mergedAt` antes de reportarlo.
 
 ## Conventional Commits
 
-```
-<type>[scope opcional]: <descripción>
-
-[cuerpo opcional]
-
-[footer(s) opcional(es)]
-```
+Formato `<type>[scope]: <descripción>` + cuerpo y footers opcionales.
 
 **Types**: `feat` · `fix` · `chore` · `docs` · `style` · `refactor` · `test`.
 **Scope** = módulo: `conversations`, `tickets`, `advisors`, `agent`, `catalog`, `notifications`,
@@ -76,16 +77,14 @@ de reportarlo. Sin `gh`: abrir `.../compare/develop...<rama>?expand=1` y que el 
 ## Protecciones activas
 
 - **En GitHub** (repo público, lo que habilita estas reglas en plan Free): `main` y `develop`
-  exigen pull request y los checks `lint`, `test`, `synth` en verde, con la rama al día; force
-  push y borrado bloqueados. En `main` la regla aplica también a administradores — **nadie
-  puede saltarla, ni con permisos de admin**. En `develop` no, para permitir un hotfix.
+  exigen PR y los tres checks en verde, con la rama al día; force push y borrado bloqueados. En
+  `main` aplica también a administradores — nadie la salta. En `develop` no, para un hotfix.
 - **Environment `prod`**: aprobación manual antes de cualquier despliegue a producción.
 - **Hook local `pre-push`** (`.githooks/pre-push`, activar con
   `git config core.hooksPath .githooks`): bloquea el push directo antes de llegar al servidor.
   Emergencias: `ALLOW_DIRECT_PUSH=1 git push ...`.
 
-Consecuencia práctica: un PR **no se puede mergear** hasta que el CI pase. Si un check falla,
-se arregla en la misma rama y se vuelve a pushear; no hay atajo.
+Un PR no se mergea hasta que el CI pase. Si un check falla, se arregla en la misma rama.
 
 ## Reglas de esta base
 
