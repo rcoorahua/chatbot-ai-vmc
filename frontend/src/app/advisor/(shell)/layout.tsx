@@ -49,7 +49,7 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
         </div>
         <Button variant="sm-logged-in" icon={<UserIcon />} username={CURRENT_ADVISOR.display_name} />
       </header>
-      <main className="min-w-0 flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">{children}</main>
     </div>
   );
 }

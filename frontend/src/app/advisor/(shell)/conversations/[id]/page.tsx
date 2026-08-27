@@ -9,7 +9,14 @@ import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
 import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
 import { CURRENT_ADVISOR, MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
-import { formatWaitTime, MOCK_NOW_MS } from "@/lib/format";
+import { formatWaitTime, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
+import type { Conversation, Message } from "@/lib/types";
+
+function senderLabelFor(message: Message, conversation: Conversation): string {
+  if (message.sender_type === "USER") return conversation.user_name ?? "Usuario";
+  if (message.sender_type === "ADVISOR") return CURRENT_ADVISOR.display_name;
+  return SENDER_LABEL[message.sender_type];
+}
 
 /**
  * Vista de conversación del asesor (RF-033/034/035/036/037/038). El panel contextual solo
@@ -48,7 +55,7 @@ export default function ConversationDetailPage() {
     (conversation.status === "IN_ATTENTION" || (conversation.status === "PENDING_ADVISOR" && takenByMe));
 
   return (
-    <div className="flex h-full flex-col gap-6 lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
       <section className="flex min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
         <header className="flex items-center justify-between border-b border-black/5 px-5 py-4">
           <div className="flex items-center gap-3">
@@ -66,10 +73,23 @@ export default function ConversationDetailPage() {
           {canReply && <Button variant="outline">Cerrar caso</Button>}
         </header>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-          {messages.map((message) => (
-            <MessageBubble key={message.message_id} message={message} />
-          ))}
+        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
+          {messages.map((message, i) => {
+            const prev = messages[i - 1];
+            const showLabel =
+              message.message_type !== "SYSTEM" &&
+              (!prev ||
+                prev.message_type === "SYSTEM" ||
+                prev.sender_type !== message.sender_type ||
+                prev.sender_id !== message.sender_id);
+            return (
+              <MessageBubble
+                key={message.message_id}
+                message={message}
+                senderLabel={showLabel ? senderLabelFor(message, conversation) : undefined}
+              />
+            );
+          })}
 
           {retryFailed && canReply && (
             <div className="flex flex-col items-end gap-1">

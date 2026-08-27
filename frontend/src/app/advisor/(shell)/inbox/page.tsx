@@ -45,19 +45,21 @@ export default function InboxPage() {
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold text-[#191C1C]">Bandeja de conversaciones</h1>
-        <TabSelector
-          options={FILTERS.map(
-            (f) =>
-              `${f.label} (${
-                f.statuses === null
-                  ? MOCK_CONVERSATIONS.length
-                  : MOCK_CONVERSATIONS.filter((c) => f.statuses!.includes(c.status)).length
-              })`,
-          )}
-          value={filterIndex}
-          onChange={setFilterIndex}
-          aria-label="Filtrar por estado"
-        />
+        <div className="w-full overflow-x-auto sm:w-auto">
+          <TabSelector
+            options={FILTERS.map(
+              (f) =>
+                `${f.label} (${
+                  f.statuses === null
+                    ? MOCK_CONVERSATIONS.length
+                    : MOCK_CONVERSATIONS.filter((c) => f.statuses!.includes(c.status)).length
+                })`,
+            )}
+            value={filterIndex}
+            onChange={setFilterIndex}
+            aria-label="Filtrar por estado"
+          />
+        </div>
       </div>
 
       {conversations.length === 0 ? (
