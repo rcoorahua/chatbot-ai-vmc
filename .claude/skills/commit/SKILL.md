@@ -21,14 +21,43 @@ Remoto: `https://github.com/rcoorahua/chatbot-ai-vmc`. Ramas: `main` (producció
 5. **Tests**: skill `testing` — escribir los tests del criterio de aceptación, correr la suite
    COMPLETA (`ruff check .` + `python -m pytest -q`) y no seguir hasta verde.
 6. **Push de la rama**: `git push -u origin <rama>`.
-7. **PR a develop** (nunca push directo a develop/main): sin `gh` CLI, abrir
-   `https://github.com/rcoorahua/chatbot-ai-vmc/compare/develop...<rama>?expand=1`. Título = el
-   commit principal; cuerpo = RF/AC cubiertos + qué se probó. El CI debe quedar en verde.
-8. **Merge** (cuando el usuario lo pida y el CI esté verde): squash-and-merge si la rama tiene
-   commits WIP, merge normal si cada commit es limpio; borrar la rama; volver a `develop` y
-   `git pull`.
-9. **Release a prod**: PR `develop → main` con título `release: <resumen>`; el deploy a prod
-   tiene gate manual (skill `deploy`).
+7. **PR a develop** (nunca push directo a develop/main). Título = el commit principal; cuerpo =
+   RF/AC cubiertos + qué se probó + decisiones tomadas y por qué.
+8. **Esperar el CI** y no darlo por bueno sin verlo: `lint`, `test` y `synth` en verde. Los
+   `deploy-*` en `skipping` es lo esperado mientras no haya cuenta AWS.
+9. **Merge a develop**: squash si la rama trae commits WIP, merge normal si cada commit es
+   limpio; borrar la rama.
+10. **PR de develop → main** con título `release: <resumen>`, esperar CI y mergear (merge normal,
+    sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
+11. **Sincronizar develop con main**: tras el release, `develop` queda detrás por los merge
+    commits que crea GitHub. Se arregla con un PR `main → develop` (`chore: sincronizar...`),
+    NUNCA con push directo — el hook `pre-push` lo bloquea y saltarlo con `ALLOW_DIRECT_PUSH`
+    no es la vía.
+
+### Comandos de PR (GitHub CLI)
+
+`gh` está instalado en `C:\Program Files\GitHub CLI\gh.exe` y autenticado. Una terminal abierta
+antes de instalarlo no lo ve en el PATH: usar la ruta completa o abrir una nueva.
+
+```powershell
+$gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
+& $gh pr create --base develop --head <rama> --title "<titulo>" --body-file <archivo.md>
+& $gh pr checks <n> --watch --interval 15     # espera a que terminen los checks
+& $gh pr merge <n> --squash --delete-branch   # a develop
+& $gh pr merge <n> --merge                    # release a main: sin borrar la rama
+```
+
+El cuerpo va **siempre en archivo** (`--body-file`), nunca inline: los here-strings con tablas
+markdown y rutas hacen saltar filtros del shell. Escribirlo con la herramienta Write al
+scratchpad y pasar la ruta.
+
+`gh pr merge` escribe a stderr al hacer el `git fetch` posterior; PowerShell lo muestra como
+error aunque haya funcionado. Confirmar siempre con
+`gh pr view <n> --json number,state,mergedAt` antes de reportar el resultado.
+
+Sin `gh` disponible: abrir
+`https://github.com/rcoorahua/chatbot-ai-vmc/compare/develop...<rama>?expand=1` y que el usuario
+cree el PR a mano.
 
 ## Conventional Commits
 
