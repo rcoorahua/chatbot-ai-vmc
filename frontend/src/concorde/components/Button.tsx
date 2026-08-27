@@ -906,7 +906,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     content = (
       <>
         {icon ? <span className="pvbtn-auth-d-icon">{icon}</span> : null}
-        Bienvenido,{" "}
+        {/* "Bienvenido, " se oculta bajo `sm` — en header angosto el saludo completo
+            no cabe junto al nav y termina solo en su propia fila, desproporcionado. */}
+        <span className="hidden sm:inline">Bienvenido,&nbsp;</span>
         <span className="pvbtn-auth-d-username">{username ?? children}</span>
       </>
     );

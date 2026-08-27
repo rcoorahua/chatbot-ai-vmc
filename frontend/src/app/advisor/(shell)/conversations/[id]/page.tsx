@@ -4,12 +4,19 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Button from "@/concorde/components/Button";
-import Input from "@/concorde/components/Input";
 import AvatarZone from "@/concorde/components/AvatarZone";
 import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
+import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
 import { CURRENT_ADVISOR, MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
-import { formatWaitTime, MOCK_NOW_MS } from "@/lib/format";
+import { formatWaitTime, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
+import type { Conversation, Message } from "@/lib/types";
+
+function senderLabelFor(message: Message, conversation: Conversation): string {
+  if (message.sender_type === "USER") return conversation.user_name ?? "Usuario";
+  if (message.sender_type === "ADVISOR") return CURRENT_ADVISOR.display_name;
+  return SENDER_LABEL[message.sender_type];
+}
 
 /**
  * Vista de conversación del asesor (RF-033/034/035/036/037/038). El panel contextual solo
@@ -48,12 +55,16 @@ export default function ConversationDetailPage() {
     (conversation.status === "IN_ATTENTION" || (conversation.status === "PENDING_ADVISOR" && takenByMe));
 
   return (
-    <div className="flex h-full gap-6">
-      <section className="flex flex-1 flex-col rounded-2xl bg-white shadow-sm">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
+      <section className="flex min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
         <header className="flex items-center justify-between border-b border-black/5 px-5 py-4">
           <div className="flex items-center gap-3">
-            <Link href="/advisor/inbox" className="text-sm text-neutral-400 hover:text-neutral-600">
-              ← Bandeja
+            <Link
+              href="/advisor/inbox"
+              className="flex items-center gap-1 rounded-lg text-sm text-neutral-500 transition hover:text-neutral-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)]"
+            >
+              <ArrowLeftIcon width={16} height={16} />
+              Bandeja
             </Link>
             <AvatarZone size="sm" title={conversation.user_name ?? "Anónimo"} />
             <p className="font-semibold text-[#191C1C]">{conversation.user_name ?? "Usuario anónimo"}</p>
@@ -62,10 +73,23 @@ export default function ConversationDetailPage() {
           {canReply && <Button variant="outline">Cerrar caso</Button>}
         </header>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-          {messages.map((message) => (
-            <MessageBubble key={message.message_id} message={message} />
-          ))}
+        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
+          {messages.map((message, i) => {
+            const prev = messages[i - 1];
+            const showLabel =
+              message.message_type !== "SYSTEM" &&
+              (!prev ||
+                prev.message_type === "SYSTEM" ||
+                prev.sender_type !== message.sender_type ||
+                prev.sender_id !== message.sender_id);
+            return (
+              <MessageBubble
+                key={message.message_id}
+                message={message}
+                senderLabel={showLabel ? senderLabelFor(message, conversation) : undefined}
+              />
+            );
+          })}
 
           {retryFailed && canReply && (
             <div className="flex flex-col items-end gap-1">
@@ -85,7 +109,7 @@ export default function ConversationDetailPage() {
 
         <footer className="border-t border-black/5 px-5 py-4">
           {isPendingUnassigned ? (
-            <div className="flex items-center justify-between rounded-2xl bg-[color:var(--vmc-color-orange-600)]/10 px-4 py-3">
+            <div className="flex flex-col gap-3 rounded-2xl bg-[color:var(--vmc-color-orange-600)]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-[#9A4A0F]">
                 Nadie ha tomado este caso todavía. Tómalo para poder responder (RF-029).
               </p>
@@ -94,7 +118,7 @@ export default function ConversationDetailPage() {
               </Button>
             </div>
           ) : assignedToOther ? (
-            <p className="text-center text-sm text-neutral-400">
+            <p className="text-center text-sm text-neutral-500">
               {conversation.assigned_advisor_id} ya tomó este caso — solo lectura.
             </p>
           ) : canReply ? (
@@ -102,9 +126,9 @@ export default function ConversationDetailPage() {
               <button
                 type="button"
                 title="Adjuntar imagen (selector / pegado / drag & drop — RF-041)"
-                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-neutral-200 text-lg"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-700"
               >
-                📎
+                <PaperclipIcon />
               </button>
               <textarea
                 value={draft}
@@ -118,51 +142,43 @@ export default function ConversationDetailPage() {
               </Button>
             </div>
           ) : (
-            <p className="text-center text-sm text-neutral-400">
+            <p className="text-center text-sm text-neutral-500">
               Sin handoff activo — el bot está atendiendo (RF-025). Nada que responder desde acá.
             </p>
           )}
         </footer>
       </section>
 
-      <aside className="flex w-80 flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm">
+      <aside className="flex w-full flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:w-80">
         <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">Usuario</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
           <dl className="mt-2 space-y-1.5 text-sm">
             <Field label="Nombre" value={conversation.user_name} />
             <Field label="Correo" value={conversation.user_email} />
             <Field label="Empresa" value={conversation.user_company} />
             <Field label="ID VMC" value={conversation.user_id} />
           </dl>
-          <p className="mt-2 text-xs text-neutral-400">
+          <p className="mt-2 text-xs text-neutral-500">
             Campos soportados hoy por el modelo de datos. Set definitivo pendiente de D-010.
           </p>
         </div>
 
         <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">Resumen (IA)</h2>
+          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Resumen (IA)</h2>
           <p className="mt-1 text-sm text-neutral-600">{conversation.summary ?? "Sin resumen todavía."}</p>
         </div>
 
         {conversation.handoff_reason && (
           <div>
-            <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">Derivación</h2>
+            <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Derivación</h2>
             <p className="mt-1 text-sm text-neutral-600">{conversation.handoff_reason}</p>
             {conversation.handoff_requested_at && (
-              <p className="mt-0.5 text-xs text-neutral-400">
+              <p className="mt-0.5 text-xs text-neutral-500">
                 Esperando hace {formatWaitTime(conversation.handoff_requested_at, MOCK_NOW_MS)}
               </p>
             )}
           </div>
         )}
-
-        <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">Buscar en VMC</h2>
-          <div className="mt-2">
-            <Input placeholder="Buscar por ID VMC…" className="w-full" disabled />
-          </div>
-          <p className="mt-1 text-xs text-neutral-400">Solo lectura (RF-051) — sin integración aún.</p>
-        </div>
       </aside>
     </div>
   );
@@ -171,7 +187,7 @@ export default function ConversationDetailPage() {
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex justify-between gap-3">
-      <dt className="text-neutral-400">{label}</dt>
+      <dt className="text-neutral-500">{label}</dt>
       <dd className="text-right font-medium text-[#191C1C]">{value ?? "—"}</dd>
     </div>
   );

@@ -30,30 +30,53 @@ export default function InboxPage() {
   const conversations = MOCK_CONVERSATIONS.filter((conv) => {
     const statuses = FILTERS[filterIndex].statuses;
     return statuses === null || statuses.includes(conv.status);
+  }).sort((a, b) => {
+    // Sin resolver primero, y dentro de ese grupo el que espera hace más tiempo arriba
+    // (el caso más urgente a la vista, no el orden arbitrario del mock).
+    const aOpen = a.status !== "CLOSED";
+    const bOpen = b.status !== "CLOSED";
+    if (aOpen !== bOpen) return aOpen ? -1 : 1;
+    return aOpen
+      ? a.last_message_at.localeCompare(b.last_message_at)
+      : b.last_message_at.localeCompare(a.last_message_at);
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold text-[#191C1C]">Bandeja de conversaciones</h1>
-        <TabSelector
-          options={FILTERS.map((f) => f.label)}
-          value={filterIndex}
-          onChange={setFilterIndex}
-          aria-label="Filtrar por estado"
-        />
+        <div className="w-full overflow-x-auto sm:w-auto">
+          <TabSelector
+            options={FILTERS.map(
+              (f) =>
+                `${f.label} (${
+                  f.statuses === null
+                    ? MOCK_CONVERSATIONS.length
+                    : MOCK_CONVERSATIONS.filter((c) => f.statuses!.includes(c.status)).length
+                })`,
+            )}
+            value={filterIndex}
+            onChange={setFilterIndex}
+            aria-label="Filtrar por estado"
+          />
+        </div>
       </div>
 
+      {conversations.length === 0 ? (
+        <p className="rounded-2xl bg-white px-5 py-10 text-center text-sm text-neutral-500 shadow-sm">
+          No hay conversaciones en &quot;{FILTERS[filterIndex].label}&quot; ahora mismo.
+        </p>
+      ) : (
       <Table
         caption="Conversaciones"
         columns={[
           { header: "Usuario" },
-          { header: "Último mensaje" },
+          { header: "Último mensaje", className: "hidden md:table-cell" },
           { header: "Espera", align: "center" },
-          { header: "Canal", align: "center" },
+          { header: "Canal", align: "center", className: "hidden md:table-cell" },
           { header: "Estado", align: "center" },
-          { header: "Asesor" },
-          { header: "No leídos", align: "center" },
+          { header: "Asesor", className: "hidden md:table-cell" },
+          { header: "No leídos", align: "center", className: "hidden md:table-cell" },
           { header: "", align: "right" },
         ]}
         rows={conversations.map((conv) => [
@@ -61,7 +84,7 @@ export default function InboxPage() {
             <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
             <div>
               <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
-              {conv.user_id && <p className="text-xs text-neutral-400">{conv.user_id}</p>}
+              {conv.user_id && <p className="text-xs text-neutral-500">{conv.user_id}</p>}
             </div>
           </div>,
           <span key="preview" className="line-clamp-1 max-w-xs text-neutral-600">
@@ -79,7 +102,7 @@ export default function InboxPage() {
           </span>,
           <span
             key="unread"
-            className={conv.unread_count > 0 ? "font-bold text-[#ED8936]" : "text-neutral-400"}
+            className={conv.unread_count > 0 ? "font-bold text-[#ED8936]" : "text-neutral-500"}
           >
             {conv.unread_count}
           </span>,
@@ -92,6 +115,7 @@ export default function InboxPage() {
           </div>,
         ])}
       />
+      )}
     </div>
   );
 }
