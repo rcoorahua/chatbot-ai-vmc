@@ -11,8 +11,24 @@ import boto3
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 
+from backend.core.aws import reset_clients
+from backend.core.config import reset_settings
 from scripts.local_setup import cliente_dynamo, crear_tablas, nombres_de_tabla, recurso_dynamo
 from scripts.seed_data import cargar
+
+
+@pytest.fixture(scope="session", autouse=True)
+def secretos_de_prueba():
+    """Secretos de identidad (D-001) para toda la sesion de tests.
+
+    En local suelen venir de `.env`; en CI no existe ese archivo y sin ellos cualquier request
+    al chat responde 503. Se fijan con `setdefault` para respetar los que ya esten y se limpia
+    la memoria de Settings, que pudo cargarse al importar `backend.api.main` en la coleccion.
+    """
+    os.environ.setdefault("VMC_IDENTITY_SECRET", "test-vmc-identity-secret")
+    os.environ.setdefault("SESSION_SIGNING_KEY", "test-session-signing-key")
+    reset_settings()
+    reset_clients()
 
 
 def _dynamo_disponible() -> bool:

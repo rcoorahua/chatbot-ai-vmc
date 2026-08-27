@@ -1049,8 +1049,34 @@ stack(); straighten(8); compact(); straighten(4); compact(); alignColumns(8); co
    No habla con el servidor y no usa localStorage — se abre con doble clic en
    cualquier PC y siempre muestra esto mismo. Los cambios no se guardan.
    Para regenerarla con datos frescos:  node db/empaquetar.mjs             */
-const EMPAQUETADO = [];
-const SELLO_COPIA = "2026-08-13 20:32";
+/* Estado al 2026-08-27 (F1 implementada: identidad VMC, conversacion unica, persistencia, widget).
+   "hecho" = implementado y validado con tests en el repo; "curso" = hecho en parte (ver nota). */
+const EMPAQUETADO = [
+{id:"RF-001",kanban:"hecho",nota:"27/08: widget/subastin.js + POST /chat/sessions. Abre sin login; autenticado queda asociado a su identidad VMC."},
+{id:"RF-002",kanban:"hecho",nota:"27/08: la sesion anonima no pide ningun dato (tests/test_chat_api.py)."},
+{id:"RF-004",kanban:"hecho",nota:"27/08: conversacion anonima nueva por sesion (sessionStorage), sin user_id, no indexada por usuario."},
+{id:"RF-005",kanban:"hecho",nota:"27/08: JWT de identidad firmado por el servidor de VMC, verificado en core/auth.py; saludo por nombre en el widget."},
+{id:"RF-008",kanban:"hecho",nota:"27/08: conversations/repository.py — cada mensaje guarda conversation_id, sender_type, created_at, message_type y status (estado tecnico)."},
+{id:"RF-010",kanban:"hecho",nota:"27/08: D-002 cerrada — 1 conversacion activa para todos; id determinista por usuario autenticado."},
+{id:"RF-011",kanban:"curso",nota:"Redefinida por D-003: lo que se cierra es el ticket, la conversacion permanece y muestra 'Ticket cerrado'. El widget ya lo dibuja; el cierre real llega con F5."},
+{id:"RF-014",kanban:"curso",nota:"Largo maximo de mensaje configurable (MAX_MESSAGE_CHARS, provisional hasta D-005). Falta rate limit y limites por conversacion."},
+{id:"RF-036",kanban:"curso",nota:"Hecho en el widget (hora por mensaje y separador por dia). Pendiente en la app del asesor."},
+{id:"RF-037",kanban:"curso",nota:"Hecho en el widget: el mensaje fallido queda local con 'Reintentar'. Pendiente en la app del asesor."},
+{id:"RF-038",kanban:"curso",nota:"Backend hecho (transaccion con marcador CMID#) y widget reutiliza el client_message_id. Pendiente en la app del asesor."},
+{id:"RNF-003",kanban:"hecho",nota:"27/08: el widget marca como enviado solo con el 202 del backend."},
+{id:"RNF-004",kanban:"hecho",nota:"27/08: save_user_message es idempotente por client_message_id (test contra dynamodb-local)."},
+{id:"RNF-005",kanban:"hecho",nota:"27/08: la identidad solo entra dentro del JWT firmado por VMC; el token de sesion va atado a una conversacion."},
+{id:"RB-001",kanban:"hecho",nota:"27/08: cubierto por RF-002."},
+{id:"RB-003",kanban:"hecho",nota:"27/08: cubierto por RF-004."},
+{id:"RB-004",kanban:"hecho",nota:"27/08: cubierto por RF-005 / D-001."},
+{id:"D-001",kanban:"hecho",nota:"Cerrada 27/08 (Aaron): JWT HS256 firmado por el servidor de VMC con secreto compartido, al estilo Intercom. Ajuste: las cookies de VMC son HttpOnly, el widget no puede leerlas. Identidad visible: Subastin."},
+{id:"D-002",kanban:"hecho",nota:"Cerrada 27/08 (Aaron): 1 conversacion activa; max. 5 tickets activos; anonimo solo FAQ (sin handoff ni ticket)."},
+{id:"D-003",kanban:"hecho",nota:"Cerrada 27/08 (Aaron): una sola conversacion permanente; se cierran tickets, visibles en el hilo como nota de sistema (como Intercom). Sin autocierre."},
+{id:"D-017",kanban:"hecho",nota:"Cerrada por D-002/D-003: N tickets por conversacion (max. 5 activos); cerrar un ticket no cierra la conversacion."},
+{id:"D-018",kanban:"curso",nota:"Provisional (derivada de RF-004): sesion anonima = pestaña del navegador, token de 24 h. Confirmar con Silvana + Julio."},
+{id:"D-019",kanban:"hecho",nota:"Cerrada por D-002: el anonimo no deriva a asesor, asi que no existe el ticket anonimo. RF-003/AC-003/RB-002 quedan sin efecto — revisar el spec."},
+];
+const SELLO_COPIA = "2026-08-27";
 let avisadoCopia = false;
 function avisarSoloLectura(){
   if(avisadoCopia) return;
