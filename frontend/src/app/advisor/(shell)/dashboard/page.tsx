@@ -1,5 +1,7 @@
 import Link from "next/link";
 import Table from "@/concorde/components/Table";
+import Button from "@/concorde/components/Button";
+import AvatarZone from "@/concorde/components/AvatarZone";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { MOCK_CONVERSATIONS } from "@/lib/mock-data";
@@ -52,9 +54,17 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Conversaciones" value={String(total)} />
-        <StatCard label="Pendientes" value={String(countByStatus.PENDING_ADVISOR)} />
-        <StatCard label="En atención" value={String(countByStatus.IN_ATTENTION)} />
-        <StatCard label="Cerradas" value={String(countByStatus.CLOSED)} />
+        <StatCard
+          label="Pendientes"
+          value={String(countByStatus.PENDING_ADVISOR)}
+          dot={BAR_COLOR.PENDING_ADVISOR}
+        />
+        <StatCard
+          label="En atención"
+          value={String(countByStatus.IN_ATTENTION)}
+          dot={BAR_COLOR.IN_ATTENTION}
+        />
+        <StatCard label="Cerradas" value={String(countByStatus.CLOSED)} dot={BAR_COLOR.CLOSED} />
         <StatCard
           label="Casos derivados"
           value={String(handoffs.length)}
@@ -68,7 +78,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="rounded-2xl bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">
           Distribución por estado
         </h2>
         <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-neutral-100">
@@ -93,24 +103,36 @@ export default function DashboardPage() {
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-neutral-400">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-neutral-500">
           Conversaciones recientes
         </h2>
         <Table
           caption="Conversaciones recientes"
           columns={[
             { header: "Usuario" },
+            { header: "Último mensaje", className: "hidden md:table-cell" },
             { header: "Estado", align: "center" },
             { header: "Espera", align: "center" },
             { header: "", align: "right" },
           ]}
           rows={recent.map((conv) => [
-            <span key="user">{conv.user_name ?? "Anónimo"}</span>,
+            <div key="user" className="flex items-center gap-3">
+              <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
+              <div>
+                <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
+                {conv.user_id && <p className="text-xs text-neutral-500">{conv.user_id}</p>}
+              </div>
+            </div>,
+            <span key="preview" className="line-clamp-1 max-w-xs text-neutral-600">
+              {conv.last_message_preview}
+            </span>,
             <StatusBadge key="status" status={conv.status} />,
             <span key="wait">{formatWaitTime(conv.last_message_at, MOCK_NOW_MS)}</span>,
-            <Link key="open" href={`/advisor/conversations/${conv.conversation_id}`} className="text-sm underline">
-              Ver
-            </Link>,
+            <div key="open" className="flex justify-end">
+              <Link href={`/advisor/conversations/${conv.conversation_id}`}>
+                <Button variant="outline">Ver</Button>
+              </Link>
+            </div>,
           ])}
         />
       </div>

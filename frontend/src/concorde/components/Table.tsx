@@ -25,6 +25,8 @@ export interface TableColumn {
   align?: TableAlign;
   /** Ancho fijo opcional (px o cualquier unidad CSS) */
   width?: number | string;
+  /** Clases extra en th/td — p. ej. "hidden md:table-cell" para ocultar en mobile */
+  className?: string;
 }
 
 export interface TableProps {
@@ -83,6 +85,9 @@ const TABLE_STYLES = `
   border-bottom: 1px solid #E1E3E2;
 }
 .ptable tbody tr:last-child .ptable__td { border-bottom: none; }
+.ptable tbody tr { transition: background-color 0.12s; }
+.ptable tbody tr:hover { background-color: #FAFAFB; }
+@media (prefers-reduced-motion: reduce) { .ptable tbody tr { transition: none; } }
 .ptable__align-center { text-align: center; }
 .ptable__align-right { text-align: right; }
 `;
@@ -122,7 +127,7 @@ export default function Table({ columns, rows, caption, className = "" }: TableP
                   <th
                     key={i}
                     scope="col"
-                    className={`ptable__th${alignClass(col.align)}`}
+                    className={`ptable__th${alignClass(col.align)} ${col.className ?? ""}`.trim()}
                     style={col.width !== undefined ? { width: col.width } : undefined}
                   >
                     {col.header}
@@ -137,7 +142,7 @@ export default function Table({ columns, rows, caption, className = "" }: TableP
                 <tr key={r}>
                   {columns.map(function renderTd(col, c) {
                     return (
-                      <td key={c} className={`ptable__td${alignClass(col.align)}`}>
+                      <td key={c} className={`ptable__td${alignClass(col.align)} ${col.className ?? ""}`.trim()}>
                         {row[c]}
                       </td>
                     );
