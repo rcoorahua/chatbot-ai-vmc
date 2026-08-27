@@ -54,9 +54,17 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Conversaciones" value={String(total)} />
-        <StatCard label="Pendientes" value={String(countByStatus.PENDING_ADVISOR)} />
-        <StatCard label="En atención" value={String(countByStatus.IN_ATTENTION)} />
-        <StatCard label="Cerradas" value={String(countByStatus.CLOSED)} />
+        <StatCard
+          label="Pendientes"
+          value={String(countByStatus.PENDING_ADVISOR)}
+          dot={BAR_COLOR.PENDING_ADVISOR}
+        />
+        <StatCard
+          label="En atención"
+          value={String(countByStatus.IN_ATTENTION)}
+          dot={BAR_COLOR.IN_ATTENTION}
+        />
+        <StatCard label="Cerradas" value={String(countByStatus.CLOSED)} dot={BAR_COLOR.CLOSED} />
         <StatCard
           label="Casos derivados"
           value={String(handoffs.length)}

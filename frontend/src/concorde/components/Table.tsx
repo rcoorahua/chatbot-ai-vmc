@@ -85,6 +85,9 @@ const TABLE_STYLES = `
   border-bottom: 1px solid #E1E3E2;
 }
 .ptable tbody tr:last-child .ptable__td { border-bottom: none; }
+.ptable tbody tr { transition: background-color 0.12s; }
+.ptable tbody tr:hover { background-color: #FAFAFB; }
+@media (prefers-reduced-motion: reduce) { .ptable tbody tr { transition: none; } }
 .ptable__align-center { text-align: center; }
 .ptable__align-right { text-align: right; }
 `;

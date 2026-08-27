@@ -30,6 +30,15 @@ export default function InboxPage() {
   const conversations = MOCK_CONVERSATIONS.filter((conv) => {
     const statuses = FILTERS[filterIndex].statuses;
     return statuses === null || statuses.includes(conv.status);
+  }).sort((a, b) => {
+    // Sin resolver primero, y dentro de ese grupo el que espera hace más tiempo arriba
+    // (el caso más urgente a la vista, no el orden arbitrario del mock).
+    const aOpen = a.status !== "CLOSED";
+    const bOpen = b.status !== "CLOSED";
+    if (aOpen !== bOpen) return aOpen ? -1 : 1;
+    return aOpen
+      ? a.last_message_at.localeCompare(b.last_message_at)
+      : b.last_message_at.localeCompare(a.last_message_at);
   });
 
   return (
@@ -37,7 +46,14 @@ export default function InboxPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold text-[#191C1C]">Bandeja de conversaciones</h1>
         <TabSelector
-          options={FILTERS.map((f) => f.label)}
+          options={FILTERS.map(
+            (f) =>
+              `${f.label} (${
+                f.statuses === null
+                  ? MOCK_CONVERSATIONS.length
+                  : MOCK_CONVERSATIONS.filter((c) => f.statuses!.includes(c.status)).length
+              })`,
+          )}
           value={filterIndex}
           onChange={setFilterIndex}
           aria-label="Filtrar por estado"
