@@ -18,9 +18,11 @@ Subastín reemplaza a Intercom como plataforma propia de atención de **VMC**:
 
 - **Canal único del MVP:** chat web embebido en VMC (WhatsApp/Kapso queda fuera; sin timeline
   omnicanal).
-- **Usuarios:** anónimos (sin datos, sin historial persistente — RF-002/004) y autenticados
-  (identidad validada por VMC — RF-005, mecanismo pendiente **D-001**).
-- **Automatización:** clasificación de intención con **Haiku** (RF-015), FAQ con **RAG sobre
+- **Usuarios:** anónimos (sin datos, sin historial persistente — RF-002/004; solo FAQ, sin
+  handoff — D-002) y autenticados (identidad validada por VMC — RF-005; **D-001 cerrada**: JWT
+  firmado por el servidor de VMC, ver el flujo de sesión en §2).
+- **Automatización:** clasificación de intención (RF-015; **Gemini flash-lite** por TD-008, Haiku
+  como plan B), FAQ con **RAG sobre
   Pinecone** (RF-017), catálogo de vehículos vía **API HERALD** (RF-044), redacción con **Gemini**
   (RF-020), y prohibición explícita de inventar sin evidencia (RF-018 → handoff).
 - **Atención humana:** handoff → ticket → notificación **Slack** inmediata (RF-028) → bandeja de
@@ -55,10 +57,10 @@ DynamoDB**, definida con **CDK v2 en Python**, escala a cero y con dev 100% loca
 
 ```
                          ┌────────────────────────── AWS (stage / prod) ──────────────────────────┐
-  Next.js (widget VMC    │                                                                        │
-  + app asesor +         │   API Gateway HTTP API                                                 │
+  widget/ (JS en VMC)    │                                                                        │
+  + Next.js (asesor,     │   API Gateway HTTP API                                                 │
   dashboard)             │   ├── $default ──────────────► Lambda `api` (FastAPI + Mangum)         │
-  ── fetch ────────────► │   ├── /advisor/{proxy+} ──┐    │  · valida identidad VMC (D-001)       │
+  ── fetch ────────────► │   ├── /advisor/{proxy+} ──┐    │  · verifica JWT de VMC, sesión (D-001)│
                          │   │   [JWT authorizer     ├──► │  · CRUD conversaciones/mensajes       │
                          │   │    Cognito]           │    │  · presigned URLs S3 (imágenes)       │
                          │   └── /dashboard/{proxy+}─┘    │  · encola trabajos IA → SQS, 202      │
@@ -92,27 +94,37 @@ DynamoDB**, definida con **CDK v2 en Python**, escala a cero y con dev 100% loca
 
 ### Flujo principal (mensaje de usuario → respuesta IA)
 
-1. `POST /chat/conversations/{id}/messages` con `client_message_id` (idempotencia RF-038).
-2. Lambda `api`: valida límites (D-005), persiste el mensaje (confirmación antes de mostrarse como
-   enviado — RNF-003), encola job en `ai-jobs`, responde **202**.
-3. `worker-ai`: aplica debounce/agregación (D-020), clasifica con Haiku (`FAQ`/`CATALOGO`/`ASESOR`/
-   `OTRO` — RF-016), según intención consulta Pinecone o HERALD, redacta con Gemini (o inicia
-   handoff si no hay evidencia — RF-018), persiste la respuesta, registra `AIUsage`, y si hay
-   handoff encola notificación Slack.
-4. El frontend, que hace polling de mensajes nuevos, muestra la respuesta.
+0. `POST /chat/sessions` con el JWT de identidad de VMC (o vacío = anónimo) → token de sesión de
+   Subastín + la conversación del usuario (autenticado: siempre la misma, id determinista;
+   anónimo: nueva por sesión). Es el único punto por el que entra identidad (D-001,
+   `core/auth.py`). **Implementado.**
+1. `POST /chat/conversations/{id}/messages` con `client_message_id` (idempotencia RF-038) y el
+   token de sesión como Bearer. **Implementado.**
+2. Lambda `api`: valida límites (configurables; valores provisionales hasta D-005), persiste el
+   mensaje en una transacción con el marcador de idempotencia (RNF-003/004), encola un `AIJob`
+   (`core/jobs.py`) en `ai-jobs`, responde **202**. Si la cola falla, el mensaje queda
+   `QUEUE_FAILED`: durable, no perdido. **Implementado.**
+3. `worker-ai` (**pendiente**, bloqueado por D-004/D-006/D-020): aplica debounce/agregación
+   (D-020), clasifica (`agent.classifier`, `FAQ`/`CATALOG`/`ADVISOR`/`OTHER` — RF-016), según
+   intención consulta Pinecone o HERALD, redacta (`agent.writer`, o inicia handoff si no hay
+   evidencia — RF-018), persiste la respuesta, registra `AIUsage`, y si hay handoff encola
+   notificación Slack. Anónimo + `ADVISOR` = texto fijo invitando a iniciar sesión (D-002).
+4. El widget sondea mensajes nuevos (`GET …/messages?after=<message_key>`) y muestra la
+   respuesta. **Implementado.**
 
 ---
 
 ## 3. Esqueleto de API Gateway: rutas → Lambdas y servicios
 
-**Los endpoints concretos NO están definidos aún** — esto es el mapa de superficies. Cada superficie
-vive como un router de FastAPI dentro de la Lambda `api` (ver `backend/api/routers/`).
+Los endpoints de `chat` están implementados (`backend/api/routers/chat.py`); `advisor` y
+`dashboard` siguen como mapa de superficies. Cada superficie vive como un router de FastAPI dentro
+de la Lambda `api` (ver `backend/api/routers/`).
 
 ### HTTP API — rutas
 
 | Ruta APIGW | Auth | Router FastAPI | Superficie (qué expondrá) | RFs |
 |---|---|---|---|---|
-| `$default` (cae en `/chat/*`) | Identidad VMC (**D-001**) o sesión anónima (**D-018**) | `chat` | Crear/cerrar conversación, enviar mensaje, listar mensajes (polling), solicitar handoff, presigned URL para subir imagen | RF-001..005, 008..014, 022, 040..042 |
+| `$default` (cae en `/chat/*`) | `POST /chat/sessions` verifica el JWT de VMC (D-001) y emite el token de sesión; el resto exige ese token como Bearer, atado a UNA conversación | `chat` | **Hecho:** sesión, conversación, enviar mensaje (202 + job), listar mensajes (polling con cursor). **Pendiente:** solicitar handoff, presigned URL para subir imagen | RF-001..005, 008..014, 022, 040..042 |
 | `/advisor/{proxy+}` | **JWT authorizer Cognito** (nativo de HTTP API) | `advisor` | Bandeja (por estado, no leídos), tomar conversación (atómica), ver hilo + contexto usuario (D-010), enviar mensaje, tickets, cerrar | RF-029..039, 012, 031 |
 | `/dashboard/{proxy+}` | **JWT authorizer Cognito** | `dashboard` | Métricas operativas (D-013) | RF-047..049 |
 | `GET /health` | pública | `main` | Healthcheck | — |
@@ -124,7 +136,7 @@ vive como un router de FastAPI dentro de la Lambda `api` (ver `backend/api/route
 | `api` | HTTP API (todas las rutas) | Todo lo síncrono: CRUD, validaciones, límites, presigned URLs, encolar. **No llama a la IA.** | FastAPI + Mangum, `lifespan="off"`. Timeout corto (~15 s). |
 | `worker-ai` | SQS `ai-jobs` | Pipeline IA completo: debounce → Haiku → RAG/HERALD → Gemini → persistir → `AIUsage` → disparar handoff | Timeout largo (~60–120 s), memoria mayor. `batchItemFailures`. |
 | `worker-notify` | SQS `notifications` | Notificación Slack de handoff/ticket (RF-028); futuro: correos, re-alertas (D-016) | Pequeña y aislada: si Slack cae, no afecta al pipeline IA. |
-| `worker-maintenance` *(condicional)* | EventBridge Schedule | Autocierre por inactividad, expiración de sesión anónima | **Solo si D-003/D-018 lo requieren** — no crear hasta cerrarlas. |
+| `worker-maintenance` *(condicional)* | EventBridge Schedule | Autocierre de tickets sin respuesta, re-encolado de mensajes `QUEUE_FAILED` | D-003 se cerró sin autocierre de conversación; queda solo si D-007 (ticket sin respuesta) lo exige o para el barrido de `QUEUE_FAILED`. |
 
 ### Colas SQS
 
@@ -141,7 +153,8 @@ vive como un router de FastAPI dentro de la Lambda `api` (ver `backend/api/route
 - **Cognito** — User Pool de asesores: invitación por correo (RF-006), rol único `ADVISOR` en el
   MVP (RF-007) pero con `role` en el modelo para crecer.
 - **Secrets Manager** — `anthropic_api_key`, `gemini_api_key`, `pinecone_api_key`,
-  `slack_webhook_url`, credenciales HERALD, secreto de integración VMC (D-001).
+  `slack_webhook_url`, credenciales HERALD, `vmc_identity_secret` (compartido con VMC, firma el
+  JWT de identidad — D-001) y `session_signing_key` (propio, firma el token de sesión del widget).
 - **CloudWatch** — logs estructurados, métricas, alarmas (DLQ > 0, errores 5xx, latencia) — RNF-006.
 - **EventBridge** — solo si D-003/D-018 exigen jobs programados.
 
@@ -154,7 +167,7 @@ vive como un router de FastAPI dentro de la Lambda `api` (ver `backend/api/route
 | Pinecone | RAG de conocimiento FAQ/VMC | carga de contenido inicial (proceso de ingesta no está en el spec — definir) |
 | HERALD | Catálogo de vehículos en tiempo real | **D-011** (contrato) y **D-012** (fallback) |
 | Slack | Webhook entrante para notificar handoffs | **D-016** (canal y formato) |
-| VMC | Identidad del usuario autenticado + datos de solo lectura | **D-001** y **D-010** |
+| VMC | Identidad del usuario autenticado (JWT firmado por su servidor — D-001 cerrada, contrato en `widget/README.md`) + datos de solo lectura | **D-010** |
 
 ---
 
@@ -163,8 +176,10 @@ vive como un router de FastAPI dentro de la Lambda `api` (ver `backend/api/route
 Modelo acordado: `subastin-conversations`, `subastin-messages`, `subastin-tickets`,
 `subastin-advisors`, `subastin-ai-usage`. Sin tabla `users` (VMC es la fuente de identidad).
 Imágenes en S3 (solo metadata en `Messages.attachment`). Eventos de auditoría como mensajes
-`sender_type=SYSTEM` (`HANDOFF_REQUESTED`, `ADVISOR_ASSIGNED`, `BOT_DISABLED/ENABLED`,
-`CONVERSATION_CLOSED`) — cubre RF-050 sin sexta tabla.
+`sender_type=SYSTEM` (`HANDOFF_REQUESTED`, `ADVISOR_ASSIGNED`, `TICKET_OPENED`, `TICKET_CLOSED`,
+`BOT_DISABLED/ENABLED`, `CONVERSATION_CLOSED` — enum `SystemEvent` en
+`conversations/models.py`) — cubre RF-050 sin sexta tabla y es lo que el widget dibuja como nota
+de sistema en el hilo ("Ticket cerrado"), que es como D-003 hace visible el historial.
 
 ### Resumen de claves e índices
 
@@ -206,7 +221,15 @@ del modelo. Ajustes detectados (agregar al modelo antes de crear tablas):
    existentes es migración manual; por eso los ajustes 1–5 deben cerrarse antes de la primera tabla
    en stage.
 8. **D-017 (¿múltiples tickets por conversación?)** — el modelo ya lo soporta (Tickets GSI1 es
-   1:N); la decisión solo restringe lógica de aplicación, no el modelo. ✔
+   1:N). Cerrada el 2026-08-27: varios tickets por conversación, máximo 5 activos por usuario;
+   cerrar un ticket no cierra la conversación. ✔
+9. **`status` en `Messages` (ajuste 6, implementado 2026-08-27)** — RF-008 exige un estado
+   técnico por mensaje: `RECEIVED` (durable, pendiente del pipeline) → `PROCESSED`/`FAILED` por el
+   worker; `QUEUE_FAILED` si la API no pudo encolar; `DELIVERED` para BOT/ADVISOR/SYSTEM.
+10. **Id determinista para la conversación del autenticado** — `uuid5(user_id)` en
+    `conversations/service.py`: hace atómica la regla "máximo 1" (D-002) con una creación
+    condicional, sin consultar GSI1 antes de crear (dos pestañas a la vez no crean dos). GSI1
+    sigue sirviendo para el historial que ve el asesor (RF-012).
 
 ---
 
@@ -262,12 +285,14 @@ cdk destroy -c stage=stage
 
 ### Frontend
 
-- Scaffold: `npx create-next-app@latest frontend` (TypeScript + Tailwind + App Router + ESLint,
-  defaults actuales). Vacío por ahora.
-- **Fuera del stack CDK**: se despliega en Vercel o Amplify (TD-003) apuntando al output `ApiUrl`
-  del stack.
-- Contendrá tres superficies: widget de chat embebible en VMC (mecánica de embed depende de
-  **D-001**), app del asesor (login Cognito) y dashboard.
+- **Widget del chat: `widget/subastin.js`** (implementado 2026-08-27) — JS plano sin build ni
+  dependencias, Shadow DOM, se embebe en VMC con dos etiquetas `<script>` (contrato en
+  `widget/README.md`). No vive en Next.js a propósito: lo que VMC carga es un archivo estático
+  servible desde cualquier CDN, y `widget/test.html` lo prueba con solo `python -m http.server`.
+  Hosting real: junto al frontend o en S3 + CloudFront (TD-003).
+- **App del asesor y dashboard: `frontend/`** — scaffold `create-next-app` (TypeScript + Tailwind +
+  App Router + ESLint), vacío por ahora. **Fuera del stack CDK**: se despliega en Vercel o Amplify
+  (TD-003) apuntando al output `ApiUrl` del stack.
 
 ### Flujo de ramas y CI/CD (detalle en las skills `commit` y `ci-cd`)
 
@@ -372,7 +397,7 @@ chatbot-ai-vmc/
 │   ├── catalog/                # INTEGRACIÓN: cliente HERALD (D-011/D-012)
 │   ├── notifications/          # INTEGRACIÓN: Slack (D-016)
 │   ├── images/                 # INTEGRACIÓN: S3 presigned + metadata (D-015)
-│   ├── core/                   # config · clients AWS · auth (no importa a nadie)
+│   ├── core/                   # config · clients AWS · auth (identidad D-001) · clock · jobs (contrato SQS)
 │   └── requirements.txt        # deps que se bundlean en las Lambdas
 ├── infra/                      # CDK v2 Python
 │   ├── app.py                  # entry: SubastinStack por stage (-c stage=...)
@@ -381,8 +406,9 @@ chatbot-ai-vmc/
 │   ├── requirements.txt
 │   └── stacks/
 │       └── subastin_stack.py   # tablas, colas, lambdas, HTTP API, Cognito, S3, alarmas
-├── frontend/                   # Next.js (App Router, TS, Tailwind) — vacío por ahora
-├── tests/                      # pytest (smoke hoy; cada fase agrega los tests de sus AC)
+├── widget/                     # chat embebible: subastin.js (sin build) · test.html · README (contrato VMC)
+├── frontend/                   # Next.js (App Router, TS, Tailwind) — app asesor y dashboard, vacío por ahora
+├── tests/                      # pytest contra dynamodb-local/localstack reales; cada fase agrega los tests de sus AC
 ├── .github/workflows/          # ci.yml (ruff·pytest·synth en PRs) · deploy.yml (CD maquetado, apagado hasta §6)
 ├── docker-compose.yml          # dev local: dynamodb-local + localstack (sqs, s3)
 ├── .claude/                    # skills (spec-driven, testing, commit, deploy, llm-cost-optimizer,
@@ -395,8 +421,10 @@ chatbot-ai-vmc/
 └── README.md                   # overview + quickstart dev
 ```
 
-El esqueleto de `backend/` e `infra/` existe con stubs y TODOs — **nada está implementado**; los
-endpoints y constructs concretos se definen al arrancar las fases.
+Implementado (2026-08-27): `core`, `conversations`, `api/routers/chat.py`, `agent` (clasificador
+y redactor, sin pipeline) y `widget/`. `tickets`, `advisors`, `catalog`, `notifications`,
+`images`, `workers` y los routers `advisor`/`dashboard` siguen como stubs con TODOs; se definen al
+arrancar sus fases.
 
 ---
 
@@ -407,13 +435,13 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 | Fase | Contenido | Bloqueada por |
 |---|---|---|
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
-| **F1** | Dominio conversaciones/mensajes + chat público con polling (sin IA): crear conversación, enviar/listar mensajes, idempotencia, límites básicos | D-002 (máx. convs.), D-018 (sesión anónima), D-005 (guardrails) |
+| **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
 | **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage` | TD-002, D-020 (debounce), D-006 (triviales) |
 | **F3** | RAG: ingesta a Pinecone + FAQ con fuentes (RF-019) + regla "no inventar → handoff" (RF-018) | proceso de ingesta por definir |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
-| **F5** | Handoff completo: tickets, correo de anónimo (RF-003), Slack, Cognito, rutas `/advisor` (bandeja, toma atómica, mensajes, cierre) | D-007, **D-008**, D-016, D-017, D-019, **D-010**, **D-001** |
+| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito, rutas `/advisor` (bandeja, toma atómica, mensajes, cierre de ticket con nota `TICKET_CLOSED` en el hilo) | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019 cerradas) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
-| **F7** | Dashboard + hardening: métricas, retención/TTL, auditoría QA, escenarios AC-001..009 end-to-end | D-013, D-014, D-003 |
+| **F7** | Dashboard + hardening: métricas, retención/TTL, auditoría QA, escenarios AC-001..009 end-to-end | D-013, D-014 |
 
 Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
 
@@ -422,11 +450,14 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
 ## 9. Registro de decisiones
 
 - **Técnicas cerradas:** T1–T9 en §2.
-- **De negocio abiertas:** D-001…D-020 — responsables **Silvana + Julio**; detalle completo en
-  [REQUERIMENTS.md](REQUERIMENTS.md) §6. Las de prioridad Alta que bloquean arquitectura/seguridad: **D-001** (identidad
-  VMC), **D-005** (guardrails), **D-007** (IA OFF en handoff), **D-008** (taxonomía tickets),
-  **D-010** (campos de usuario), **D-011** (contrato HERALD), **D-014** (retención), **D-017**
-  (conversación↔ticket), D-002, D-003.
+- **De negocio cerradas (2026-08-27, Aaron):** D-001 (JWT firmado por el servidor de VMC), D-002
+  (1 conversación; 5 tickets activos; anónimo solo FAQ), D-003 (conversación permanente; se
+  cierran tickets, visibles en el hilo) y, por derivación, D-017 y D-019. D-018 provisional.
+  Detalle en [CLAUDE.md](CLAUDE.md).
+- **De negocio abiertas:** D-004…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
+  [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea: **D-005** (guardrails),
+  **D-007** (IA OFF en handoff), **D-008** (taxonomía tickets), **D-010** (campos de usuario),
+  **D-011** (contrato HERALD), **D-014** (retención).
 - **Técnicas abiertas (TD):** ver [CLAUDE.md](CLAUDE.md) — TD-001 (polling vs WebSocket), TD-002
   (Haiku directo vs Bedrock), TD-003 (Vercel vs Amplify), TD-004 (cuentas separadas), TD-005
   (PythonFunction vs DockerImageFunction), TD-007 (dominio custom). TD-006 quedó **cerrada**:

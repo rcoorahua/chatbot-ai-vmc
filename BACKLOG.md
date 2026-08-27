@@ -17,20 +17,21 @@ Cada ticket declara cuatro cosas:
 
 ## 1. Qué se puede empezar hoy
 
-Estos siete tickets **no dependen de ninguna decisión abierta**. Es todo el trabajo disponible
-ahora mismo, y alcanza para que dos personas avancen varios días en paralelo.
+**Hechos (2026-08-27):** T-01, T-02, T-05 (parcial), T-06, T-10, T-12 — es la F1 completa: chat
+público con identidad VMC, persistencia y widget. T-20 y T-21 (clasificador y redactor) también
+están hechos desde el 2026-08-27 vía TD-008.
+
+Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disponible ahora mismo:
 
 | Ticket | Qué es | Track |
 |---|---|---|
-| T-01 | Configuración y clientes AWS (`core`) | Fundación |
-| T-02 | Modelos y repositorio de conversaciones y mensajes | Dominio |
 | T-03 | Módulo de asesores completo | Dominio |
 | T-04 | Repositorio de consumo de IA (`AIUsage`) | IA |
-| T-10 | Estructura del frontend y componentes del chat | Frontend |
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
 
-**T-01 es prerrequisito de casi todo**, así que conviene hacerlo primero y mergearlo rápido.
+El siguiente bloque grande (T-24, el worker de IA que hace que el bot responda) espera solo a
+D-004, D-006 y D-020 — tres optimizaciones que pueden cerrarse con "no por ahora".
 
 ---
 
@@ -72,7 +73,10 @@ ahora mismo, y alcanza para que dos personas avancen varios días en paralelo.
    [D-015]               [D-013]
 ```
 
-`[...]` = decisiones que hay que cerrar antes de empezar ese ticket.
+`[...]` = decisiones que hay que cerrar antes de empezar ese ticket. **Ya hechos:** T-01, T-02,
+T-05, T-06, T-10, T-12, T-20, T-21 (las decisiones que aparecen entre corchetes en esa rama —
+D-001, D-002, D-018, TD-002 vía TD-008— se cerraron el 2026-08-27; D-005 quedó con valores
+provisionales configurables).
 
 ---
 
@@ -80,9 +84,9 @@ ahora mismo, y alcanza para que dos personas avancen varios días en paralelo.
 
 ### Fundación
 
-**T-01 · Configuración y clientes AWS**
+**T-01 · Configuración y clientes AWS** — ✅ hecho 2026-08-27
 Requerimientos: base de todo · Depende de: — · Bloqueado por: nada
-Archivos: `backend/core/config.py`, `backend/core/aws.py`
+Archivos: `backend/core/config.py`, `backend/core/aws.py` (+ `clock.py`, `jobs.py`)
 Qué incluye: clase `Settings` con pydantic-settings leyendo las variables que ya define
 `.env.example`; factorías de clientes boto3 (DynamoDB, SQS, S3) que pasan `endpoint_url` solo
 cuando existe, para que el mismo código sirva en local y en AWS. Los límites y políticas se
@@ -91,7 +95,8 @@ Criterio: un test verifica que sin `endpoint_url` el cliente apunta a AWS y con 
 
 ### Dominio
 
-**T-02 · Modelos y repositorio de conversaciones y mensajes**
+**T-02 · Modelos y repositorio de conversaciones y mensajes** — ✅ hecho 2026-08-27
+(`tests/test_chat_conversations.py`)
 Requerimientos: RF-008 · Depende de: T-01 · Bloqueado por: nada
 Archivos: `backend/conversations/models.py`, `backend/conversations/repository.py`
 Qué incluye: modelos Pydantic `Conversation` y `Message`; repositorio con las operaciones ya
@@ -110,29 +115,31 @@ resuelve un asesor a partir de los claims del JWT y registra `last_login_at`. Ro
 pero el campo `role` queda listo para crecer.
 Criterio: dado un `cognito_sub`, el servicio devuelve el asesor y marca su último acceso.
 
-**T-05 · Lógica de conversación**
+**T-05 · Lógica de conversación** — ✅ hecho 2026-08-27 en lo que D-002/D-003/D-018 cubren
 Requerimientos: RF-009, RF-010, RF-011, RF-013, RF-014 · Depende de: T-02
-**Bloqueado por: D-002** (máximo de conversaciones activas), **D-005** (guardrails),
-**D-018** (duración de sesión anónima), D-003 (cierre y reapertura), D-004 (resumen)
+Cerradas: D-002 (1 conversación), D-003 (conversación permanente; se cierran tickets), D-018
+(provisional). **Pendiente:** rate limit y límites por conversación (D-005 — hoy solo el largo del
+mensaje, configurable) y el resumen (D-004). Las transiciones de estado y el cierre de tickets
+llegan con T-07 (F5).
 Archivos: `backend/conversations/service.py`
-Qué incluye: crear conversación respetando el máximo, transiciones de estado, límites de mensajes
-y frecuencia, ventana de contexto para la IA, cierre.
 
-**T-06 · Endpoints del chat público**
+**T-06 · Endpoints del chat público** — ✅ hecho 2026-08-27 (`tests/test_chat_api.py`)
 Requerimientos: RF-001..RF-005, RF-012 · Depende de: T-05
-**Bloqueado por: D-001** (mecanismo de identidad VMC)
+Cerrada: D-001 (JWT firmado por el servidor de VMC, contrato en `widget/README.md`)
 Archivos: `backend/api/routers/chat.py`, `backend/core/auth.py`
 Qué incluye: crear conversación, enviar mensaje (responde 202 y encola), listar mensajes para el
 sondeo del frontend, y la dependencia de identidad — que jamás confía en un `user_id` del
 frontend (RNF-005).
 
 **T-07 · Handoff y tickets**
-Requerimientos: RF-003, RF-022..RF-028 · Depende de: T-05, T-03, T-30
-**Bloqueado por: D-007** (cuánto dura la IA apagada), **D-008** (taxonomía), **D-017**
-(relación conversación↔ticket), D-019 (anónimo sin correo), D-016 (formato Slack)
+Requerimientos: RF-022..RF-028 · Depende de: T-05, T-03, T-30
+**Bloqueado por: D-007** (cuánto dura la IA apagada), **D-008** (taxonomía), D-016 (formato
+Slack). D-017 y D-019 quedaron cerradas el 2026-08-27: N tickets por conversación (máx. 5
+activos), cerrar un ticket no cierra la conversación, y el anónimo no deriva (RF-003 sin efecto).
 Archivos: `backend/tickets/*`
-Qué incluye: criterios de derivación, creación del ticket, apagado de la IA, mensaje de espera
-una sola vez, y encolado de la notificación a Slack.
+Qué incluye: criterios de derivación, creación del ticket (tope de 5 activos por usuario), apagado
+de la IA, mensaje de espera una sola vez, encolado de la notificación a Slack, y al cerrar: mensaje
+SYSTEM `TICKET_CLOSED` en el hilo + conversación de vuelta a `BOT_ATTENDING`.
 
 **T-08 · Endpoints del asesor**
 Requerimientos: RF-029..RF-039 · Depende de: T-07, T-03
@@ -198,12 +205,12 @@ Archivos: `backend/images/*`
 
 ### Frontend
 
-**T-10 · Estructura y componentes del chat**
+**T-10 · Estructura y componentes del chat** — ✅ hecho 2026-08-27
 Requerimientos: RF-001, RF-034, RF-036 · Depende de: — · Bloqueado por: nada
-Archivos: `frontend/src/`
-Qué incluye: layout, rutas, y los componentes del hilo de chat (burbujas por remitente, marca de
-tiempo, campo de envío) trabajando **contra datos de prueba locales**. Conectarlo al backend
-depende de T-06, pero construirlo no.
+Archivos: `widget/subastin.js` (no `frontend/src/`: el widget es un script embebible sin build,
+la app Next.js queda para el asesor y el dashboard)
+Qué incluye: inicio, hilo (burbujas por remitente, hora por mensaje, notas de sistema al estilo
+Intercom), centro de ayuda (estructura; el contenido lo entrega VMC), campo de envío.
 
 **T-11 · Pantalla de bandeja del asesor**
 Requerimientos: RF-032, RF-035, RF-036 · Depende de: — · Bloqueado por: nada
@@ -211,10 +218,10 @@ Archivos: `frontend/src/`
 Qué incluye: lista de conversaciones con estado, tiempo de espera y contador de no leídos, contra
 datos de prueba. Los campos del usuario que se muestran en el detalle dependen de D-010.
 
-**T-12 · Conexión del widget con el backend**
+**T-12 · Conexión del widget con el backend** — ✅ hecho 2026-08-27
 Requerimientos: RF-001, RF-037, RF-038 · Depende de: T-06, T-10
-**Bloqueado por: D-001** (cómo se embebe y cómo llega la identidad)
-Qué incluye: sondeo de mensajes nuevos, reintento local de mensajes fallidos sin persistirlos.
+Cerrada: D-001. Incluye sesión (anónima/autenticada), sondeo de mensajes nuevos con cursor,
+reintento local con el mismo `client_message_id`, y `widget/test.html` para probarlo.
 
 **T-50 · Dashboard**
 Requerimientos: RF-047..RF-049 · Depende de: T-08
@@ -251,25 +258,24 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 
 | Decisión | Desbloquea | Impacto |
 |---|---|---|
-| **D-001** identidad VMC | T-06, T-12 — todo el chat autenticado y el embed del widget | **Máximo.** Sin esto no hay producto usable |
-| **D-005** guardrails | T-05, T-40 — límites, y con ellos el chat funcional | Alto |
-| **D-002** máx. conversaciones | T-05 | Alto — es una respuesta de una línea |
-| **D-018** sesión anónima | T-05 | Alto — junto con D-002 y D-005 completan T-05 |
+| ~~**D-001** identidad VMC~~ | cerrada 2026-08-27 | — |
+| **D-005** guardrails | T-40 y el rate limit de T-05 (el largo de mensaje ya es configurable) | Alto |
+| ~~**D-002** máx. conversaciones~~ | cerrada 2026-08-27 | — |
+| ~~**D-018** sesión anónima~~ | provisional desde 2026-08-27 (confirmar) | — |
 | **D-008** taxonomía de tickets | T-07 | Alto — y es la que más trabajo de negocio requiere |
 | **D-007** duración de IA apagada | T-07 | Alto — respuesta corta |
-| **D-017** conversación↔ticket | T-07 | Alto — respuesta corta |
+| ~~**D-017** conversación↔ticket~~ | cerrada 2026-08-27 | — |
 | **D-010** campos del usuario | T-08, T-11 | Alto — necesita coordinación con Bruce |
 | **D-011** contrato HERALD | T-23 | Alto — depende del equipo de HERALD |
 | **TD-002** acceso a Haiku | T-20, T-21, T-24 | Alto — se resuelve con una pregunta al equipo AWS |
 | D-015 imágenes | T-40 | Medio |
 | D-013 métricas | T-50 | Medio |
 | D-004 resumen · D-006 triviales · D-020 debounce | T-21, T-24 | Medio — optimizaciones, no bloquean lo esencial |
-| D-016 Slack · D-019 anónimo sin correo · D-009 tags | T-07, T-30 | Bajo — ajustes de detalle |
+| D-016 Slack · D-009 tags (D-019 cerrada 2026-08-27) | T-07, T-30 | Bajo — ajustes de detalle |
 | **D-014** retención | Nada de código; define el TTL antes de crear tablas en AWS | Alto para infraestructura |
 
-**Tres respuestas cortas —D-002, D-007, D-017— desbloquean dos tickets grandes.** Vale la pena
-pedirlas primero aunque no sean las más importantes: son las de mejor relación entre esfuerzo de
-decisión y trabajo liberado.
+**Lo que más trabajo libera ahora:** D-004 + D-006 + D-020 (con "no por ahora" basta) destraban
+T-24 y con él la primera respuesta real del bot; D-007 + D-008 destraban T-07 (handoff).
 
 ---
 
