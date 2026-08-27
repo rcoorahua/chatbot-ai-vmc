@@ -26,6 +26,7 @@ cd widget; python -m http.server 8080                # widget: http://localhost:
 
 python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/helpcenter/*.md + chunks.json
 python -m scripts.helpcenter_upload --verify         # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE)
+python -m scripts.advisor_token --sub sub-ana-001 --name "Ana Torres"   # Bearer para /advisor en local (ADVISOR_DEV_AUTH=1)
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
@@ -120,6 +121,14 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   cierra la conversación. Sigue abierto el autocierre de un ticket sin respuesta (lo absorbe D-007).
 - **D-018 (provisional, derivada de RF-004)**: sesión anónima = la pestaña del navegador
   (`sessionStorage`) con token de 24 h (`ANONYMOUS_SESSION_TTL_HOURS`). Confirmar con Silvana + Julio.
+- **D-021 Alta de asesores**: auto-alta `ACTIVE` al primer login con JWT válido de Cognito
+  (`advisors/service.py`). La invitación en Cognito es el único control; `DISABLED` se rechaza.
+- **D-022 Quién responde**: solo el asesor que **tomó** la conversación (asignada a él,
+  `IN_ATTENTION`); tomar no requiere ticket. Se puede tomar `PENDING_ADVISOR` y también
+  `BOT_ATTENDING` sin asesor (intervención proactiva); tomarla apaga el bot. Toma atómica (AC-005).
+- **D-023 Cierre mínimo sin ticket (provisional hasta F5)**: `POST /advisor/…/close` deja la nota
+  `TICKET_CLOSED`, devuelve la conversación a `BOT_ATTENDING` con bot encendido y sin asesor. No
+  crea fila en Tickets; cuando exista el módulo, el cierre pasa a cerrar el ticket.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -171,6 +180,8 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   nuevo sigue este layout.
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
+  **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
+  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-007/D-008) y D-010.
   `agent/` tiene clasificador, redactor y **recuperación en Pinecone** listos, más la ingesta
   del Centro de Ayuda (`scripts/helpcenter_*`), pero **sin pipeline** (`workers/ai_worker.py`
   bloqueado por D-004/D-006/D-020): el bot aún no responde. El resto son stubs con docstrings; se
@@ -189,7 +200,11 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
 - `backend/api/main.py`: `Mangum(app, lifespan="off")` — con lifespan activo la Lambda se cuelga
   en el startup. Los routers `advisor`/`dashboard` **no** validan JWT en código: lo hace el
-  authorizer de Cognito en el API Gateway (T1).
+  authorizer de Cognito en el API Gateway (T1); el backend solo lee los claims que Mangum deja en
+  `request.scope["aws.event"]` (`core/auth.py`). En local `ADVISOR_DEV_AUTH=1` instala
+  `api/dev_auth.py`, que verifica un JWT propio (`ADVISOR_DEV_JWT_SECRET`) y deja los claims en el
+  mismo sitio; se ignora dentro de una Lambda. Por eso no hay que "pushear el infra" para probar
+  `/advisor`: el stack ya trae el User Pool y el authorizer, y se despliega junto con el código.
 - Los workers devuelven siempre `{"batchItemFailures": [...]}` (contrato de SQS partial batch
   response, T3) — lo verifica `tests/test_smoke.py`.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,

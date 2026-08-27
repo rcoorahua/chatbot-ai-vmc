@@ -25,6 +25,7 @@ _OPTIONAL_TEXT_FIELDS = (
     "vmc_identity_secret",
     "session_signing_key",
     "pinecone_api_key",
+    "advisor_dev_jwt_secret",
 )
 
 
@@ -61,6 +62,19 @@ class Settings(BaseSettings):
     # D-018 (sesion anonima): valor PROVISIONAL derivado de la regla "el anonimo no conserva
     # historial" (RF-004). Solo acota cuanto dura el token; los datos los rige D-014.
     anonymous_session_ttl_hours: int = 24
+
+    # ── Asesores (RF-006, T1) ───────────────────────────────────────────────────────────────
+    # En AWS el JWT de Cognito lo valida el authorizer del API Gateway y la Lambda recibe los
+    # claims en el evento; el backend nunca ve el token. En local no hay API Gateway, asi que
+    # `ADVISOR_DEV_AUTH=1` activa un middleware que imita al authorizer: verifica un JWT HS256
+    # firmado con `ADVISOR_DEV_JWT_SECRET` y deja los claims en el mismo sitio del evento
+    # (backend/api/dev_auth.py). Se ignora dentro de una Lambda aunque este activado.
+    advisor_dev_auth: bool = False
+    advisor_dev_jwt_secret: str | None = None
+    # Cuantos mensajes ve el asesor al abrir un hilo (RF-012/RF-033): los ultimos N, con
+    # paginacion hacia atras para el historial completo.
+    advisor_thread_page_size: int = 20
+    inbox_page_size: int = 50
 
     # ── RAG en Pinecone (RF-017/018/019) ────────────────────────────────────────────────────
     # Mismos nombres de variable que usaba el proyecto de referencia, para que una credencial

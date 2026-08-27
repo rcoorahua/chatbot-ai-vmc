@@ -4,16 +4,14 @@ Atributos segun REQUERIMENTS.md §1.3-1.4 mas los ajustes 1-3 de §1.11 (`unread
 `wait_message_sent`, `expires_at` en Messages) y el ajuste 6 que introduce esta fase: `status`
 en Messages, el "estado tecnico" que RF-008 exige por mensaje. Estados y tipos en ingles (T7).
 
-Los modelos se convierten a item DynamoDB con `to_item()` — que omite los None a proposito: un
-atributo ausente no entra a los GSI (una conversacion anonima sin `user_id` no aparece en
-`gsi1_user`), mientras que un NULL explicito si ocuparia espacio y confundiria a las consultas.
+Los modelos se convierten a item DynamoDB con `to_item()` (core/dynamo_model.py), que omite los
+None a proposito: un atributo ausente no entra a los GSI.
 """
 
-from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from backend.core.dynamo_model import DynamoModel
 
 
 class ConversationStatus(StrEnum):
@@ -77,26 +75,8 @@ class SystemEvent(StrEnum):
     CONVERSATION_CLOSED = "CONVERSATION_CLOSED"
 
 
-def _from_dynamo(value: Any) -> Any:
-    """boto3 devuelve todos los numeros como Decimal; los modelos quieren int/float."""
-    if isinstance(value, Decimal):
-        return int(value) if value == value.to_integral_value() else float(value)
-    if isinstance(value, dict):
-        return {key: _from_dynamo(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_from_dynamo(item) for item in value]
-    return value
-
-
-class _DynamoModel(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
-
-    def to_item(self) -> dict[str, Any]:
-        return self.model_dump(exclude_none=True)
-
-    @classmethod
-    def from_item(cls, item: dict[str, Any]):
-        return cls.model_validate(_from_dynamo(item))
+# Alias historico: el modelo base vive en core/dynamo_model.py.
+_DynamoModel = DynamoModel
 
 
 class Conversation(_DynamoModel):
