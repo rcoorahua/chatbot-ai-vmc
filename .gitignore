@@ -25,3 +25,10 @@ REFERENCIA/
 
 # Salida de cdk synth (build)
 infra/cdk.out/
+
+# Contenido del Centro de Ayuda descargado y sus chunks. Se regeneran con
+# `python -m scripts.helpcenter_fetch`, asi que versionarlos solo duplicaria contenido que ya
+# es publico en el sitio de VMC y ensuciaria cada diff con texto regenerado.
+data/helpcenter/*.md
+data/helpcenter/chunks.json
+!data/helpcenter/README.md

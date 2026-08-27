@@ -5,6 +5,6 @@ mangum
 pydantic-settings
 boto3
 httpx
-anthropic          # Haiku (claude-haiku-4-5) — clasificacion/orquestacion (T9; acceso TD-002)
-google-genai       # Gemini — redaccion (T9)
-# pinecone         # habilitar en F3 (RAG)
+anthropic          # Haiku (claude-haiku-4-5) — plan B del clasificador (T9; acceso TD-002)
+google-genai       # Gemini — clasificacion y redaccion (TD-008)
+pinecone           # RAG del Centro de Ayuda (RF-017); embebe en su propio servicio
