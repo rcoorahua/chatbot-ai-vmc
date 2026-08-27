@@ -1,4 +1,8 @@
-# CLAUDE.md — Subastín (chatbot-ai-vmc)
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# Subastín (chatbot-ai-vmc)
 
 Plataforma de atención propia de VMC que reemplaza a Intercom: chat web con IA
 (Haiku clasifica, Gemini redacta, RAG en Pinecone, catálogo HERALD) y handoff a asesores humanos.
@@ -6,6 +10,35 @@ Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con
 **Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
 DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
 dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repartir trabajo.
+
+## Comandos
+
+Entorno: `.venv` + `pip install -e ".[dev]"`. Python ≥ 3.12, Node 22 (solo frontend).
+
+```powershell
+docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
+python -m scripts.local_setup     # crea las 5 tablas, 2 colas y el bucket — idempotente
+python -m scripts.seed_data       # dataset base de las pruebas de lectura
+uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
+
+python -m pytest -q                                  # suite completa (lo que corre el CI)
+python -m pytest tests/test_dynamo_queries.py -q     # un archivo
+python -m pytest -k "gsi1" -q                        # un patrón / una prueba
+python -m ruff check .            # lint (line-length 100, reglas E/F/I/UP/B)
+
+cd infra; npx -y aws-cdk@2 synth -c stage=stage      # valida la infra sin desplegar
+cd frontend; npm run dev                             # Next.js 16 en :3000
+```
+
+`local_setup` y `seed_data` hay que **re-ejecutarlos tras cada reinicio de contenedores**:
+dynamodb-local corre `-inMemory` y pierde las tablas.
+
+Los tests corren contra **dynamodb-local real**, no mocks: si los contenedores no están arriba
+se saltan en local, pero **fallan duro en CI** (`conftest.py` distingue por la variable `CI`).
+De ahí que un GSI mal definido se detecte en `tests/test_dynamo_queries.py` y no en producción.
+
+Hook local obligatorio al clonar: `git config core.hooksPath .githooks` (bloquea push directo a
+`main`/`develop`; escape hatch `ALLOW_DIRECT_PUSH=1`).
 
 ## Metodología (skills en `.claude/skills/`)
 
@@ -107,3 +140,22 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
 - Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
   entorno local de dev — mantener ambos en sync al agregar una dependencia.
+
+**Invariantes que cruzan archivos (romperlos no lo detecta el linter):**
+
+- El esquema DynamoDB está **duplicado a propósito** en `infra/stacks/subastin_stack.py` (AWS) y
+  `scripts/local_setup.py` (local). Cambiar una clave o un GSI exige tocar **los dos** — si no,
+  las pruebas pasan en local contra un esquema que no existe en stage.
+- Los nombres de variable de entorno son el contrato entre los tres entornos: `common_env` del
+  stack, `nombres_de_tabla()` de `local_setup.py` y `.env.example` usan **los mismos**
+  (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
+- `backend/api/main.py`: `Mangum(app, lifespan="off")` — con lifespan activo la Lambda se cuelga
+  en el startup. Los routers `advisor`/`dashboard` **no** validan JWT en código: lo hace el
+  authorizer de Cognito en el API Gateway (T1).
+- Los workers devuelven siempre `{"batchItemFailures": [...]}` (contrato de SQS partial batch
+  response, T3) — lo verifica `tests/test_smoke.py`.
+- Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
+  nunca como variables de entorno del stack.
+- `frontend/` usa **Next.js 16** (App Router, React 19, Tailwind v4): APIs y convenciones difieren
+  del entrenamiento — consultar `frontend/node_modules/next/dist/docs/` antes de escribir código,
+  como pide `frontend/AGENTS.md`. Se despliega fuera de CDK (TD-003).
