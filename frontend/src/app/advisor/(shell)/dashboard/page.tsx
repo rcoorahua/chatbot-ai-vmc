@@ -1,5 +1,7 @@
 import Link from "next/link";
 import Table from "@/concorde/components/Table";
+import Button from "@/concorde/components/Button";
+import AvatarZone from "@/concorde/components/AvatarZone";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { MOCK_CONVERSATIONS } from "@/lib/mock-data";
@@ -100,17 +102,29 @@ export default function DashboardPage() {
           caption="Conversaciones recientes"
           columns={[
             { header: "Usuario" },
+            { header: "Último mensaje", className: "hidden md:table-cell" },
             { header: "Estado", align: "center" },
             { header: "Espera", align: "center" },
             { header: "", align: "right" },
           ]}
           rows={recent.map((conv) => [
-            <span key="user">{conv.user_name ?? "Anónimo"}</span>,
+            <div key="user" className="flex items-center gap-3">
+              <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
+              <div>
+                <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
+                {conv.user_id && <p className="text-xs text-neutral-500">{conv.user_id}</p>}
+              </div>
+            </div>,
+            <span key="preview" className="line-clamp-1 max-w-xs text-neutral-600">
+              {conv.last_message_preview}
+            </span>,
             <StatusBadge key="status" status={conv.status} />,
             <span key="wait">{formatWaitTime(conv.last_message_at, MOCK_NOW_MS)}</span>,
-            <Link key="open" href={`/advisor/conversations/${conv.conversation_id}`} className="text-sm underline">
-              Ver
-            </Link>,
+            <div key="open" className="flex justify-end">
+              <Link href={`/advisor/conversations/${conv.conversation_id}`}>
+                <Button variant="outline">Ver</Button>
+              </Link>
+            </div>,
           ])}
         />
       </div>
