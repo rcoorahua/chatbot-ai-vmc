@@ -31,5 +31,21 @@ def handler(event: dict, context) -> dict:
 
 
 def _process(body: str) -> None:
-    # TODO: pipeline descrito arriba. NO implementar sin cerrar D-004/D-006/D-020 y TD-002.
+    # TODO: pipeline descrito arriba. NO implementar sin cerrar D-004/D-006/D-020.
+    #
+    # Piezas ya disponibles para componer aqui (TD-008: Gemini atiende ambas etapas):
+    #   agent.classifier.classify(mensaje, ultimo_mensaje_del_asistente) -> ClassificationResult
+    #   agent.writer.write_answer(mensaje, fragmentos, historial)        -> WriterResult
+    #
+    # Al conectarlas, dos contratos que no son opcionales:
+    #   - `WriterResult.has_evidence == False` significa handoff (RF-018), no reintento.
+    #   - Cada resultado trae `usage`, `model` y `latency_ms` para AIUsage; el `source` del
+    #     clasificador ("rules" | "model" | "fallback") mide cuanto trafico ahorran las reglas.
+    #
+    # TODO D-008: subtipo de escalacion para elegir el mensaje de espera y clasificar el ticket.
+    # El proyecto de referencia distinguia nueve (legal_threat, live_auction, legal_vehicle,
+    # frustrated, pre_abandonment, confusion, b2b, doubt, direct_simple) con un mensaje propio
+    # por subtipo. `ClassificationResult.rule` ya nombra el motivo cuando decide una regla
+    # (legal_threat, funds_claim, bot_rejection...) y es el insumo natural para esa taxonomia,
+    # pero los tipos definitivos y sus campos obligatorios los cierran Silvana + Julio.
     raise NotImplementedError
