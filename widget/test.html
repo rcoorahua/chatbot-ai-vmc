@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subastín — página de prueba del widget</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f2e; background: #f6f6f9; }
+  header { background: #3b2a8c; color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
+  header strong { font-size: 18px; }
+  main { max-width: 760px; margin: 28px auto; padding: 0 20px; }
+  .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 10px rgba(24,16,64,.08); margin-bottom: 18px; }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  label { display: block; font-size: 13px; color: #555; margin: 10px 0 4px; }
+  input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid #d9d9e3; border-radius: 8px; font: inherit; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mode { display: flex; gap: 18px; margin: 6px 0 4px; }
+  button.primary { background: #ff6a4d; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 16px; }
+  .warn { background: #fff1f0; color: #8a1c12; border: 1px solid #f5c2bd; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  pre { background: #1f1f2e; color: #e8e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; }
+  .muted { color: #6a6a7e; font-size: 13px; }
+  #status { font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <strong>VMC Subastas — simulación de la página anfitriona</strong>
+  <span style="opacity:.8;font-size:13px">Subastín · widget/test.html</span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Cómo usar esta página</h2>
+    <p class="muted">
+      Simula una página de <code>vmcsubastas.com</code> con el widget embebido. Necesita la API local
+      corriendo (<code>uvicorn backend.api.main:app --reload --port 8000</code>) con
+      <code>VMC_IDENTITY_SECRET</code> en <code>.env</code>. Elige un modo, aplica y usa el botón morado
+      abajo a la derecha.
+    </p>
+    <p class="warn">
+      <strong>Solo para pruebas locales.</strong> Aquí el JWT de identidad se firma en el navegador con el
+      secreto de dev para simular lo que en producción hace el <em>servidor</em> de VMC. El secreto real
+      jamás va en una página web.
+    </p>
+  </div>
+
+  <form class="card" id="config" method="get">
+    <h2>Configuración</h2>
+    <div class="mode">
+      <label><input type="radio" name="mode" value="anon"> Visitante anónimo</label>
+      <label><input type="radio" name="mode" value="auth"> Usuario autenticado en VMC</label>
+    </div>
+    <div class="row">
+      <div>
+        <label for="id">ID de usuario VMC (<code>sub</code>)</label>
+        <input type="text" id="id" name="id" value="215011">
+      </div>
+      <div>
+        <label for="name">Nombre</label>
+        <input type="text" id="name" name="name" value="Aaron">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="email">Correo</label>
+        <input type="text" id="email" name="email" value="aaron@example.test">
+      </div>
+      <div>
+        <label for="secret">Secreto compartido (dev, = <code>VMC_IDENTITY_SECRET</code>)</label>
+        <input type="text" id="secret" name="secret" value="dev-vmc-identity-secret">
+      </div>
+    </div>
+    <label for="api">URL de la API</label>
+    <input type="text" id="api" name="api" value="http://localhost:8000">
+    <button class="primary" type="submit">Aplicar y cargar el widget</button>
+    <div id="status" class="muted"></div>
+  </form>
+
+  <div class="card">
+    <h2>Lo que la página deja para el widget</h2>
+    <p class="muted">Así queda <code>window.subastinSettings</code> con la configuración actual:</p>
+    <pre id="settings-dump">(sin cargar)</pre>
+  </div>
+</main>
+
+<script>
+  // Firma HS256 en el navegador. SOLO simulacion: en produccion esto vive en el backend de VMC.
+  async function signJwt(payload, secret) {
+    const enc = new TextEncoder();
+    const b64 = (bytes) =>
+      btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const header = b64(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+    const body = b64(enc.encode(JSON.stringify(payload)));
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = await crypto.subtle.sign("HMAC", key, enc.encode(`${header}.${body}`));
+    return `${header}.${body}.${b64(signature)}`;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const form = document.getElementById("config");
+  const mode = params.get("mode") || "anon";
+  form.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+  for (const field of ["id", "name", "email", "secret", "api"]) {
+    if (params.has(field)) form.elements[field].value = params.get(field);
+  }
+
+  async function boot() {
+    const status = document.getElementById("status");
+    const dump = document.getElementById("settings-dump");
+    const apiUrl = form.elements.api.value.trim();
+    const settings = { apiUrl };
+
+    if (mode === "auth") {
+      if (!window.crypto || !crypto.subtle) {
+        status.textContent = "Este navegador no expone WebCrypto en este origen. Sirve la carpeta con: python -m http.server 8080";
+        return;
+      }
+      const payload = {
+        sub: form.elements.id.value.trim(),
+        name: form.elements.name.value.trim(),
+        email: form.elements.email.value.trim(),
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      };
+      settings.userJwt = await signJwt(payload, form.elements.secret.value);
+      status.textContent = `Modo autenticado: JWT firmado para sub=${payload.sub} (expira en 1 h).`;
+    } else {
+      status.textContent = "Modo visitante: sin userJwt, el widget abre una sesión anónima.";
+    }
+
+    dump.textContent = JSON.stringify(settings, null, 2);
+    window.subastinSettings = settings;
+    const script = document.createElement("script");
+    script.src = "subastin.js";
+    script.async = true;
+    document.body.appendChild(script);
+  }
+
+  boot();
+</script>
+</body>
+</html>

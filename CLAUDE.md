@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Subastín (chatbot-ai-vmc)
 
 Plataforma de atención propia de VMC que reemplaza a Intercom: chat web con IA
-(Haiku clasifica, Gemini redacta, RAG en Pinecone, catálogo HERALD) y handoff a asesores humanos.
+(Gemini clasifica y redacta —TD-008—, RAG en Pinecone, catálogo HERALD) y handoff a asesores humanos.
 Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con CDK v2 Python.
 **Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
 DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
@@ -13,13 +13,16 @@ dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repa
 
 ## Comandos
 
-Entorno: `.venv` + `pip install -e ".[dev]"`. Python ≥ 3.12, Node 22 (solo frontend).
+Entorno: `.venv` + `pip install -e ".[dev]"`. Python ≥ 3.12, Node 22 (frontend y `node --check`
+del widget). `.env` a partir de `.env.example`: el chat necesita `VMC_IDENTITY_SECRET` y
+`SESSION_SIGNING_KEY` (cualquier texto en dev).
 
 ```powershell
 docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
 python -m scripts.local_setup     # crea las 5 tablas, 2 colas y el bucket — idempotente
 python -m scripts.seed_data       # dataset base de las pruebas de lectura
 uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
+cd widget; python -m http.server 8080                # widget: http://localhost:8080/test.html
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
@@ -88,17 +91,41 @@ moverla a "cerradas" aquí y reflejarla en PLAN.md.
 - `visibility_timeout` de cada cola ≥ 6× el timeout de su worker.
 - Los GSI se deciden ANTES de crear tablas en stage (backfill posterior es migración manual).
 
+## Decisiones de NEGOCIO cerradas (2026-08-27, Aaron)
+
+Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`,
+`conversations/service.py`, `widget/`.
+
+- **D-001 Identidad VMC ↔ Subastín**: JWT de identidad **firmado por el servidor de VMC** (HS256,
+  secreto compartido `VMC_IDENTITY_SECRET`), dejado en la página como
+  `window.subastinSettings.userJwt` y verificado en `POST /chat/sessions`, que devuelve un token de
+  sesión propio (`SESSION_SIGNING_KEY`). Es la "identity verification" de Intercom en su variante
+  vigente (JWT; el `user_hash` está deprecado). **Ajuste técnico sobre lo pedido** ("el widget lee
+  la cookie"): `subastop_jwt` y `subastop_auth_user` son **HttpOnly** —ningún script puede
+  leerlas— y compartir el secreto de sesión de VMC dejaría a Subastín forjar sesiones de VMC.
+  Contrato para VMC en `widget/README.md`. La identidad visible del asistente es **"Subastín"**.
+- **D-002 Conversaciones activas**: **1** por usuario (autenticado y anónimo). Máximo **5 tickets
+  activos** por usuario (se aplica en F5). **Anónimo = solo FAQ**: sin handoff ni ticket, porque no
+  hay forma de identificarlo para continuar un ticket días después; el widget lo invita a iniciar
+  sesión. Consecuencias: cierra **D-019** (no existe el ticket anónimo) y deja **RF-003 / AC-003 /
+  RB-002 sin efecto** — el spec aún dice "correo obligatorio al derivar anónimo"; hay que retirarlos
+  o confirmar la lectura alternativa (ticket anónimo que muere con la sesión).
+- **D-003 Cierre e historial**: **una sola conversación permanente** por usuario autenticado; no se
+  crea otra ni se "reabre". Lo que se cierra son los **tickets**, que quedan en el hilo como notas
+  de sistema (mensaje SYSTEM `TICKET_CLOSED` → "Ticket cerrado"), igual que las notas de Intercom.
+  Cierra también **D-017**: N tickets por conversación (máx. 5 activos) y cerrar un ticket **no**
+  cierra la conversación. Sigue abierto el autocierre de un ticket sin respuesta (lo absorbe D-007).
+- **D-018 (provisional, derivada de RF-004)**: sesión anónima = la pestaña del navegador
+  (`sessionStorage`) con token de 24 h (`ANONYMOUS_SESSION_TTL_HOURS`). Confirmar con Silvana + Julio.
+
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
 Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-001 | Mecanismo identidad VMC ↔ Subastín (iframe/script/token/S2S) | Alta | auth del chat, embed del widget |
-| D-002 | Máx. conversaciones activas (autenticado) | Alta | F1 |
-| D-003 | Cierre/reapertura/historial visible + autocierre | Alta | F7, worker-maintenance |
 | D-004 | Estrategia de resumen para IA | Media | pipeline IA |
-| D-005 | Guardrails cuantitativos (límites, rate limit) | Alta | F1 |
+| D-005 | Guardrails cuantitativos (límites, rate limit) | Alta | Valores **provisionales** en `core/config.py` (`MAX_MESSAGE_CHARS=2000`); sin rate limit aún |
 | D-006 | Saludos/spam/repetición sin llamada IA | Media | F2 |
 | D-007 | Duración IA OFF durante handoff | Alta | F5 |
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
@@ -110,16 +137,15 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-014 | Retención (¿6 meses?) conversaciones/imágenes | Alta | TTL, S3 lifecycle |
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
-| D-017 | Relación conversación ↔ ticket (¿N tickets?) | Alta | F5 |
-| D-018 | Sesión anónima activa (duración técnica) | Media | F1 |
-| D-019 | Handoff anónimo sin correo | Media | F5 |
 | D-020 | Debounce/agregación de mensajes antes de IA | Media | F2 |
+
+D-001, D-002, D-003, D-017 y D-019 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
 | ID | Tema | Recomendación actual |
 |---|---|---|
-| TD-001 | Entrega en tiempo real: polling vs API Gateway WebSocket | Polling 2–3 s para MVP (cumple RNF-001 ≤10 s); WebSocket requeriría tabla de conexiones extra |
+| TD-001 | Entrega en tiempo real: polling vs API Gateway WebSocket | Polling **implementado** en `widget/subastin.js` (2,5 s abierto / 15 s cerrado, pausa con pestaña oculta); cumple RNF-001. WebSocket solo si el costo de sondeo lo justifica |
 | TD-002 | Haiku vía API Anthropic directa vs Amazon Bedrock | Preguntar al equipo AWS si Bedrock está habilitado (PLAN §6.8); sin respuesta aún |
 | TD-003 | Hosting frontend: Vercel vs Amplify | Sin recomendación aún; fuera del stack CDK en ambos casos |
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
@@ -137,8 +163,13 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `advisors`) → integraciones hoja (`agent`, `catalog`, `notifications`, `images`) → `core`.
   El dominio NUNCA importa integraciones; la composición vive en la entrada (p. ej. el pipeline
   IA en `workers/ai_worker.py`). Cada `repository.py` es el único que conoce claves/GSIs.
-- Infra en `infra/`, frontend en `frontend/`. Todo el código nuevo sigue este layout.
-- Los módulos son stubs con docstrings: **los endpoints y la lógica aún no están definidos** — se
+- Infra en `infra/`, app del asesor/dashboard en `frontend/` (Next.js), **widget del chat en
+  `widget/`** (JS plano sin build, se embebe en VMC; `test.html` para probarlo). Todo el código
+  nuevo sigue este layout.
+- Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
+  `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
+  `agent/` tiene clasificador y redactor listos pero **sin pipeline** (`workers/ai_worker.py`
+  bloqueado por D-004/D-006/D-020): el bot aún no responde. El resto son stubs con docstrings; se
   implementan fase por fase (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
 - Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
@@ -158,7 +189,17 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Los workers devuelven siempre `{"batchItemFailures": [...]}` (contrato de SQS partial batch
   response, T3) — lo verifica `tests/test_smoke.py`.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
-  nunca como variables de entorno del stack.
+  nunca como variables de entorno del stack. Hoy `core/config.py` y `core/llm.py` los leen del
+  entorno (dev); al desplegar hay que resolverlos desde el secreto antes de construir `Settings`.
+- Dos secretos de identidad y no uno: `VMC_IDENTITY_SECRET` (lo comparte VMC, firma el JWT de
+  identidad) y `SESSION_SIGNING_KEY` (propio, firma el token de sesión). Unificarlos permitiría
+  presentar un token de sesión como identidad de VMC — `tests/test_core_auth.py` lo cubre.
+- La conversación del usuario autenticado tiene **id determinista** (`uuid5` del `user_id` en
+  `conversations/service.py`): es lo que hace atómico "máximo 1" (D-002) entre dos pestañas.
+  Cambiar el namespace "pierde" las conversaciones existentes.
+- Los marcadores de idempotencia viven en la tabla Messages con SK `CMID#…`; todo listado acota
+  la SK por arriba con `"3"` para no verlos. Un query nuevo sin esa cota los devuelve como mensajes
+  (y en orden descendente, primero).
 - `frontend/` usa **Next.js 16** (App Router, React 19, Tailwind v4): APIs y convenciones difieren
   del entrenamiento — consultar `frontend/node_modules/next/dist/docs/` antes de escribir código,
   como pide `frontend/AGENTS.md`. Se despliega fuera de CDK (TD-003).

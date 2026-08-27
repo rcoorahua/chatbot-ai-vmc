@@ -219,8 +219,12 @@ class SubastinStack(Stack):
             "TABLE_ADVISORS": advisors.table_name,
             "TABLE_AI_USAGE": ai_usage.table_name,
             "IMAGES_BUCKET": images_bucket.bucket_name,
+            "CORS_ALLOWED_ORIGINS": cfg.cors_allowed_origins,
             # Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC): leer de Secrets Manager por
-            # ARN en runtime, NUNCA como variables de entorno en claro (PLAN.md §3).
+            # ARN en runtime, NUNCA como variables de entorno en claro (PLAN.md §3). Incluye los
+            # dos de identidad del chat (D-001): VMC_IDENTITY_SECRET (compartido con VMC) y
+            # SESSION_SIGNING_KEY (propio). Hoy backend/core/config.py los lee del entorno; al
+            # desplegar hay que resolverlos desde el secreto antes de construir Settings.
         }
 
         api_fn = PythonFunction(
@@ -283,7 +287,8 @@ class SubastinStack(Stack):
             self,
             "HttpApi",
             api_name=f"{prefix}-api",
-            # TODO: cors_preflight con el dominio real del frontend (TD-003/TD-007 y D-001).
+            # El preflight CORS lo responde FastAPI (CORSMiddleware con CORS_ALLOWED_ORIGINS):
+            # la ruta $default tambien recibe OPTIONS, asi que no hace falta cors_preflight aqui.
         )
         api_integration = integrations.HttpLambdaIntegration("ApiIntegration", api_fn)
         cognito_authorizer = authorizers.HttpJwtAuthorizer(

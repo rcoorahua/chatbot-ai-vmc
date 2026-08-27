@@ -9,14 +9,14 @@ atiende desde su propia bandeja.
 
 | Quién | Qué obtiene |
 |---|---|
-| **Usuario anónimo** | Abre el chat sin login ni datos; FAQ y catálogo automáticos; si necesita humano, deja solo su correo |
-| **Usuario autenticado en VMC** | Lo mismo, más saludo por nombre e historial asociado a su identidad VMC |
+| **Usuario anónimo** | Abre el chat sin login ni datos; FAQ y catálogo automáticos. Para hablar con un asesor tiene que iniciar sesión en VMC (D-002): sin identidad no hay forma de continuar un ticket días después |
+| **Usuario autenticado en VMC** | Lo mismo, más saludo por nombre y **una conversación permanente** asociada a su identidad VMC; los tickets son el historial y se cierran dentro del hilo (D-003) |
 | **Asesor / CSM** | Bandeja de pendientes, "Tomar conversación" (atómica), hilo con contexto del usuario, respuesta con texto e imágenes, cierre y dashboard operativo |
 
-**Flujo de una conversación:** el usuario escribe → **Haiku** (Anthropic) clasifica la intención
-(`FAQ` / `CATALOG` / `ADVISOR` / `OTHER`) → según el caso se consulta la base de conocimiento en
-**Pinecone** (RAG) o el catálogo de vehículos en **HERALD** → **Gemini** redacta la respuesta con
-esa evidencia. Si no hay evidencia suficiente o el usuario pide una persona, **no se inventa
+**Flujo de una conversación:** el usuario escribe → **Gemini flash-lite** clasifica la intención
+(`FAQ` / `CATALOG` / `ADVISOR` / `OTHER`; Haiku es el plan B, TD-008) → según el caso se consulta
+la base de conocimiento en **Pinecone** (RAG) o el catálogo de vehículos en **HERALD** →
+**Gemini** redacta la respuesta con esa evidencia. Si no hay evidencia suficiente o el usuario pide una persona, **no se inventa
 nada**: se crea un ticket, se avisa por **Slack** y la IA se apaga hasta que un asesor toma el
 caso. Estados: `BOT_ATTENDING → PENDING_ADVISOR → IN_ATTENTION → CLOSED`.
 
@@ -26,13 +26,14 @@ ni de otros usuarios; la identidad del usuario jamás se confía al frontend.
 ## Arquitectura (AWS serverless, CDK v2 en Python)
 
 ```
-Next.js (widget · app asesor · dashboard)
+widget/ (JS embebido en VMC) · Next.js (app asesor · dashboard)
    │ HTTPS
    ▼
 API Gateway HTTP API ──► Lambda `api` (FastAPI + Mangum)   ← todo lo síncrono; responde 202 y encola
-   │  /advisor y /dashboard con JWT de Cognito         │
+   │  /chat con JWT de identidad de VMC + token de sesión   │
+   │  /advisor y /dashboard con JWT de Cognito             │
    │                                                    ▼
-   │                          SQS ai-jobs ──► Lambda `worker-ai`  (Haiku → RAG / HERALD → Gemini)
+   │                          SQS ai-jobs ──► Lambda `worker-ai`  (clasifica → RAG / HERALD → redacta)
    │                          SQS notifications ──► Lambda `worker-notify` (Slack)
    ▼
 DynamoDB (Conversations · Messages · Tickets · Advisors · AIUsage) · S3 (imágenes) · Cognito
@@ -49,7 +50,8 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 |---|---|
 | `backend/` | Código de las Lambdas. Entradas delgadas (`api/`, `workers/`) → dominio (`conversations`, `tickets`, `advisors`) → integraciones hoja (`agent`, `catalog`, `notifications`, `images`) → `core` |
 | `infra/` | Stacks CDK v2 (Python): tablas, colas, Lambdas, HTTP API, Cognito, S3. Un stack por stage (`-c stage=stage` o `prod`) |
-| `frontend/` | Next.js (App Router, TypeScript, Tailwind). Se despliega fuera de CDK (Vercel/Amplify) |
+| `widget/` | El chat que se embebe en VMC: `subastin.js` (JS plano, sin build), `test.html` para probarlo en local y el contrato de identidad para VMC (`README.md`) |
+| `frontend/` | Next.js (App Router, TypeScript, Tailwind) para la app del asesor y el dashboard. Se despliega fuera de CDK (Vercel/Amplify) |
 | `scripts/` | Utilidades de desarrollo local: creación de tablas/colas/bucket y datos de prueba |
 | `tests/` | Suite pytest, incluidas las pruebas de los patrones de acceso a DynamoDB contra servicios locales reales |
 | `.github/workflows/` | `ci.yml` (lint · tests · cdk synth, sin credenciales AWS) y `deploy.yml` (CD maquetado, apagado hasta tener cuenta AWS) |
@@ -70,9 +72,13 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 
 ## Estado actual
 
-Esqueleto pre-desarrollo: existen la estructura, la infra como código, el CI y la metodología;
-**los endpoints y la lógica se implementan fase por fase** (PLAN.md §8) a medida que se cierran
-las decisiones de negocio (20 `D-xxx`, responsables Silvana + Julio) y se obtiene la cuenta AWS.
+**F1 implementada (2026-08-27)**: chat público con identidad VMC (`POST /chat/sessions`),
+persistencia idempotente de mensajes, sondeo, y el widget embebible con su página de prueba.
+El clasificador y el redactor de IA existen (`backend/agent/`), pero el pipeline que los conecta
+(`workers/ai_worker.py`) sigue bloqueado por D-004/D-006/D-020: **el bot todavía no responde**.
+El resto (handoff, asesores, catálogo, imágenes, dashboard) se implementa fase por fase
+(PLAN.md §8) a medida que se cierran las decisiones de negocio pendientes (responsables Silvana +
+Julio) y se obtiene la cuenta AWS.
 
 ## Cómo correr el proyecto (local, sin cuenta AWS)
 
@@ -90,6 +96,9 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1               # Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
 
+Copy-Item .env.example .env              # y poner VMC_IDENTITY_SECRET y SESSION_SIGNING_KEY
+                                         # (cualquier texto en dev; el widget de prueba usa
+                                         # "dev-vmc-identity-secret" por defecto)
 cd frontend; npm install; cd ..
 ```
 
@@ -104,9 +113,12 @@ uvicorn backend.api.main:app --reload --port 8000
 ```
 
 - API y documentación interactiva: **<http://localhost:8000/docs>** (Swagger UI, con botón
-  *Try it out* para lanzar llamadas). Hoy solo publica `GET /health`: los endpoints se
-  implementan fase por fase.
-- Frontend (en otra terminal): `cd frontend; npm run dev` → <http://localhost:3000>
+  *Try it out* para lanzar llamadas). Publica `GET /health` y el chat público `/chat/*`
+  (sesiones, conversación, mensajes); el resto se implementa fase por fase.
+- **Widget** (en otra terminal): `cd widget; python -m http.server 8080` →
+  <http://localhost:8080/test.html>, que simula la página de VMC en modo anónimo o autenticado.
+  Detalle en [widget/README.md](widget/README.md).
+- App del asesor (más adelante): `cd frontend; npm run dev` → <http://localhost:3000>
 - Al terminar: `Ctrl+C` y `docker compose down`.
 
 Los dos scripts son idempotentes y **hay que volver a ejecutarlos cada vez que se reinician los
@@ -116,7 +128,8 @@ contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse.
 
 ```powershell
 python -m ruff check .
-python -m pytest -q               # 18 pruebas, las mismas que corre el CI
+python -m pytest -q               # ~150 pruebas, las mismas que corre el CI
+node --check widget/subastin.js   # sintaxis del widget
 ```
 
 ### Consultar los datos a mano (AWS CLI)
@@ -171,9 +184,10 @@ aws --profile subastin-local dynamodb query --table-name subastin-dev-messages -
 `scan` lee la tabla entera: sirve para explorar en local, pero el código de la aplicación siempre
 usa `query` sobre una clave o un índice — que es justo lo que verifican las pruebas.
 
-Nota sobre `.env`: la plantilla `.env.example` es para cuando el código de la aplicación necesite
-configuración (los mismos nombres de variable que inyecta CDK en AWS). Los scripts y las pruebas
-de hoy funcionan sin ella.
+Nota sobre `.env`: la API lo lee al arrancar (mismos nombres de variable que inyecta CDK en AWS).
+Los scripts y las pruebas funcionan sin él — las pruebas fijan secretos de prueba por su cuenta —
+pero `uvicorn` responde 503 en `/chat/sessions` si faltan `VMC_IDENTITY_SECRET` o
+`SESSION_SIGNING_KEY`.
 
 ### Si algo falla
 

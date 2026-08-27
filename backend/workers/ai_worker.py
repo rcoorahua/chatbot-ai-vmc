@@ -3,13 +3,14 @@
 Por cada job (ESQUELETO — no implementar sin revisar CLAUDE.md):
  1. debounce/agregacion de mensajes consecutivos            → D-020
  2. filtro de saludos/spam/triviales sin llamada IA         → D-006
- 3. clasificar intencion con Haiku (`claude-haiku-4-5`):
-    FAQ | CATALOGO | ASESOR | OTRO (RF-015/016)             → TD-002 (API directa vs Bedrock)
+ 3. clasificar intencion (`agent.classifier`, Gemini flash-lite por TD-008; Haiku es el plan B):
+    FAQ | CATALOG | ADVISOR | OTHER (RF-015/016)
  4. FAQ      → RAG en Pinecone; sin evidencia = handoff, nunca inventar (RF-017/018),
                incluir fuente/enlace si existe (RF-019)
     CATALOGO → API HERALD (RF-044; contrato D-011, fallback D-012)
     ASESOR   → iniciar handoff (RF-022)
- 5. redactar respuesta con Gemini (RF-020) usando ventana de ~20 mensajes (RF-013, resumen D-004)
+ 5. redactar respuesta (`agent.writer`, RF-020) con la ventana de ~20 mensajes que entrega
+    `conversations.repository.list_recent_messages` (RF-013; resumen D-004)
  6. persistir respuesta en Messages + actualizar Conversations
  7. registrar ejecucion en AIUsage (tokens, costo, latencia, rag_used, handoff_triggered)
  8. si handoff: crear ticket segun D-008/D-019 y encolar notificacion Slack (RF-028)
@@ -32,6 +33,11 @@ def handler(event: dict, context) -> dict:
 
 def _process(body: str) -> None:
     # TODO: pipeline descrito arriba. NO implementar sin cerrar D-004/D-006/D-020.
+    #
+    # El body es lo que encola api/routers/chat.py: validarlo con `core.jobs.AIJob` antes de
+    # usarlo (regla 6 de security-guidance). Anonimo = solo FAQ (D-002): si la conversacion es
+    # ANONYMOUS y la intencion es ADVISOR, se responde con texto fijo invitando a iniciar
+    # sesion; no se crea ticket.
     #
     # Piezas ya disponibles para componer aqui (TD-008: Gemini atiende ambas etapas):
     #   agent.classifier.classify(mensaje, ultimo_mensaje_del_asistente) -> ClassificationResult

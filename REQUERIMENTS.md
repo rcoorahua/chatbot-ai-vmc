@@ -12,15 +12,16 @@ Este documento consolida:
 
 | | |
 |---|---|
-| Última actualización | **26/08/2026** |
-| Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx` |
-| Decisiones abiertas | 20 (`D-001`…`D-020`), responsables Silvana + Julio — §6 |
-| Pendiente sobre el modelo | 5 ajustes detectados en la revisión de arquitectura, aún no incorporados a la v1.0 — ver §1.11 |
+| Última actualización | **27/08/2026** |
+| Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx`; **✅ Hecho** = implementado y validado con tests en el repo |
+| Decisiones abiertas | 14 (`D-004`…`D-016`, `D-020`) + `D-018` provisional — §6. Cerradas el 27/08/2026: D-001, D-002, D-003 y, por derivación, D-017 y D-019 |
+| Pendiente sobre el modelo | 6 ajustes detectados en la revisión; 1–4 y 6 ya implementados, el 5 (GSI *sparse*) por decidir — ver §1.11 |
 
 | Fecha | Cambio |
 |---|---|
 | 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
 | 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
+| 27/08/2026 | F1 implementada: se cierran D-001/D-002/D-003 (y D-017/D-019 por derivación), se marcan ✅ los RF/RNF/RB cubiertos, se añade el ajuste 6 (`status` en Messages) y se señala que RF-003/AC-003/RB-002 quedan sin efecto por D-002 |
 
 **Documentos relacionados:** [PLAN.md](PLAN.md) traduce esto a arquitectura ·
 [BACKLOG.md](BACKLOG.md) lo divide en tickets · [CLAUDE.md](CLAUDE.md) registra el estado vivo de
@@ -122,6 +123,7 @@ Guarda el historial completo del chat. Esta será la tabla de mayor crecimiento 
 | `message_type` | String | Sí | `TEXT / IMAGE / SYSTEM` | Permite tratar contenido y eventos del sistema de forma explícita |
 | `content` | String | No | Contenido textual | Es nulo cuando el mensaje solo representa una imagen/evento |
 | `client_message_id` | String | No | ID creado en frontend | Permite idempotencia en retries y evita duplicar un mensaje |
+| `status` | String | Sí | `RECEIVED / QUEUE_FAILED / PROCESSED / FAILED / DELIVERED` | Estado técnico que RF-008 exige por mensaje (ajuste 6, §1.11): qué pasó con él después de persistirlo |
 | `attachment` | Map | No | Metadata de imagen en S3 | Evita crear otra tabla en el MVP; el binario permanece fuera de DynamoDB |
 | `created_at` | String ISO-8601 | Sí | Timestamp | Necesario para orden, auditoría y UI |
 | `metadata` | Map | No | Datos adicionales | Permite extender eventos sin cambiar el esquema de la tabla |
@@ -300,12 +302,14 @@ justificación están en [PLAN.md](PLAN.md) §4.
 | 3 | `expires_at` en Messages | RF-053 aplica retención a mensajes, no solo a conversaciones | Atributo + TTL |
 | 4 | Mecanismo de idempotencia, no solo el campo | `client_message_id` existe, pero la SK lleva el `created_at` del servidor: un reintento generaría otra SK y duplicaría el mensaje. Se resuelve con transacción e item marcador `CMID#<client_message_id>` | Patrón de escritura |
 | 5 | GSI2 de Conversations con atributo *sparse* | La partición `CLOSED` crece sin límite; un atributo presente solo mientras el caso está operativo mantiene el índice acotado | **Cambia un índice — decidir antes de crear tablas en AWS** |
+| 6 | `status` en Messages | RF-008 pide un estado técnico por mensaje: durable y pendiente del pipeline, procesado, fallido, o no encolado | Atributo nuevo — **implementado 27/08/2026** |
 
-Los cuatro primeros son atributos o patrones de escritura y se pueden añadir en cualquier
+Los ajustes 1–4 y 6 son atributos o patrones de escritura y se pueden añadir en cualquier
 momento. **El quinto cambia la definición de un índice**, y los índices no se pueden rellenar
 retroactivamente: si se adopta, tiene que ser antes de crear las tablas en stage.
 
-Los ajustes 1 a 4 ya están validados con pruebas automatizadas contra DynamoDB.
+Los ajustes 1–4 y 6 están implementados y validados con pruebas automatizadas contra DynamoDB
+(`tests/test_dynamo_queries.py`, `tests/test_chat_conversations.py`).
 
 ## 1.10 Recomendación de nombres físicos
 
@@ -347,7 +351,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 
 | Actor | Descripción | Acceso MVP |
 |---|---|---|
-| Usuario anónimo | Persona que usa el chat sin sesión iniciada | FAQ, catálogo y derivación; sin historial persistente |
+| Usuario anónimo | Persona que usa el chat sin sesión iniciada | FAQ y catálogo; **sin derivación** (D-002, 27/08/2026) ni historial persistente |
 | Usuario autenticado | Usuario identificado por VMC | Chat, personalización e historial asociado a identidad |
 | Asesor / CSM | Usuario interno que atiende handoffs y tickets | Aplicación de atención y dashboard operativo |
 | Servicios IA | Haiku para lectura/orquestación y Gemini para redacción automática | Backend; sin acceso directo de usuario |
@@ -361,11 +365,11 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-001 | Chat web para usuarios autenticados y anónimos | El widget/chat deberá poder abrirse sin exigir login. El usuario autenticado deberá quedar asociado a su identidad VMC | Acordado |
-| RF-002 | El usuario anónimo inicia sin entregar datos | No se solicitará DNI, teléfono ni correo para iniciar una consulta automática | Acordado |
-| RF-003 | Correo obligatorio únicamente al derivar un usuario anónimo | Cuando un usuario anónimo requiera atención humana, el flujo deberá solicitar correo antes de completar el handoff/ticket | Acordado |
-| RF-004 | Sin historial persistente para usuarios anónimos | Un usuario no autenticado no recuperará conversaciones anteriores entre sesiones o dispositivos | Acordado |
-| RF-005 | Identificación funcional del usuario autenticado | Subastín deberá recibir una identidad validada desde VMC para asociar usuario, conversaciones y mostrar saludo por nombre. El mecanismo técnico se define en D-001 | Acordado |
+| RF-001 | Chat web para usuarios autenticados y anónimos | El widget/chat deberá poder abrirse sin exigir login. El usuario autenticado deberá quedar asociado a su identidad VMC | ✅ Hecho 27/08/2026 (`widget/`, `POST /chat/sessions`) |
+| RF-002 | El usuario anónimo inicia sin entregar datos | No se solicitará DNI, teléfono ni correo para iniciar una consulta automática | ✅ Hecho 27/08/2026 |
+| RF-003 | Correo obligatorio únicamente al derivar un usuario anónimo | Cuando un usuario anónimo requiera atención humana, el flujo deberá solicitar correo antes de completar el handoff/ticket | Acordado — **sin efecto por D-002** (el anónimo no deriva). Retirar o confirmar |
+| RF-004 | Sin historial persistente para usuarios anónimos | Un usuario no autenticado no recuperará conversaciones anteriores entre sesiones o dispositivos | ✅ Hecho 27/08/2026 |
+| RF-005 | Identificación funcional del usuario autenticado | Subastín deberá recibir una identidad validada desde VMC para asociar usuario, conversaciones y mostrar saludo por nombre. El mecanismo técnico se define en D-001 | ✅ Hecho 27/08/2026 (JWT firmado por VMC, D-001) |
 | RF-006 | Acceso de asesores mediante Cognito e invitación por correo | Las cuentas internas del MVP se crearán mediante invitación y autenticación de Cognito | Acordado |
 | RF-007 | Un único rol funcional en el MVP: `ADVISOR` | No se implementarán roles de administrador/supervisor en el MVP. El modelo deberá poder evolucionar posteriormente | Acordado |
 
@@ -373,13 +377,13 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-008 | Persistencia de conversaciones y mensajes | Cada mensaje persistido deberá almacenar al menos `conversation_id`, sender, timestamp, tipo de contenido y estado técnico | Acordado |
-| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | Acordado |
-| RF-010 | Máximo configurable de conversaciones activas | Para anónimos el máximo es 1. Para autenticados el valor del MVP queda definido por D-002 | Parcial |
-| RF-011 | La conversación cerrada no desaparece instantáneamente | El usuario verá que la conversación finalizó y tendrá una acción para iniciar una nueva. Reapertura/historial dependen de D-003 | Acordado |
+| RF-008 | Persistencia de conversaciones y mensajes | Cada mensaje persistido deberá almacenar al menos `conversation_id`, sender, timestamp, tipo de contenido y estado técnico | ✅ Hecho 27/08/2026 (`conversations/repository.py`) |
+| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | Acordado (enum en el modelo; transiciones en F5) |
+| RF-010 | Máximo configurable de conversaciones activas | Para anónimos el máximo es 1. Para autenticados el valor del MVP queda definido por D-002 | ✅ Hecho 27/08/2026 — D-002: 1 para todos |
+| RF-011 | La conversación cerrada no desaparece instantáneamente | El usuario verá que la conversación finalizó y tendrá una acción para iniciar una nueva. Reapertura/historial dependen de D-003 | Acordado — redefinido por D-003: lo que cierra es el **ticket**, la conversación permanece y muestra la nota "Ticket cerrado" (widget ✅; cierre en F5) |
 | RF-012 | Historial completo disponible para el asesor | El asesor deberá poder consultar la conversación actual y conversaciones anteriores disponibles del usuario autenticado | Acordado |
-| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | Acordado |
-| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | Acordado |
+| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | Acordado (`list_recent_messages` ✅; uso en F2) |
+| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | Parcial ✅ — largo de mensaje configurable; rate limit y el resto esperan D-005 |
 
 ## 3.3 IA, clasificación y FAQ/RAG
 
@@ -416,9 +420,9 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RF-033 | Vista de conversación e información contextual | El asesor podrá ver el hilo y datos disponibles/autorizados del usuario, como nombre, correo, empresa, identificadores y relaciones relevantes. Los campos definitivos se validan en D-010 | Parcial |
 | RF-034 | Envío de mensajes de texto | El asesor podrá responder desde Subastín con texto, emojis, enlaces clickeables y copiar contenido | Acordado |
 | RF-035 | Contador de no leídos | Los mensajes entrantes aún no abiertos por el asesor incrementarán un contador; al abrir la conversación quedarán consumidos para efectos de contador | Acordado |
-| RF-036 | Timestamp por mensaje | Cada mensaje mostrado deberá incluir o permitir consultar su fecha/hora | Acordado |
-| RF-037 | Retry de mensaje fallido sin persistir el fallo | Si un envío falla antes de confirmarse en backend, se mantendrá localmente en el navegador con opción Reintentar. No se persistirá como mensaje enviado hasta recibir confirmación | Acordado |
-| RF-038 | Idempotencia de reintentos | Los reintentos deberán usar un identificador de cliente/idempotencia para evitar mensajes duplicados | Acordado |
+| RF-036 | Timestamp por mensaje | Cada mensaje mostrado deberá incluir o permitir consultar su fecha/hora | Acordado — ✅ widget 27/08/2026; pendiente app asesor |
+| RF-037 | Retry de mensaje fallido sin persistir el fallo | Si un envío falla antes de confirmarse en backend, se mantendrá localmente en el navegador con opción Reintentar. No se persistirá como mensaje enviado hasta recibir confirmación | Acordado — ✅ widget 27/08/2026; pendiente app asesor |
+| RF-038 | Idempotencia de reintentos | Los reintentos deberán usar un identificador de cliente/idempotencia para evitar mensajes duplicados | ✅ Hecho 27/08/2026 (backend + widget); pendiente app asesor |
 | RF-039 | Funciones expresamente no incluidas en MVP | No habrá edición/borrado de mensajes, búsqueda dentro de conversación, read receipts ni indicador de “escribiendo” | Acordado |
 
 ## 3.6 Imágenes
@@ -463,9 +467,9 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 |---|---|---|---|
 | RNF-001 | Latencia de respuesta automática | ≤ 10 s en condiciones normales | No implica esperar 10 s; es un máximo objetivo |
 | RNF-002 | Disponibilidad | 99% | Objetivo de MVP, sujeto a dependencias externas |
-| RNF-003 | Durabilidad de mensajes | Persistencia confirmada antes de mostrarse como enviado | Excepto borrador local de retry fallido |
-| RNF-004 | Idempotencia | Sin duplicados por retries/webhooks | Aplicar claves idempotentes y deduplicación |
-| RNF-005 | Seguridad de identidad | No confiar en identidad enviada libremente por frontend | Mecanismo VMC ↔ Subastín se cierra en D-001 |
+| RNF-003 | Durabilidad de mensajes | Persistencia confirmada antes de mostrarse como enviado | Excepto borrador local de retry fallido — ✅ 27/08/2026 (widget + API 202) |
+| RNF-004 | Idempotencia | Sin duplicados por retries/webhooks | Aplicar claves idempotentes y deduplicación — ✅ 27/08/2026 (`client_message_id` + marcador transaccional) |
+| RNF-005 | Seguridad de identidad | No confiar en identidad enviada libremente por frontend | Mecanismo VMC ↔ Subastín cerrado en D-001 — ✅ 27/08/2026 |
 | RNF-006 | Observabilidad | Logs, métricas y alertas | CloudWatch u observabilidad equivalente |
 | RNF-007 | Protección de costo/abuso | Límites configurables | Valores concretos en D-005/D-006 |
 | RNF-008 | Optimización multimodal | No enviar imágenes originales innecesariamente a IA | Resize/compresión según D-015 |
@@ -476,10 +480,10 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 
 | ID | Regla |
 |---|---|
-| RB-001 | Un usuario anónimo puede utilizar el bot sin entregar datos |
-| RB-002 | El correo se solicita al anónimo únicamente cuando se necesita handoff humano |
-| RB-003 | Un anónimo no recupera historial entre sesiones/dispositivos |
-| RB-004 | Un usuario autenticado se asocia a una identidad validada por VMC |
+| RB-001 | Un usuario anónimo puede utilizar el bot sin entregar datos — ✅ 27/08/2026 |
+| RB-002 | El correo se solicita al anónimo únicamente cuando se necesita handoff humano — **sin efecto por D-002** (27/08/2026): el anónimo no deriva |
+| RB-003 | Un anónimo no recupera historial entre sesiones/dispositivos — ✅ 27/08/2026 |
+| RB-004 | Un usuario autenticado se asocia a una identidad validada por VMC — ✅ 27/08/2026 |
 | RB-005 | Una conversación no implica necesariamente un ticket |
 | RB-006 | Un ticket representa una necesidad de atención humana |
 | RB-007 | Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007 |
@@ -496,11 +500,14 @@ Todas las decisiones de esta sección tienen como responsables de cierre a **Sil
 
 Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 
+**Cerradas el 27/08/2026 (Aaron):** D-001, D-002, D-003 y, por derivación, D-017 y D-019; D-018
+queda provisional. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|
-| D-001 | Mecanismo de identidad VMC ↔ Subastín | Definir si la integración será iframe, script embebido, endpoint autenticado/token corto, servidor-servidor u otra opción. Validar cookies HttpOnly/SameSite y seguridad | Alta |
-| D-002 | Máximo de conversaciones activas para usuario autenticado | Definir 1 conversación activa —recomendado para simplificar MVP— vs. hasta 3. Anónimo queda fijo en 1 | Alta |
-| D-003 | Cierre, reapertura e historial visible | Definir inactividad para autocierre del bot, ventana de reapertura, creación de nueva conversación y cuántas conversaciones cerradas ve el usuario | Alta |
+| D-001 | Mecanismo de identidad VMC ↔ Subastín | **✅ Cerrada 27/08/2026:** JWT HS256 firmado por el **servidor** de VMC con un secreto compartido, dejado en la página como `window.subastinSettings.userJwt`; Subastín lo verifica y emite su propio token de sesión (esquema de *identity verification* de Intercom). Las cookies de VMC son HttpOnly y no se leen. Identidad visible del asistente: "Subastín" | Alta |
+| D-002 | Máximo de conversaciones activas para usuario autenticado | **✅ Cerrada 27/08/2026:** 1 conversación activa (autenticado y anónimo). Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: sin handoff ni ticket, porque no hay forma de identificarlo para continuar un ticket días después | Alta |
+| D-003 | Cierre, reapertura e historial visible | **✅ Cerrada 27/08/2026:** una sola conversación permanente por usuario autenticado; el historial son los tickets, que al cerrarse dejan la nota "Ticket cerrado" en el hilo (como Intercom). Sin autocierre de conversación; el ticket sin respuesta se decide en D-007 | Alta |
 | D-004 | Resumen de conversación para IA | Definir si siempre se genera resumen, cada cuántos mensajes, tamaño objetivo, cuándo se actualiza y si se usa junto a los últimos 20 mensajes | Media |
 | D-005 | Guardrails cuantitativos | Definir máximo de mensajes por conversación —ej. 1,000—, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso | Alta |
 | D-006 | Optimización de saludos/spam/repetición | Definir qué mensajes no ameritan llamada completa a IA y cuándo se usa respuesta determinística, cooldown o bloqueo temporal | Media |
@@ -514,9 +521,9 @@ Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 | D-014 | Retención de conversaciones e imágenes | Confirmar 6 meses u otro período y comportamiento de borrado/archivo | Alta |
 | D-015 | Procesamiento de imágenes para IA | Definir dimensiones máximas, compresión/resize, formato, peso máximo, modelo multimodal y cuándo una imagen se envía a IA | Media |
 | D-016 | Canal Slack y formato de notificación | Definir canal/es, contenido mínimo, enlace profundo a Subastín y posibles re-alertas por espera | Baja |
-| D-017 | Relación conversación ↔ ticket | Confirmar si una conversación puede tener múltiples tickets y si cerrar un ticket cierra o no la conversación | Alta |
-| D-018 | Sesión anónima activa | Definir duración técnica de la sesión anónima mientras el usuario permanece navegando y qué sucede al refrescar/cerrar navegador | Media |
-| D-019 | Handoff anónimo sin correo | Definir qué hacer si el usuario no entrega correo: impedir ticket, permitir ticket sin contacto o mantener conversación automática | Media |
+| D-017 | Relación conversación ↔ ticket | **✅ Cerrada 27/08/2026 (derivada de D-002/D-003):** varios tickets por conversación (máx. 5 activos); cerrar un ticket no cierra la conversación | Alta |
+| D-018 | Sesión anónima activa | **Provisional 27/08/2026:** la sesión anónima es la pestaña del navegador (sobrevive a navegar y recargar, muere al cerrarla) con token de 24 h configurable (`ANONYMOUS_SESSION_TTL_HOURS`). Falta confirmación de Silvana + Julio | Media |
+| D-019 | Handoff anónimo sin correo | **✅ Cerrada 27/08/2026 (derivada de D-002):** no existe handoff anónimo, luego tampoco ticket sin correo. Deja RF-003, AC-003 y RB-002 sin efecto | Media |
 | D-020 | Debounce/agregación de mensajes consecutivos | Definir ventana corta para agrupar mensajes antes de llamar a IA y evitar múltiples llamadas por frases partidas | Media |
 
 ---
@@ -558,6 +565,9 @@ Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 **cuando** se inicia el handoff,  
 **entonces** Subastín debe solicitar correo antes de completar el ticket y notificar a Slack al generarse el caso.
 
+> **Sin efecto desde D-002 (27/08/2026):** el anónimo no deriva a asesor; el bot lo invita a
+> iniciar sesión. Pendiente retirar este escenario o reescribirlo.
+
 ## AC-004 · Espera de asesor
 
 **Dado** un caso en `PENDIENTE_ASESOR`,  
@@ -588,11 +598,19 @@ Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 **cuando** abre Subastín,  
 **entonces** el sistema debe asociar la conversación a la identidad validada y permitir saludo por nombre, sin confiar en un `user_id` manipulable por frontend.
 
+> ✅ **Cubierto 27/08/2026** por `tests/test_chat_api.py` (la sesión autenticada queda asociada
+> a la identidad del JWT de VMC y saluda por nombre) y `tests/test_core_auth.py` (nada que mande
+> el frontend se cree sin firma).
+
 ## AC-009 · Conversación cerrada
 
 **Dado** una conversación en estado `CERRADA`,  
 **cuando** el usuario vuelve a la interfaz,  
 **entonces** debe visualizar que el caso finalizó y disponer de una acción para iniciar una nueva conversación según D-003.
+
+> **Redefinido por D-003 (27/08/2026):** la conversación no se cierra. Al cerrarse un ticket el
+> hilo muestra la nota "Ticket cerrado" y el usuario sigue escribiendo en la misma conversación.
+> El widget ya dibuja la nota; el cierre llega con F5.
 
 ---
 
