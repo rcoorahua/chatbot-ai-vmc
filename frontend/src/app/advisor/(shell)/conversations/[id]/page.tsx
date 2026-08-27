@@ -8,7 +8,7 @@ import Input from "@/concorde/components/Input";
 import AvatarZone from "@/concorde/components/AvatarZone";
 import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
-import { MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
+import { CURRENT_ADVISOR, MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
 import { formatWaitTime, MOCK_NOW_MS } from "@/lib/format";
 
 /**
@@ -23,6 +23,9 @@ export default function ConversationDetailPage() {
 
   const [draft, setDraft] = useState("");
   const [retryFailed, setRetryFailed] = useState(true);
+  // RF-029: la toma es una acción explícita y atómica del asesor, no un efecto de abrir el
+  // hilo. Este flag es solo de demo (no hay backend); en real vendría de assigned_advisor_id.
+  const [takenByMe, setTakenByMe] = useState(false);
 
   if (!conversation) {
     return (
@@ -35,7 +38,14 @@ export default function ConversationDetailPage() {
     );
   }
 
-  const canReply = conversation.status === "PENDING_ADVISOR" || conversation.status === "IN_ATTENTION";
+  const isPendingUnassigned =
+    conversation.status === "PENDING_ADVISOR" && !conversation.assigned_advisor_id && !takenByMe;
+  const assignedToOther =
+    conversation.assigned_advisor_id !== null &&
+    conversation.assigned_advisor_id !== CURRENT_ADVISOR.advisor_id;
+  const canReply =
+    !assignedToOther &&
+    (conversation.status === "IN_ATTENTION" || (conversation.status === "PENDING_ADVISOR" && takenByMe));
 
   return (
     <div className="flex h-full gap-6">
@@ -49,9 +59,7 @@ export default function ConversationDetailPage() {
             <p className="font-semibold text-[#191C1C]">{conversation.user_name ?? "Usuario anónimo"}</p>
             <StatusBadge status={conversation.status} />
           </div>
-          {conversation.status !== "CLOSED" && (
-            <Button variant="outline">Cerrar caso</Button>
-          )}
+          {canReply && <Button variant="outline">Cerrar caso</Button>}
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
@@ -76,7 +84,20 @@ export default function ConversationDetailPage() {
         </div>
 
         <footer className="border-t border-black/5 px-5 py-4">
-          {canReply ? (
+          {isPendingUnassigned ? (
+            <div className="flex items-center justify-between rounded-2xl bg-[color:var(--vmc-color-orange-600)]/10 px-4 py-3">
+              <p className="text-sm text-[#9A4A0F]">
+                Nadie ha tomado este caso todavía. Tómalo para poder responder (RF-029).
+              </p>
+              <Button variant="secondary-sm" onClick={() => setTakenByMe(true)}>
+                Tomar conversación
+              </Button>
+            </div>
+          ) : assignedToOther ? (
+            <p className="text-center text-sm text-neutral-400">
+              {conversation.assigned_advisor_id} ya tomó este caso — solo lectura.
+            </p>
+          ) : canReply ? (
             <div className="flex items-end gap-3">
               <button
                 type="button"
