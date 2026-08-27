@@ -68,7 +68,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="rounded-2xl bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-400">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">
           Distribución por estado
         </h2>
         <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-neutral-100">
@@ -93,7 +93,7 @@ export default function DashboardPage() {
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-neutral-400">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-neutral-500">
           Conversaciones recientes
         </h2>
         <Table

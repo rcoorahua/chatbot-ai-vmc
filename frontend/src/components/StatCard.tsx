@@ -9,9 +9,9 @@ export default function StatCard({
 }) {
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm">
-      <p className="text-xs font-bold uppercase tracking-wide text-neutral-400">{label}</p>
+      <p className="text-xs font-bold uppercase tracking-wide text-neutral-500">{label}</p>
       <p className="mt-1 text-3xl font-bold text-[#191C1C]">{value}</p>
-      {hint && <p className="mt-1 text-xs text-neutral-400">{hint}</p>}
+      {hint && <p className="mt-1 text-xs text-neutral-500">{hint}</p>}
     </div>
   );
 }

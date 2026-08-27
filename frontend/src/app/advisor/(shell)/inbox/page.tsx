@@ -33,8 +33,8 @@ export default function InboxPage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-bold text-[#191C1C]">Bandeja de conversaciones</h1>
         <TabSelector
           options={FILTERS.map((f) => f.label)}
@@ -44,16 +44,21 @@ export default function InboxPage() {
         />
       </div>
 
+      {conversations.length === 0 ? (
+        <p className="rounded-2xl bg-white px-5 py-10 text-center text-sm text-neutral-500 shadow-sm">
+          No hay conversaciones en &quot;{FILTERS[filterIndex].label}&quot; ahora mismo.
+        </p>
+      ) : (
       <Table
         caption="Conversaciones"
         columns={[
           { header: "Usuario" },
-          { header: "Último mensaje" },
+          { header: "Último mensaje", className: "hidden md:table-cell" },
           { header: "Espera", align: "center" },
-          { header: "Canal", align: "center" },
+          { header: "Canal", align: "center", className: "hidden md:table-cell" },
           { header: "Estado", align: "center" },
-          { header: "Asesor" },
-          { header: "No leídos", align: "center" },
+          { header: "Asesor", className: "hidden md:table-cell" },
+          { header: "No leídos", align: "center", className: "hidden md:table-cell" },
           { header: "", align: "right" },
         ]}
         rows={conversations.map((conv) => [
@@ -61,7 +66,7 @@ export default function InboxPage() {
             <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
             <div>
               <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
-              {conv.user_id && <p className="text-xs text-neutral-400">{conv.user_id}</p>}
+              {conv.user_id && <p className="text-xs text-neutral-500">{conv.user_id}</p>}
             </div>
           </div>,
           <span key="preview" className="line-clamp-1 max-w-xs text-neutral-600">
@@ -79,7 +84,7 @@ export default function InboxPage() {
           </span>,
           <span
             key="unread"
-            className={conv.unread_count > 0 ? "font-bold text-[#ED8936]" : "text-neutral-400"}
+            className={conv.unread_count > 0 ? "font-bold text-[#ED8936]" : "text-neutral-500"}
           >
             {conv.unread_count}
           </span>,
@@ -92,6 +97,7 @@ export default function InboxPage() {
           </div>,
         ])}
       />
+      )}
     </div>
   );
 }
