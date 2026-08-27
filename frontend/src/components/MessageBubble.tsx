@@ -1,5 +1,6 @@
 import type { Message } from "@/lib/types";
 import { formatTimestamp, linkify, SYSTEM_EVENT_LABEL } from "@/lib/format";
+import { ImageIcon } from "@/components/icons";
 
 /**
  * RF-034/036: texto con enlaces clicables + timestamp por mensaje. RF-039 excluye a propósito
@@ -29,7 +30,9 @@ export default function MessageBubble({ message }: { message: Message }) {
     <div className={`flex flex-col ${align} gap-1`}>
       <div className={`max-w-md rounded-2xl px-4 py-2.5 ${bubbleColor}`}>
         {message.message_type === "IMAGE" ? (
-          <p className="text-sm italic opacity-80">📎 Imagen adjunta</p>
+          <p className="flex items-center gap-1.5 text-sm italic opacity-80">
+            <ImageIcon width={16} height={16} /> Imagen adjunta
+          </p>
         ) : (
           <p className="whitespace-pre-wrap text-sm">
             {linkify(message.content ?? "").map((part, i) =>
@@ -50,7 +53,7 @@ export default function MessageBubble({ message }: { message: Message }) {
           </p>
         )}
       </div>
-      <span className="px-1 text-[11px] text-neutral-400">{formatTimestamp(message.created_at)}</span>
+      <span className="px-1 text-[11px] text-neutral-500">{formatTimestamp(message.created_at)}</span>
     </div>
   );
 }
