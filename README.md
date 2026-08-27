@@ -52,7 +52,8 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 | `infra/` | Stacks CDK v2 (Python): tablas, colas, Lambdas, HTTP API, Cognito, S3. Un stack por stage (`-c stage=stage` o `prod`) |
 | `widget/` | El chat que se embebe en VMC: `subastin.js` (JS plano, sin build), `test.html` para probarlo en local y el contrato de identidad para VMC (`README.md`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind) para la app del asesor y el dashboard. Se despliega fuera de CDK (Vercel/Amplify) |
-| `scripts/` | Utilidades de desarrollo local: creación de tablas/colas/bucket y datos de prueba |
+| `scripts/` | Utilidades locales: tablas/colas/bucket, datos de prueba y la ingesta del Centro de Ayuda a Pinecone (`helpcenter_fetch` → `helpcenter_upload`) |
+| `data/helpcenter/` | El conocimiento del bot: markdown descargado del Centro de Ayuda y sus chunks. No se versiona (se regenera con un comando) — ver su [README](data/helpcenter/README.md) |
 | `tests/` | Suite pytest, incluidas las pruebas de los patrones de acceso a DynamoDB contra servicios locales reales |
 | `.github/workflows/` | `ci.yml` (lint · tests · cdk synth, sin credenciales AWS) y `deploy.yml` (CD maquetado, apagado hasta tener cuenta AWS) |
 | `.claude/` | 12 skills de metodología (spec-driven, testing, commit, deploy, llm-cost-optimizer, rag-architect, prompt-governance, ci-cd, docker-dev, security-guidance, skill-auditor, write-a-skill) + hook de seguridad |
@@ -74,7 +75,8 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 
 **F1 implementada (2026-08-27)**: chat público con identidad VMC (`POST /chat/sessions`),
 persistencia idempotente de mensajes, sondeo, y el widget embebible con su página de prueba.
-El clasificador y el redactor de IA existen (`backend/agent/`), pero el pipeline que los conecta
+El clasificador, el redactor y la **recuperación en Pinecone** existen (`backend/agent/`), con la
+ingesta del Centro de Ayuda lista (`scripts/helpcenter_*`), pero el pipeline que los conecta
 (`workers/ai_worker.py`) sigue bloqueado por D-004/D-006/D-020: **el bot todavía no responde**.
 El resto (handoff, asesores, catálogo, imágenes, dashboard) se implementa fase por fase
 (PLAN.md §8) a medida que se cierran las decisiones de negocio pendientes (responsables Silvana +
@@ -119,6 +121,9 @@ uvicorn backend.api.main:app --reload --port 8000
   <http://localhost:8080/test.html>, que simula la página de VMC en modo anónimo o autenticado.
   Detalle en [widget/README.md](widget/README.md).
 - App del asesor (más adelante): `cd frontend; npm run dev` → <http://localhost:3000>
+- **Conocimiento del bot** (solo cuando cambie el Centro de Ayuda):
+  `python -m scripts.helpcenter_fetch` y luego `python -m scripts.helpcenter_upload --verify`.
+  Necesita `PINECONE_API_KEY`; no usa Gemini (Pinecone genera los embeddings).
 - Al terminar: `Ctrl+C` y `docker compose down`.
 
 Los dos scripts son idempotentes y **hay que volver a ejecutarlos cada vez que se reinician los
@@ -128,7 +133,7 @@ contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse.
 
 ```powershell
 python -m ruff check .
-python -m pytest -q               # ~150 pruebas, las mismas que corre el CI
+python -m pytest -q               # ~175 pruebas, las mismas que corre el CI
 node --check widget/subastin.js   # sintaxis del widget
 ```
 

@@ -391,9 +391,9 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 |---|---|---|---|
 | RF-015 | Haiku como capa de lectura y orquestación | Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general | Acordado |
 | RF-016 | Intenciones mínimas del MVP | El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor | Acordado |
-| RF-017 | FAQ basada en conocimiento VMC recuperado | Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado | Acordado |
-| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | Acordado |
-| RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | Acordado |
+| RF-017 | FAQ basada en conocimiento VMC recuperado | Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado | Parcial ✅ — recuperación e ingesta hechas 27/08/2026 (22 artículos, 133 chunks); falta el pipeline que las usa |
+| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | Parcial ✅ — umbral en `rag.search` + redactor sin fragmentos; el umbral está **sin calibrar** |
+| RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | Parcial ✅ — cada fragmento llega al redactor con su `source_url`; falta verificar que el modelo la cite |
 | RF-020 | Gemini como capa de escritura | Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana | Acordado |
 | RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | Parcial |
 

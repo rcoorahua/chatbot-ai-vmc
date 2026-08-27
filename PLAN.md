@@ -164,7 +164,7 @@ de la Lambda `api` (ver `backend/api/routers/`).
 |---|---|---|
 | Anthropic API — Haiku `claude-haiku-4-5` | Clasificación de intención, orquestación de lectura | TD-002 (API directa vs Bedrock) |
 | Gemini (`google-genai`) | Redacción de respuestas | modelo exacto por definir al implementar |
-| Pinecone | RAG de conocimiento FAQ/VMC | carga de contenido inicial (proceso de ingesta no está en el spec — definir) |
+| Pinecone | RAG de conocimiento FAQ/VMC — **implementado**: índice con embedding integrado (`multilingual-e5-large`), namespace `helpcenter`; ingesta desde el Centro de Ayuda con `scripts/helpcenter_fetch.py` + `helpcenter_upload.py` | nada: el proceso de ingesta quedó definido el 2026-08-27 (dos pasos, ver `data/helpcenter/README.md`) |
 | HERALD | Catálogo de vehículos en tiempo real | **D-011** (contrato) y **D-012** (fallback) |
 | Slack | Webhook entrante para notificar handoffs | **D-016** (canal y formato) |
 | VMC | Identidad del usuario autenticado (JWT firmado por su servidor — D-001 cerrada, contrato en `widget/README.md`) + datos de solo lectura | **D-010** |
@@ -392,7 +392,7 @@ chatbot-ai-vmc/
 │   ├── conversations/          # DOMINIO corazón: Conversations+Messages (models/repository/service)
 │   ├── tickets/                # DOMINIO: handoff + Tickets (puede importar conversations)
 │   ├── advisors/               # DOMINIO hoja: Advisors + lookup cognito_sub
-│   ├── agent/                  # INTEGRACIÓN IA: classifier (Haiku) · writer (Gemini) · rag (Pinecone)
+│   ├── agent/                  # INTEGRACIÓN IA: classifier · writer (Gemini, TD-008) · rag (Pinecone)
 │   │                           #   · prompts · usage (tabla AIUsage)
 │   ├── catalog/                # INTEGRACIÓN: cliente HERALD (D-011/D-012)
 │   ├── notifications/          # INTEGRACIÓN: Slack (D-016)
@@ -407,6 +407,8 @@ chatbot-ai-vmc/
 │   └── stacks/
 │       └── subastin_stack.py   # tablas, colas, lambdas, HTTP API, Cognito, S3, alarmas
 ├── widget/                     # chat embebible: subastin.js (sin build) · test.html · README (contrato VMC)
+├── data/helpcenter/            # conocimiento del bot: markdown descargado + chunks.json (no versionado)
+├── scripts/                    # local_setup · seed_data · helpcenter_fetch · helpcenter_upload
 ├── frontend/                   # Next.js (App Router, TS, Tailwind) — app asesor y dashboard, vacío por ahora
 ├── tests/                      # pytest contra dynamodb-local/localstack reales; cada fase agrega los tests de sus AC
 ├── .github/workflows/          # ci.yml (ruff·pytest·synth en PRs) · deploy.yml (CD maquetado, apagado hasta §6)
@@ -437,7 +439,7 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
 | **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
 | **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage` | TD-002, D-020 (debounce), D-006 (triviales) |
-| **F3** | RAG: ingesta a Pinecone + FAQ con fuentes (RF-019) + regla "no inventar → handoff" (RF-018) | proceso de ingesta por definir |
+| **F3** | RAG: **ingesta y recuperación hechas 2026-08-27** (`agent/rag.py`, `scripts/helpcenter_*`; 22 artículos, 133 chunks). Falta conectarlo al pipeline y calibrar `RAG_MIN_SCORE` con datos reales | el pipeline depende de F2 (D-004/D-006/D-020) |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
 | **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito, rutas `/advisor` (bandeja, toma atómica, mensajes, cierre de ticket con nota `TICKET_CLOSED` en el hilo) | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019 cerradas) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
