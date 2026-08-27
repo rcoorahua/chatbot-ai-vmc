@@ -143,6 +143,9 @@ def _msg(conv: str, hora: str, mid: str, sender: str, texto: str | None, **extra
         "message_id": mid,
         "sender_type": sender,
         "message_type": extra.pop("message_type", "TEXT"),
+        # Estado tecnico (RF-008): los del usuario ya pasaron por el pipeline; los salientes
+        # nacen entregados. Ver MessageStatus en backend/conversations/models.py.
+        "status": "PROCESSED" if sender == "USER" else "DELIVERED",
         "created_at": creado,
     }
     if texto is not None:
