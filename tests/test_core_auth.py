@@ -206,3 +206,41 @@ def test_con_token_de_sesion_valido_entra(app_protegida):
 
     assert response.status_code == 200
     assert response.json() == {"cid": "conv-9", "typ": "ANONYMOUS"}
+
+
+# ───────────────────── Claims de Cognito desde el evento del API Gateway (T1) ─────────────────────
+#
+# En AWS el authorizer valida el JWT y la Lambda recibe los claims en el evento; el backend no
+# ve el token. Estas pruebas cubren ese camino sin API Gateway: el evento se arma a mano con la
+# forma exacta del payload 2.0 del HTTP API.
+
+
+def _evento(claims):
+    return {"version": "2.0", "requestContext": {"authorizer": {"jwt": {"claims": claims}}}}
+
+
+def test_los_claims_del_evento_dan_el_asesor():
+    claims = auth.cognito_claims_from_event(
+        _evento({"sub": "abc-123", "email": "ana@vmc.test", "name": "Ana"})
+    )
+    assert claims == auth.CognitoClaims(sub="abc-123", email="ana@vmc.test", name="Ana")
+
+
+def test_sin_name_se_usa_el_username_de_cognito():
+    claims = auth.cognito_claims_from_event(_evento({"sub": "s", "cognito:username": "ana"}))
+    assert claims.name == "ana"
+
+
+@pytest.mark.parametrize(
+    "evento",
+    [
+        None,  # request que no paso por Mangum (p. ej. TestClient sin middleware)
+        {"version": "2.0", "requestContext": {}},  # ruta sin authorizer
+        _evento({}),
+        _evento({"sub": "   "}),
+        _evento({"sub": "x" * 200}),
+    ],
+)
+def test_un_evento_sin_claims_validos_se_rechaza(evento):
+    with pytest.raises(auth.AdvisorAuthError):
+        auth.cognito_claims_from_event(evento)

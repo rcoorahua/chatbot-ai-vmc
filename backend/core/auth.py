@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings
@@ -252,5 +252,60 @@ def get_chat_session(
 CurrentSession = Annotated[ChatSession, Depends(get_chat_session)]
 
 
-# TODO F5: get_advisor() — el JWT de Cognito ya lo valido el authorizer de API Gateway (T1); aqui
-# solo se leen los claims del event (request.scope) y se resuelve el asesor por `cognito_sub`.
+# ───────────────────────────── Asesores: claims de Cognito (T1) ─────────────────────────────
+#
+# El JWT de Cognito NO se valida aqui. Lo valida el JWT authorizer del HTTP API antes de invocar
+# la Lambda, y Mangum deja el evento completo en `request.scope["aws.event"]`; los claims viven
+# en `requestContext.authorizer.jwt.claims`. Si ese camino no trae claims, la ruta es 401: un
+# request sin authorizer solo puede ser una mala configuracion del stack o un despliegue que
+# expuso /advisor sin proteger, y en ambos casos rechazar es lo correcto.
+#
+# En local no hay API Gateway: backend/api/dev_auth.py imita al authorizer y deja los claims en
+# el mismo sitio, asi que este codigo no distingue entornos.
+
+_MAX_SUB_CHARS = 128
+
+
+class AdvisorAuthError(Exception):
+    """El request no trae claims de Cognito (o vienen incompletos). Se responde 401."""
+
+
+@dataclass(frozen=True, slots=True)
+class CognitoClaims:
+    """Lo minimo que el authorizer garantiza de un asesor autenticado."""
+
+    sub: str
+    email: str | None = None
+    name: str | None = None
+
+
+def cognito_claims_from_event(event: Any) -> CognitoClaims:
+    """Extrae los claims del evento HTTP API v2 (payload 2.0) que recibe la Lambda."""
+    if not isinstance(event, dict):
+        raise AdvisorAuthError("el request no paso por el authorizer")
+    claims = (
+        event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
+    )
+    if not isinstance(claims, dict) or not claims:
+        raise AdvisorAuthError("el request no trae claims de Cognito")
+    sub = str(claims.get("sub") or "").strip()
+    if not sub or len(sub) > _MAX_SUB_CHARS:
+        raise AdvisorAuthError("claims sin sub")
+    email = claims.get("email")
+    name = claims.get("name") or claims.get("cognito:username")
+    return CognitoClaims(
+        sub=sub,
+        email=str(email)[:_MAX_EMAIL_CHARS] if email else None,
+        name=str(name)[:_MAX_NAME_CHARS] if name else None,
+    )
+
+
+def get_cognito_claims(request: Request) -> CognitoClaims:
+    """Dependency de FastAPI para las rutas `/advisor` y `/dashboard`."""
+    try:
+        return cognito_claims_from_event(request.scope.get("aws.event"))
+    except AdvisorAuthError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+
+
+CurrentClaims = Annotated[CognitoClaims, Depends(get_cognito_claims)]

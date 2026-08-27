@@ -8,7 +8,11 @@ Patrones que viven aqui y en ningun otro sitio:
   `CMID#<client_message_id>` + el mensaje + los contadores de la conversacion (ajuste 4 de
   REQUERIMENTS.md §1.11, validado en tests/test_dynamo_queries.py);
 - listado cronologico por SK y ventana reciente para la IA (RF-013), ambos dejando fuera los
-  marcadores de idempotencia.
+  marcadores de idempotencia;
+- bandeja por estado (GSI2) y casos de un asesor (GSI3) para RF-032;
+- toma ATOMICA de la conversacion (AC-005) y cierre del caso: un UpdateItem condicional sobre
+  la conversacion + la nota SYSTEM en el hilo, en una sola transaccion;
+- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`.
 
 Los tests de este modulo corren contra dynamodb-local real: un GSI mal usado falla aqui.
 """
@@ -71,6 +75,29 @@ def find_conversations_by_user(user_id: str, *, limit: int = 10) -> list[Convers
     return [Conversation.from_item(item) for item in response["Items"]]
 
 
+def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> list[Conversation]:
+    """Bandeja por estado (GSI2, RF-032). Los pendientes salen del mas antiguo al mas nuevo:
+    el que mas espera va primero."""
+    response = _conversations().query(
+        IndexName="gsi2_inbox",
+        KeyConditionExpression=Key("status").eq(status),
+        ScanIndexForward=oldest_first,
+        Limit=limit,
+    )
+    return [Conversation.from_item(item) for item in response["Items"]]
+
+
+def find_conversations_by_advisor(advisor_id: str, *, limit: int = 50) -> list[Conversation]:
+    """Casos asignados a un asesor, mas reciente primero (GSI3)."""
+    response = _conversations().query(
+        IndexName="gsi3_advisor",
+        KeyConditionExpression=Key("assigned_advisor_id").eq(advisor_id),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [Conversation.from_item(item) for item in response["Items"]]
+
+
 def create_conversation(conversation: Conversation) -> bool:
     """Crea la conversacion si no existe. Devuelve False si otro request gano la carrera."""
     try:
@@ -102,6 +129,86 @@ def update_user_profile(
         UpdateExpression="SET " + ", ".join(sets),
         ExpressionAttributeValues=values,
     )
+
+
+def reset_unread(conversation_id: str) -> None:
+    """RF-035: al abrir el hilo, los no leidos quedan consumidos. Condicional para no escribir
+    en cada sondeo cuando ya esta en cero."""
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression="SET unread_count = :zero",
+            ConditionExpression="unread_count > :zero",
+            ExpressionAttributeValues={":zero": 0},
+        )
+    except ClientError as exc:
+        if not _is_condition_failure(exc):
+            raise
+
+
+def assign_advisor(
+    conversation_id: str, advisor_id: str, *, allowed_statuses: list[str], note: Message
+) -> bool:
+    """Toma atomica (AC-005): asigna, pasa a IN_ATTENTION y apaga el bot solo si nadie la tiene
+    y el estado lo permite; en la misma transaccion deja la nota SYSTEM en el hilo. Devuelve
+    False si otro asesor gano la carrera (o el estado ya no es tomable)."""
+    placeholders = {f":s{i}": value for i, value in enumerate(allowed_statuses)}
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", assigned_advisor_id = :advisor, #status = :in_attention, bot_enabled = :off"
+    )
+    update["ConditionExpression"] = (
+        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+        f"AND #status IN ({', '.join(placeholders)})"
+    )
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {":advisor": advisor_id, ":in_attention": "IN_ATTENTION", ":off": False, **placeholders}
+    )
+    return _transact_note(update, note)
+
+
+def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> bool:
+    """Cierre del caso (RF-031 con D-003): la conversacion NO se cierra, vuelve a BOT_ATTENDING
+    con el bot encendido y sin asesor; la nota SYSTEM `TICKET_CLOSED` queda en el hilo. Solo el
+    asesor asignado puede cerrar. Devuelve False si no es el asignado."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :bot_attending, bot_enabled = :on, wait_message_sent = :off, "
+        "unread_count = :zero REMOVE assigned_advisor_id, handoff_requested_at, handoff_reason"
+    )
+    update["ConditionExpression"] = "assigned_advisor_id = :advisor"
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {
+            ":advisor": advisor_id,
+            ":bot_attending": "BOT_ATTENDING",
+            ":on": True,
+            ":off": False,
+            ":zero": 0,
+        }
+    )
+    return _transact_note(update, note)
+
+
+def _transact_note(conversation_update: dict[str, Any], note: Message) -> bool:
+    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada."""
+    client = dynamodb_resource().meta.client
+    try:
+        client.transact_write_items(
+            TransactItems=[
+                {"Update": conversation_update},
+                {"Put": {"TableName": get_settings().table_messages, "Item": note.to_item()}},
+            ]
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
+        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
+        if reasons and reasons[0] == "ConditionalCheckFailed":
+            return False
+        raise
+    return True
 
 
 # ─────────────────────────────────────── Messages ───────────────────────────────────────
@@ -162,6 +269,28 @@ def list_recent_messages(conversation_id: str, *, limit: int = 20) -> list[Messa
     return [Message.from_item(item) for item in reversed(response["Items"])]
 
 
+def list_messages_before(
+    conversation_id: str, *, before: str | None = None, limit: int = 20
+) -> tuple[list[Message], bool]:
+    """Historial hacia atras para el asesor (RF-012): los `limit` mensajes anteriores a `before`
+    (exclusivo; None = los ultimos), en orden cronologico, y si queda mas historia detras.
+
+    Se pide uno de mas para saber si hay otra pagina sin una segunda consulta.
+    """
+    upper = before or _LAST_MESSAGE_KEY
+    response = _messages().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+        & Key("message_key").between(_FIRST_MESSAGE_KEY, upper),
+        ScanIndexForward=False,
+        Limit=limit + 2 if before else limit + 1,
+    )
+    items = [Message.from_item(item) for item in response["Items"]]
+    if before and items and items[0].message_key == before:
+        items = items[1:]
+    has_more = len(items) > limit
+    return list(reversed(items[:limit])), has_more
+
+
 def _touch_conversation_update(
     conversation_id: str, message: Message, *, count_as_unread: bool
 ) -> dict[str, Any]:
@@ -187,14 +316,15 @@ def _touch_conversation_update(
     }
 
 
-def save_user_message(message: Message, *, count_as_unread: bool) -> tuple[Message, bool]:
-    """Guarda un mensaje entrante una sola vez por `client_message_id` (RF-038 / RNF-004).
+def save_message_idempotent(message: Message, *, count_as_unread: bool) -> tuple[Message, bool]:
+    """Guarda un mensaje una sola vez por `client_message_id` (RF-038 / RNF-004).
 
+    Sirve para el usuario (widget) y para el asesor (app): los dos reintentan con el mismo id.
     Devuelve `(mensaje, True)` si se guardo ahora y `(mensaje original, False)` si era un
     reintento: el frontend recibe en ambos casos el mismo mensaje confirmado (AC-006).
     """
     if not message.client_message_id:
-        raise ValueError("un mensaje de usuario necesita client_message_id")
+        raise ValueError("un mensaje idempotente necesita client_message_id")
     table_messages = get_settings().table_messages
     marker = {
         "conversation_id": message.conversation_id,

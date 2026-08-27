@@ -16,10 +16,12 @@ import uuid
 from backend.conversations import repository
 from backend.conversations.models import (
     Conversation,
+    ConversationStatus,
     Message,
     MessageStatus,
     MessageType,
     SenderType,
+    SystemEvent,
     UserType,
     message_key_for,
 )
@@ -141,7 +143,9 @@ def post_user_message(
     )
     # Solo cuenta como "no leido" para el asesor si el bot ya no atiende (RF-035): mientras la
     # IA responde sola, no hay nadie que deba leerlo.
-    return repository.save_user_message(message, count_as_unread=not conversation.bot_enabled)
+    return repository.save_message_idempotent(
+        message, count_as_unread=not conversation.bot_enabled
+    )
 
 
 def list_messages(
@@ -149,3 +153,166 @@ def list_messages(
 ) -> list[Message]:
     page = limit or get_settings().messages_page_size
     return repository.list_messages(conversation_id, after=after, limit=page)
+
+
+# ───────────────────────────── Lado del asesor (RF-012, RF-029..035) ─────────────────────────────
+#
+# Reglas cerradas con Aaron el 2026-08-27 (ver CLAUDE.md):
+# - El asesor escribe SOLO en la conversacion que tomo (asignada a el, IN_ATTENTION). No hace
+#   falta ticket para tomarla: la toma es a nivel conversacion; el ticket (F5) es el registro
+#   del caso, no el permiso para atender.
+# - Se puede tomar una PENDING_ADVISOR (handoff) y tambien una BOT_ATTENDING sin asesor: el
+#   asesor interviene por su cuenta, como en Intercom. Tomarla apaga el bot.
+# - "Cerrar caso" sin ticket (cierre minimo, provisional hasta F5): nota TICKET_CLOSED en el
+#   hilo, la conversacion vuelve a BOT_ATTENDING con el bot encendido y sin asesor (D-003: la
+#   conversacion nunca se cierra). Solo el asesor asignado cierra.
+# - RF-035: abrir el hilo consume los no leidos.
+
+_TAKEABLE_STATUSES = [ConversationStatus.PENDING_ADVISOR, ConversationStatus.BOT_ATTENDING]
+
+
+class NotAssignedToAdvisor(PermissionError):
+    """La conversacion no esta asignada a este asesor: no puede escribir ni cerrar."""
+
+
+class ConversationAlreadyTaken(RuntimeError):
+    def __init__(self, conversation: Conversation) -> None:
+        super().__init__("otro asesor tomo la conversacion")
+        self.conversation = conversation
+
+
+def list_inbox(
+    status: ConversationStatus | None, *, advisor_id: str | None = None, limit: int | None = None
+) -> list[Conversation]:
+    """Bandeja (RF-032): por estado, o los casos de un asesor si se pasa `advisor_id`.
+    Sin filtro: pendientes primero (el que mas espera arriba) y despues en atencion."""
+    page = limit or get_settings().inbox_page_size
+    if advisor_id:
+        return repository.find_conversations_by_advisor(advisor_id, limit=page)
+    if status is not None:
+        return repository.list_inbox(
+            str(status), limit=page, oldest_first=status == ConversationStatus.PENDING_ADVISOR
+        )
+    pending = repository.list_inbox(str(ConversationStatus.PENDING_ADVISOR), limit=page)
+    attending = repository.list_inbox(
+        str(ConversationStatus.IN_ATTENTION), limit=page, oldest_first=False
+    )
+    return (pending + attending)[:page]
+
+
+def open_thread(
+    conversation: Conversation,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+    limit: int | None = None,
+) -> tuple[list[Message], bool]:
+    """El hilo como lo ve el asesor: los ultimos N (RF-033), paginas anteriores con `before`
+    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(mensajes, hay_mas_atras)`.
+    Abrirlo consume los no leidos (RF-035)."""
+    page = limit or get_settings().advisor_thread_page_size
+    if after:
+        messages = repository.list_messages(conversation.conversation_id, after=after, limit=page)
+        has_more = False
+    else:
+        messages, has_more = repository.list_messages_before(
+            conversation.conversation_id, before=before, limit=page
+        )
+    if conversation.unread_count > 0:
+        repository.reset_unread(conversation.conversation_id)
+    return messages, has_more
+
+
+def _system_note(conversation_id: str, event: SystemEvent, metadata: dict) -> Message:
+    now = utc_now_iso()
+    message_id = str(uuid.uuid4())
+    return Message(
+        conversation_id=conversation_id,
+        message_key=message_key_for(now, message_id),
+        message_id=message_id,
+        sender_type=SenderType.SYSTEM,
+        message_type=MessageType.SYSTEM,
+        status=MessageStatus.DELIVERED,
+        content=str(event),
+        metadata=metadata,
+        created_at=now,
+    )
+
+
+def take_conversation(
+    conversation: Conversation, *, advisor_id: str, advisor_name: str | None
+) -> Conversation:
+    """Toma atomica (RF-029 / AC-005). Idempotente si ya es mia; si otro la tiene, error con
+    el estado actual para que la app se actualice sin duplicar atencion."""
+    if conversation.assigned_advisor_id == advisor_id:
+        return conversation
+    note = _system_note(
+        conversation.conversation_id,
+        SystemEvent.ADVISOR_ASSIGNED,
+        {"advisor_id": advisor_id, "advisor_name": advisor_name},
+    )
+    taken = repository.assign_advisor(
+        conversation.conversation_id,
+        advisor_id,
+        allowed_statuses=[str(s) for s in _TAKEABLE_STATUSES],
+        note=note,
+    )
+    current = repository.get_conversation(conversation.conversation_id)
+    if current is None:
+        raise repository.ConversationNotFound(conversation.conversation_id)
+    if not taken:
+        raise ConversationAlreadyTaken(current)
+    return current
+
+
+def post_advisor_message(
+    conversation: Conversation,
+    *,
+    advisor_id: str,
+    advisor_name: str | None,
+    client_message_id: str,
+    content: str,
+) -> tuple[Message, bool]:
+    """Respuesta del asesor (RF-034), idempotente por `client_message_id` (RF-038 / AC-006).
+    Nace DELIVERED: persistir es entregar; el widget la recoge en el siguiente sondeo."""
+    if conversation.assigned_advisor_id != advisor_id:
+        raise NotAssignedToAdvisor(conversation.conversation_id)
+    text = content.strip()
+    if not text:
+        raise EmptyMessage("el mensaje esta vacio")
+    limit = get_settings().max_message_chars
+    if len(text) > limit:
+        raise MessageTooLong(limit)
+
+    now = utc_now_iso()
+    message_id = str(uuid.uuid4())
+    message = Message(
+        conversation_id=conversation.conversation_id,
+        message_key=message_key_for(now, message_id),
+        message_id=message_id,
+        sender_type=SenderType.ADVISOR,
+        sender_id=advisor_id,
+        message_type=MessageType.TEXT,
+        status=MessageStatus.DELIVERED,
+        content=text,
+        client_message_id=client_message_id,
+        # El widget muestra el nombre del asesor (como Intercom firma cada respuesta).
+        metadata={"sender_name": advisor_name} if advisor_name else None,
+        created_at=now,
+    )
+    return repository.save_message_idempotent(message, count_as_unread=False)
+
+
+def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
+    """Cierre minimo del caso (RF-031 sin ticket, provisional hasta F5)."""
+    if conversation.assigned_advisor_id != advisor_id:
+        raise NotAssignedToAdvisor(conversation.conversation_id)
+    note = _system_note(
+        conversation.conversation_id, SystemEvent.TICKET_CLOSED, {"advisor_id": advisor_id}
+    )
+    if not repository.release_advisor(conversation.conversation_id, advisor_id, note=note):
+        raise NotAssignedToAdvisor(conversation.conversation_id)
+    current = repository.get_conversation(conversation.conversation_id)
+    if current is None:  # pragma: no cover
+        raise repository.ConversationNotFound(conversation.conversation_id)
+    return current

@@ -125,7 +125,7 @@ de la Lambda `api` (ver `backend/api/routers/`).
 | Ruta APIGW | Auth | Router FastAPI | Superficie (qué expondrá) | RFs |
 |---|---|---|---|---|
 | `$default` (cae en `/chat/*`) | `POST /chat/sessions` verifica el JWT de VMC (D-001) y emite el token de sesión; el resto exige ese token como Bearer, atado a UNA conversación | `chat` | **Hecho:** sesión, conversación, enviar mensaje (202 + job), listar mensajes (polling con cursor). **Pendiente:** solicitar handoff, presigned URL para subir imagen | RF-001..005, 008..014, 022, 040..042 |
-| `/advisor/{proxy+}` | **JWT authorizer Cognito** (nativo de HTTP API) | `advisor` | Bandeja (por estado, no leídos), tomar conversación (atómica), ver hilo + contexto usuario (D-010), enviar mensaje, tickets, cerrar | RF-029..039, 012, 031 |
+| `/advisor/{proxy+}` | **JWT authorizer Cognito** (nativo de HTTP API); la Lambda lee los claims del evento (`core/auth.py`). En local, `ADVISOR_DEV_AUTH=1` imita al authorizer (`api/dev_auth.py`) | `advisor` | **Hecho:** `GET /me` (auto-alta D-021), bandeja (`GET /conversations?status=&mine=`), detalle, hilo (últimos 20, `before`/`after`, consume no leídos), `POST …/take` (atómica), `POST …/messages` (idempotente, solo el asignado — D-022), `POST …/close` (cierre mínimo — D-023). **Pendiente:** tickets (F5) | RF-006, 012, 029, 031..036, 038 |
 | `/dashboard/{proxy+}` | **JWT authorizer Cognito** | `dashboard` | Métricas operativas (D-013) | RF-047..049 |
 | `GET /health` | pública | `main` | Healthcheck | — |
 
@@ -423,10 +423,10 @@ chatbot-ai-vmc/
 └── README.md                   # overview + quickstart dev
 ```
 
-Implementado (2026-08-27): `core`, `conversations`, `api/routers/chat.py`, `agent` (clasificador
-y redactor, sin pipeline) y `widget/`. `tickets`, `advisors`, `catalog`, `notifications`,
-`images`, `workers` y los routers `advisor`/`dashboard` siguen como stubs con TODOs; se definen al
-arrancar sus fases.
+Implementado (2026-08-27): `core`, `conversations`, `advisors`, `api/routers/chat.py`,
+`api/routers/advisor.py` (+ `api/dev_auth.py` para el authorizer en local), `agent` (clasificador
+y redactor, sin pipeline) y `widget/`. `tickets`, `catalog`, `notifications`, `images`, `workers`
+y el router `dashboard` siguen como stubs con TODOs; se definen al arrancar sus fases.
 
 ---
 
@@ -441,7 +441,7 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 | **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage` | TD-002, D-020 (debounce), D-006 (triviales) |
 | **F3** | RAG: **ingesta y recuperación hechas 2026-08-27** (`agent/rag.py`, `scripts/helpcenter_*`; 22 artículos, 133 chunks). Falta conectarlo al pipeline y calibrar `RAG_MIN_SCORE` con datos reales | el pipeline depende de F2 (D-004/D-006/D-020) |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
-| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito, rutas `/advisor` (bandeja, toma atómica, mensajes, cierre de ticket con nota `TICKET_CLOSED` en el hilo) | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019 cerradas) |
+| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
 | **F7** | Dashboard + hardening: métricas, retención/TTL, auditoría QA, escenarios AC-001..009 end-to-end | D-013, D-014 |
 
@@ -455,6 +455,8 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
 - **De negocio cerradas (2026-08-27, Aaron):** D-001 (JWT firmado por el servidor de VMC), D-002
   (1 conversación; 5 tickets activos; anónimo solo FAQ), D-003 (conversación permanente; se
   cierran tickets, visibles en el hilo) y, por derivación, D-017 y D-019. D-018 provisional.
+  Lado asesor (mismo día): D-021 (auto-alta al primer login), D-022 (responde solo quien tomó
+  la conversación; sin ticket), D-023 (cierre mínimo sin ticket, provisional hasta F5).
   Detalle en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-004…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea: **D-005** (guardrails),
