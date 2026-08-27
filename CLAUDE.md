@@ -81,7 +81,9 @@ moverla a "cerradas" aquí y reflejarla en PLAN.md.
 - **T6** FastAPI se mantiene como framework (compatible con Lambda vía Mangum).
 - **T7** Datos/estados/código en inglés (`PENDING_ADVISOR`…); UI en español; docs en español.
 - **T8** Respuesta IA asíncrona: POST → 202 + SQS; el frontend hace polling.
-- **T9** Haiku = `claude-haiku-4-5` (SDK `anthropic`) para clasificación; Gemini (SDK `google-genai`) para redacción.
+- **T9** ~~Haiku para clasificación; Gemini para redacción.~~ **Superada provisionalmente por
+  TD-008** (2026-08-27): Gemini (SDK `google-genai`) atiende ambas etapas. Haiku
+  (`claude-haiku-4-5`) sigue siendo el plan B para clasificar si el golden set lo justifica.
 - Modelo de datos: 5 tablas DynamoDB (`Conversations`, `Messages`, `Tickets`, `Advisors`, `AIUsage`) — claves/GSIs en PLAN.md §4, con los ajustes 1–5 de la revisión (unread_count, wait_message_sent, TTL en Messages, idempotencia transaccional, GSI sparse opcional).
 - `visibility_timeout` de cada cola ≥ 6× el timeout de su worker.
 - Los GSI se deciden ANTES de crear tablas en stage (backfill posterior es migración manual).
@@ -123,6 +125,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
 | TD-005 | `PythonFunction` (bundling) vs `DockerImageFunction` | PythonFunction mientras deps < 250 MB descomprimido |
 | TD-007 | Dominio custom para la API + DNS/ACM | No bloquea MVP; URL default de API Gateway mientras tanto |
+| TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27: `gemini-3.1-flash-lite` clasifica ($0.25/$1.50 por 1M, 4× más barato que Haiku) y `gemini-3.7-flash` redacta. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002). Ojo: el precio de `3.7-flash` es promocional hasta 2026-12-31 y se duplica el 2027-01-01 |
 
 TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; backup en
 `../chatbot-ai-vmc-v0-backup.zip`.
