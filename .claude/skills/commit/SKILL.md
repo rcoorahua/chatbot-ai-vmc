@@ -25,39 +25,32 @@ Remoto: `https://github.com/rcoorahua/chatbot-ai-vmc`. Ramas: `main` (producció
    RF/AC cubiertos + qué se probó + decisiones tomadas y por qué.
 8. **Esperar el CI** y no darlo por bueno sin verlo: `lint`, `test` y `synth` en verde. Los
    `deploy-*` en `skipping` es lo esperado mientras no haya cuenta AWS.
-9. **Merge a develop**: squash si la rama trae commits WIP, merge normal si cada commit es
-   limpio; borrar la rama.
-10. **PR de develop → main** con título `release: <resumen>`, esperar CI y mergear (merge normal,
-    sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
-11. **Sincronizar develop con main**: tras el release, `develop` queda detrás por los merge
-    commits que crea GitHub. Se arregla con un PR `main → develop` (`chore: sincronizar...`),
-    NUNCA con push directo — el hook `pre-push` lo bloquea y saltarlo con `ALLOW_DIRECT_PUSH`
-    no es la vía.
+9. **Merge a develop** con squash; borrar la rama.
+10. **Release**: PR `develop → main`, título `release: <resumen>`, esperar CI y **mergear con
+    squash** (sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
+
+**Squash SIEMPRE, también en el release.** Un merge normal crea un commit que solo existe en
+`main`; `develop` queda "N atrás" y tienta a un PR `main → develop` de vuelta, que invierte el
+flujo y ensucia la historia. Con squash no hay commit huérfano: el flujo es siempre en una
+dirección y no hace falta sincronizar nada. El detalle de cada cambio vive en el PR de GitHub.
 
 ### Comandos de PR (GitHub CLI)
 
-`gh` está instalado en `C:\Program Files\GitHub CLI\gh.exe` y autenticado. Una terminal abierta
-antes de instalarlo no lo ve en el PATH: usar la ruta completa o abrir una nueva.
+`gh` está en `C:\Program Files\GitHub CLI\gh.exe` y autenticado. Una terminal abierta antes de
+instalarlo no lo ve en el PATH: usar la ruta completa o abrir una nueva.
 
 ```powershell
 $gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
 & $gh pr create --base develop --head <rama> --title "<titulo>" --body-file <archivo.md>
 & $gh pr checks <n> --watch --interval 15     # espera a que terminen los checks
 & $gh pr merge <n> --squash --delete-branch   # a develop
-& $gh pr merge <n> --merge                    # release a main: sin borrar la rama
+& $gh pr merge <n> --squash                   # release a main: sin borrar develop
 ```
 
-El cuerpo va **siempre en archivo** (`--body-file`), nunca inline: los here-strings con tablas
-markdown y rutas hacen saltar filtros del shell. Escribirlo con la herramienta Write al
-scratchpad y pasar la ruta.
-
-`gh pr merge` escribe a stderr al hacer el `git fetch` posterior; PowerShell lo muestra como
-error aunque haya funcionado. Confirmar siempre con
-`gh pr view <n> --json number,state,mergedAt` antes de reportar el resultado.
-
-Sin `gh` disponible: abrir
-`https://github.com/rcoorahua/chatbot-ai-vmc/compare/develop...<rama>?expand=1` y que el usuario
-cree el PR a mano.
+Dos trampas verificadas: el cuerpo va **siempre en archivo** (`--body-file`) porque los
+here-strings con tablas y rutas hacen saltar filtros del shell; y `gh pr merge` escribe a stderr
+al terminar, así que el resultado se confirma con `gh pr view <n> --json state,mergedAt` antes
+de reportarlo. Sin `gh`: abrir `.../compare/develop...<rama>?expand=1` y que el usuario lo cree.
 
 ## Conventional Commits
 
@@ -75,16 +68,10 @@ cree el PR a mano.
 
 - Descripción en imperativo, minúscula inicial, sin punto final, ≤ 72 caracteres.
 - Trazabilidad spec-driven en el cuerpo: `Implementa RF-xxx / AC-xxx` · `Cierra D-xxx`.
+  Ejemplo: `feat(conversations): mensaje fijo de espera una sola vez por periodo` +
+  cuerpo `Implementa RF-027 / AC-004.`
 - Breaking change: `!` tras type/scope + footer `BREAKING CHANGE: <detalle>`.
 - Footer de coautoría de Claude según el harness (Co-Authored-By).
-
-Ejemplo:
-
-```
-feat(conversations): mensaje fijo de espera una sola vez por periodo
-
-Implementa RF-027 / AC-004.
-```
 
 ## Protecciones activas
 
