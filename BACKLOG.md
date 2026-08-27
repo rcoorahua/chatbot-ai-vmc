@@ -18,8 +18,8 @@ Cada ticket declara cuatro cosas:
 ## 1. Qué se puede empezar hoy
 
 **Hechos (2026-08-27):** T-01, T-02, T-05 (parcial), T-06, T-10, T-12 — es la F1 completa: chat
-público con identidad VMC, persistencia y widget. T-20 y T-21 (clasificador y redactor) también
-están hechos desde el 2026-08-27 vía TD-008.
+público con identidad VMC, persistencia y widget. También T-20 y T-21 (clasificador y redactor,
+vía TD-008) y **T-22** (recuperación en Pinecone + ingesta del Centro de Ayuda).
 
 Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disponible ahora mismo:
 
@@ -31,7 +31,8 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 | T-30 | Cliente de Slack | Integraciones |
 
 El siguiente bloque grande (T-24, el worker de IA que hace que el bot responda) espera solo a
-D-004, D-006 y D-020 — tres optimizaciones que pueden cerrarse con "no por ahora".
+D-004, D-006 y D-020 — tres optimizaciones que pueden cerrarse con "no por ahora". Con eso, las
+piezas que ya existen (clasificador, RAG, redactor) quedan conectadas y el bot contesta.
 
 ---
 
@@ -170,11 +171,15 @@ u OTHER, con al menos 95% de acierto (skill `prompt-governance`).
 Requerimientos: RF-019, RF-020 · Depende de: T-20 · Bloqueado por: D-004 (resumen)
 Archivos: `backend/agent/writer.py`
 
-**T-22 · Recuperación en Pinecone**
-Requerimientos: RF-017, RF-018 · Depende de: T-21
-**Bloqueado por:** el proceso de ingesta de contenido, que **no está en el spec** — hay que
-definir qué documentos entran, quién los cura y cómo se re-indexan
-Archivos: `backend/agent/rag.py`
+**T-22 · Recuperación en Pinecone** — ✅ hecho 2026-08-27 (`tests/test_agent_rag.py`,
+`tests/test_helpcenter_ingest.py`)
+Requerimientos: RF-017, RF-018, RF-019 · Depende de: T-21
+Archivos: `backend/agent/rag.py`, `scripts/helpcenter_fetch.py`, `scripts/helpcenter_upload.py`
+Ingesta definida (lo que estaba bloqueado): **entra el Centro de Ayuda público de VMC**, un chunk
+por pregunta; lo cura quien revisa los `.md` que deja el fetch; se re-indexa corriendo los dos
+scripts (`--replace` para un refresco completo). Detalle en `data/helpcenter/README.md`.
+**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) y
+conectar la recuperación al pipeline (T-24).
 
 **T-23 · Catálogo HERALD**
 Requerimientos: RF-044..RF-046 · Depende de: T-20
