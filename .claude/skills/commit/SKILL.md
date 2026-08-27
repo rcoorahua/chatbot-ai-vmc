@@ -25,23 +25,24 @@ Remoto: `https://github.com/rcoorahua/chatbot-ai-vmc`. Ramas: `main` (producció
    RF/AC cubiertos + qué se probó + decisiones tomadas y por qué.
 8. **Esperar el CI** y no darlo por bueno sin verlo: `lint`, `test` y `synth` en verde. Los
    `deploy-*` en `skipping` es lo esperado mientras no haya cuenta AWS.
-9. **Merge a develop** con squash; borrar la rama.
-10. **Release**: PR `develop → main`, título `release: <resumen>`, esperar CI y **mergear con
-    squash** (sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
+9. **Merge a develop** con merge commit (`--merge`, **nunca squash**); borrar la rama.
+10. **Release**: PR `develop → main`, título `release: <resumen>`, esperar CI y mergear con
+    `--merge` (sin borrar `develop`). El deploy a prod tiene gate manual (skill `deploy`).
+11. **Sincronizar**: PR `main → develop` (`chore: sincronizar main en develop`) y mergear. Deja
+    las dos ramas con la misma historia, que es lo que evita el conflicto del próximo release.
 
-**Squash SIEMPRE, también en el release**, y el flujo va en UNA dirección: `develop → main`.
-Nunca un PR `main → develop`.
+**Nada de squash** (decisión de Aaron, 2026-08-27, tras probarlo dos releases). El squash crea en
+`main` un commit que `develop` no tiene, así que la base común se queda atrás: en el siguiente
+release git ve las mismas líneas agregadas por los dos lados y marca **conflicto en cada archivo
+tocado** aunque el contenido sea el mismo. Pasó en los releases #29 y #36 y hay que resolverlo a
+mano cada vez. Con merge commits, `main` queda como ancestro de `develop` y no vuelve a pasar.
 
-`develop` y `main` SIEMPRE figuran con "N adelante / M atrás" — con squash y con merge normal.
-Es inevitable: ambos reescriben o agregan commits en el destino. **Ese número no es un problema
-y no se arregla.** Lo único que importa es que el contenido coincida:
+El PR `main → develop` del paso 11 es el precio de esto: mete un merge commit en el trunk. Es
+deliberado, no un error — sin él la historia se separa otra vez.
 
 ```powershell
 git diff --stat origin/main origin/develop   # vacío = ramas equivalentes, todo bien
 ```
-
-Si sale vacío, no hay nada que hacer. Un PR `main → develop` para "alinear" invierte el flujo,
-mete un merge commit en el trunk y no cambia el contenido: es ruido, no una corrección.
 
 ### Comandos de PR (GitHub CLI)
 
@@ -51,8 +52,8 @@ mete un merge commit en el trunk y no cambia el contenido: es ruido, no una corr
 $gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
 & $gh pr create --base develop --head <rama> --title "<titulo>" --body-file <archivo.md>
 & $gh pr checks <n> --watch --interval 15     # espera a que terminen los checks
-& $gh pr merge <n> --squash --delete-branch   # a develop
-& $gh pr merge <n> --squash                   # release a main: sin borrar develop
+& $gh pr merge <n> --merge --delete-branch    # a develop
+& $gh pr merge <n> --merge                    # release a main y sync a develop: sin borrarlas
 ```
 
 Trampas verificadas: el cuerpo va siempre en archivo (`--body-file`) porque los here-strings con
