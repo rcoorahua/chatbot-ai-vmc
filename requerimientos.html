@@ -1,0 +1,1912 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Requerimientos de Subastín</title>
+<style>
+:root{
+  --bg:#ffffff; --paper:#fbfbfa; --panel:#ffffff;
+  --text:#37352f; --text-2:#6b6960; --text-3:#9b9a94;
+  --line:rgba(55,53,47,.09); --line-2:rgba(55,53,47,.16);
+  --hover:rgba(55,53,47,.045); --active:rgba(55,53,47,.08);
+  --card:#ffffff; --band:rgba(55,53,47,.022);
+  --edge:rgba(55,53,47,.20); --shadow:0 1px 2px rgba(15,15,15,.06), 0 8px 24px rgba(15,15,15,.08);
+  --c-rf:#3b6fd4; --c-rnf:#12896a; --c-c:#c2701c; --c-d:#8250df;
+  --up:#c2701c; --down:#3b6fd4; --warn:#c2701c;
+  --e-XS:#12896a; --e-S:#3b6fd4; --e-M:#c2701c; --e-L:#c2453b;
+  --k-hecho:#12896a; --k-curso:#3b6fd4; --k-listo:#6b6960; --k-backlog:#9b9a94;
+  --done:rgba(18,137,106,.07);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#191919; --paper:#1f1f1f; --panel:#232323;
+    --text:#e9e9e7; --text-2:#a5a29b; --text-3:#7a7873;
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.16);
+    --hover:rgba(255,255,255,.055); --active:rgba(255,255,255,.09);
+    --card:#242424; --band:rgba(255,255,255,.022);
+    --edge:rgba(255,255,255,.17); --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.45);
+    --c-rf:#7aa2f7; --c-rnf:#4cc79c; --c-c:#e0a35c; --c-d:#b18cf0;
+    --up:#e0a35c; --down:#7aa2f7; --warn:#e0a35c;
+    --e-XS:#4cc79c; --e-S:#7aa2f7; --e-M:#e0a35c; --e-L:#ef6f66;
+    --k-hecho:#4cc79c; --k-curso:#7aa2f7; --k-listo:#a5a29b; --k-backlog:#7a7873;
+    --done:rgba(76,199,156,.09);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#191919; --paper:#1f1f1f; --panel:#232323;
+  --text:#e9e9e7; --text-2:#a5a29b; --text-3:#7a7873;
+  --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.16);
+  --hover:rgba(255,255,255,.055); --active:rgba(255,255,255,.09);
+  --card:#242424; --band:rgba(255,255,255,.022);
+  --edge:rgba(255,255,255,.17); --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.45);
+  --c-rf:#7aa2f7; --c-rnf:#4cc79c; --c-c:#e0a35c; --c-d:#b18cf0;
+  --up:#e0a35c; --down:#7aa2f7; --warn:#e0a35c;
+  --e-XS:#4cc79c; --e-S:#7aa2f7; --e-M:#e0a35c; --e-L:#ef6f66;
+  --k-hecho:#4cc79c; --k-curso:#7aa2f7; --k-listo:#a5a29b; --k-backlog:#7a7873;
+  --done:rgba(76,199,156,.09);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);
+  font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",sans-serif;
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
+.mono{font-family:ui-monospace,"SF Mono","Cascadia Code","Segoe UI Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+
+.topbar{height:52px;display:flex;align-items:center;gap:16px;padding:0 16px;
+  border-bottom:1px solid var(--line);background:var(--bg);position:relative;z-index:40}
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0}
+.brand h1{font-size:14.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.brand .sub{font-size:12px;color:var(--text-3);white-space:nowrap}
+.spacer{flex:1}
+.seg{display:flex;background:var(--hover);border-radius:7px;padding:2px}
+.seg button{padding:4px 13px;border-radius:5px;font-size:12.5px;color:var(--text-2);
+  transition:color .18s ease,background .18s ease,box-shadow .18s ease}
+.seg button[aria-selected="true"]{background:var(--panel);color:var(--text);box-shadow:0 1px 2px rgba(15,15,15,.08);font-weight:500}
+.iconbtn{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;color:var(--text-2);
+  transition:background .16s ease,color .16s ease}
+.iconbtn:hover{background:var(--hover);color:var(--text)}
+.iconbtn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+.rollup{display:flex;align-items:center;gap:13px;font-size:12px;color:var(--text-2);white-space:nowrap}
+.rollup b{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.rollup .bar{width:120px;height:5px;border-radius:3px;background:var(--hover);overflow:hidden;display:flex}
+.rollup .bar i{height:100%;transition:width .45s cubic-bezier(.22,.61,.36,1)}
+.mode{font-size:10.5px;padding:2px 7px;border-radius:20px;border:1px solid var(--line-2);color:var(--text-3);white-space:nowrap}
+.mode.on{border-color:var(--k-hecho);color:var(--k-hecho)}
+
+.shell{display:grid;grid-template-columns:242px 1fr;height:calc(100vh - 52px);position:relative}
+.sidebar{border-right:1px solid var(--line);background:var(--paper);padding:14px 12px 12px;
+  overflow-y:auto;display:flex;flex-direction:column;gap:15px}
+.search{position:relative}
+.search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:14px;height:14px;
+  fill:none;stroke:var(--text-3);stroke-width:1.8;stroke-linecap:round}
+.search input{width:100%;padding:7px 9px 7px 29px;border-radius:6px;border:1px solid transparent;
+  background:var(--hover);outline:none;font-size:13px;transition:border-color .16s ease,background .16s ease}
+.search input:focus{border-color:var(--line-2);background:var(--panel)}
+.search input::placeholder{color:var(--text-3)}
+
+.group>h3{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+  margin-bottom:7px;padding:2px 6px;cursor:pointer;display:flex;align-items:center;gap:6px;border-radius:4px;
+  user-select:none;transition:background .14s ease,color .14s ease}
+.group>h3:hover{background:var(--hover);color:var(--text-2)}
+.group>h3 .caret{width:9px;height:9px;flex:none;transition:transform .2s ease;
+  border-left:1.4px solid currentColor;border-bottom:1.4px solid currentColor;transform:rotate(-45deg);margin-left:-1px}
+.group.closed>h3 .caret{transform:rotate(-135deg)}
+.group>div{overflow:hidden;transition:max-height .26s cubic-bezier(.22,.61,.36,1),opacity .2s ease;max-height:560px}
+.group.closed>div{max-height:0;opacity:0}
+.opt{display:flex;align-items:center;gap:9px;padding:5px 6px;border-radius:5px;cursor:pointer;
+  font-size:13px;color:var(--text-2);transition:background .14s ease,color .14s ease;user-select:none}
+.opt:hover{background:var(--hover);color:var(--text)}
+.opt input{display:none}
+.box{width:14px;height:14px;border-radius:3.5px;border:1.5px solid var(--line-2);flex:none;
+  display:grid;place-items:center;transition:background .16s ease,border-color .16s ease}
+.box svg{width:9px;height:9px;stroke:#fff;stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round;
+  opacity:0;transform:scale(.5);transition:opacity .16s ease,transform .16s cubic-bezier(.34,1.56,.64,1)}
+.opt input:checked + .box{background:var(--tint);border-color:var(--tint)}
+.opt input:checked + .box svg{opacity:1;transform:scale(1)}
+.opt .n{margin-left:auto;font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.opt.is-on{color:var(--text)}
+/* Pegado abajo: en 1366×768 la barra lateral desborda y Exportar/Importar
+   quedaban fuera de alcance sin hacer scroll. */
+.foot{margin-top:auto;position:sticky;bottom:0;z-index:2;background:var(--paper);
+  padding:10px 0 2px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.foot .r{display:flex;gap:6px}
+.foot button{flex:1;padding:5px 8px;font-size:11.5px;border-radius:5px;border:1px solid var(--line-2);
+  color:var(--text-2);transition:background .14s ease,color .14s ease}
+.foot button:hover{background:var(--hover);color:var(--text)}
+.legend{display:flex;flex-direction:column;gap:6px;padding-top:12px;margin-top:4px;
+  border-top:1px solid var(--line)}
+.legend .row{display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--text-3);padding-left:4px}
+.legend .line{width:20px;height:0;border-top:1.6px solid var(--text-3);flex:none}
+.legend .line.d{border-top-style:dashed}
+.legend .line.dot{border-top-style:dotted}
+.legend .ring{width:11px;height:11px;border-radius:3px;border:1.6px dashed var(--warn);flex:none}
+.kbd{font-family:ui-monospace,Consolas,monospace;font-size:10px;padding:1px 4px;border-radius:3px;
+  border:1px solid var(--line-2);color:var(--text-3)}
+
+.stage{position:relative;overflow:hidden;background:var(--bg)}
+/* Arrastrar el mapa mueve la vista; sin esto el navegador selecciona el texto
+   de las tarjetas y el gesto se vuelve incomodo. */
+#graph,#graph text,.phasebar{user-select:none;-webkit-user-select:none}
+/* display:none y no opacity/visibility: con esas dos, trozos de la vista
+   inactiva (chips, cabeceras de fase) seguían pintándose sobre la activa.
+   La entrada se anima con keyframes, que sí funcionan al cambiar display. */
+.view{position:absolute;inset:0;display:none}
+.view.is-active{animation:aparecer .26s cubic-bezier(.22,.61,.36,1)}
+#view-graph.is-active,#view-list.is-active{display:block}
+#view-board.is-active{display:flex}
+@keyframes aparecer{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ------- mapa ------- */
+/* Fondo opaco a propósito: el mapa se desplaza libre y las tarjetas pasan por
+   debajo. Con degradado se transparentaban y chocaban con el texto. */
+.phasebar{position:absolute;top:0;left:0;right:0;height:72px;z-index:12;pointer-events:none;
+  border-bottom:1px solid var(--line);background:var(--bg);overflow:hidden}
+.phhead .ps{font-size:9.5px;color:var(--text-3);margin-top:2px;max-width:250px;
+  white-space:normal;line-height:1.3}
+/* OJO: esta clase NO puede llamarse .ph — chocaría con .chip.ph (el chip de
+   fase de las tarjetas), que quedaría posicionado en absoluto y se apilaría
+   arriba de todo. Es exactamente el bug de las "burbujas". */
+.phhead{position:absolute;top:8px;transform:translateX(-50%);text-align:center;white-space:nowrap;transition:opacity .25s ease}
+.phhead .pn{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);font-weight:600}
+.phhead .pt{font-size:12.5px;font-weight:600;letter-spacing:-.01em;color:var(--text-2);margin-top:-1px}
+.phhead .pd{font-size:9.5px;color:var(--text-3);font-variant-numeric:tabular-nums;margin-top:1px}
+.phhead.is-hot .pt{color:var(--text)}
+.phhead.is-hot .pn{color:var(--tint-ph)}
+/* si las columnas quedan más juntas que la etiqueta, se colapsa a "F3" en vez
+   de apilarse una sobre otra */
+.phhead.mini .pt,.phhead.mini .pd{display:none}
+.phhead.mini .pn{font-size:11px;color:var(--text-2)}
+#graph{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#graph.is-panning{cursor:grabbing}
+.band{fill:var(--band)}
+.edge{fill:none;stroke:var(--edge);stroke-width:1.2;transition:stroke .3s ease,stroke-width .3s ease,opacity .3s ease}
+.edge.k-define{stroke-dasharray:4 3.5}
+.edge.k-condiciona{stroke-dasharray:1.5 3.5;stroke-linecap:round}
+.edge.is-back{stroke-dasharray:5 4;opacity:.5}
+/* dependencia dentro de la misma fase: se dibuja pero no compite con el flujo */
+.edge.is-intra{opacity:.32}
+.edge.is-intra.is-up,.edge.is-intra.is-down{opacity:1}
+.edge.is-up{stroke:var(--up);stroke-width:2;opacity:1}
+.edge.is-down{stroke:var(--down);stroke-width:2;opacity:1}
+.edge.is-mute{opacity:.06}
+.edge.is-hidden{opacity:0}
+.node{cursor:pointer;transition:opacity .35s ease}
+.node .bg{fill:var(--card);stroke:var(--line-2);stroke-width:1;
+  transition:stroke .22s ease,stroke-width .22s ease,fill .22s ease}
+.node .bar{fill:var(--tint)}
+.node .risk{fill:none;stroke:var(--warn);stroke-width:1.2;stroke-dasharray:2.5 2.5;opacity:.75}
+.node .nid{font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:9.4px;font-weight:700;
+  fill:var(--tint);letter-spacing:.04em}
+/* En vista panorámica el título no cabe: solo el ID, grande, para que siga
+   siendo legible en 1366 (donde el zoom de ajuste ronda 0,49). */
+.node .nbig{font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:26px;font-weight:700;
+  fill:var(--tint);text-anchor:middle;opacity:0;transition:opacity .2s ease}
+.node .ntxt{font-size:11.3px;fill:var(--text);letter-spacing:-.005em;transition:opacity .2s ease}
+.node .nest{font-family:ui-monospace,Consolas,monospace;font-size:8.8px;font-weight:700;text-anchor:end;
+  fill:var(--text-3);letter-spacing:.04em}
+.node .nkb{stroke:none}
+.node .pini{font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif;font-size:7px;
+  font-weight:700;fill:#fff;text-anchor:middle;pointer-events:none}
+.node .pini.mas{fill:var(--text-2)}
+#graph.lod .node .pini{opacity:0}
+.node[data-kb="hecho"] .bg{fill:var(--done)}
+.node[data-kb="hecho"] .ntxt{opacity:.55}
+.node[data-kb="curso"] .bg{stroke:var(--k-curso);stroke-width:1.6}
+.node:hover .bg{stroke:var(--tint);stroke-width:1.6}
+.node.is-focus .bg{stroke:var(--tint);stroke-width:2.4}
+.node.is-up .bg{stroke:var(--up);stroke-width:1.7}
+.node.is-down .bg{stroke:var(--down);stroke-width:1.7}
+.node.is-mute{opacity:.16}
+.node.is-hidden{opacity:0;pointer-events:none}
+.node.enter{opacity:0}
+/* Los dos niveles de detalle se excluyen: el ID grande solo aparece cuando el
+   título ya no cabe. Antes convivían y se pintaban uno encima del otro. */
+.node .nbig{display:none}
+#graph.lod .node .ntxt,#graph.lod .node .nest,#graph.lod .node .nid{display:none}
+#graph.lod .node .nbig{display:block;opacity:1}
+.tools{position:absolute;left:14px;bottom:14px;display:flex;gap:6px;z-index:14}
+.tools button{padding:5px 11px;font-size:12px;border-radius:6px;background:var(--panel);
+  border:1px solid var(--line);color:var(--text-2);box-shadow:0 1px 2px rgba(15,15,15,.05);
+  transition:background .16s ease,color .16s ease,transform .16s ease}
+.tools button:hover{background:var(--hover);color:var(--text)}
+.tools button:active{transform:translateY(1px)}
+.hint{position:absolute;right:16px;bottom:14px;font-size:11.5px;color:var(--text-3);z-index:14;
+  pointer-events:none;transition:opacity .3s ease}
+.hint.is-off{opacity:0}
+#tip{position:fixed;z-index:200;pointer-events:none;opacity:0;transform:translateY(4px);
+  transition:opacity .14s ease,transform .14s ease;background:var(--panel);border:1px solid var(--line);
+  border-radius:7px;padding:7px 10px;box-shadow:var(--shadow);max-width:290px}
+#tip.on{opacity:1;transform:none}
+#tip .i{font-size:10.5px;color:var(--text-3);letter-spacing:.03em}
+#tip .t{font-size:12.5px;font-weight:500;margin-top:1px}
+
+/* ------- lista ------- */
+#view-list{overflow:auto;padding:24px 30px 90px}
+.doc{max-width:1180px;margin:0 auto}
+.lhead{display:flex;justify-content:flex-end;margin-bottom:14px}
+.lhead .ord{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3)}
+.lhead select{padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--panel);
+  font-size:12px;color:var(--text-2);cursor:pointer;outline:none}
+.sec{margin-bottom:32px}
+.sec h2{font-size:15px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px;display:flex;align-items:center;gap:9px}
+.sec .meta{font-size:12px;color:var(--text-3);margin-bottom:11px}
+.rows{border-top:1px solid var(--line)}
+.row,.head{display:grid;grid-template-columns:58px 1fr 148px 92px 104px 76px;gap:12px;align-items:center}
+.row{padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:4px;transition:background .14s ease}
+.row:hover{background:var(--hover)}
+.row.is-sel{background:var(--active)}
+.row.is-done .rt{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--line-2)}
+.row .rid{font-size:11.5px;font-weight:600;color:var(--tint);letter-spacing:.02em}
+.row .rt{font-size:13.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.is-hidden{display:none}
+.head{padding:0 8px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+.pick{width:100%;padding:3px 6px;border-radius:5px;border:1px solid transparent;background:transparent;
+  font-size:11.5px;color:var(--text-2);cursor:pointer;outline:none;
+  transition:background .14s ease,border-color .14s ease;appearance:none;text-align:left}
+.pick:hover{background:var(--hover);border-color:var(--line-2)}
+.pick:focus{border-color:var(--line-2);background:var(--panel)}
+.pick option{background:var(--panel);color:var(--text)}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1.5px 7px;border-radius:20px;
+  border:1px solid var(--line-2);color:var(--text-2);white-space:nowrap}
+.chip.mono{font-size:10.5px;font-weight:600}
+.chip.ph{border-color:transparent;background:var(--hover);color:var(--text-2);font-size:10.5px}
+.chip.est{font-weight:700;font-family:ui-monospace,Consolas,monospace;font-size:10px;letter-spacing:.04em}
+.chip.lock{border-color:transparent;background:transparent;color:var(--warn);font-size:11px;gap:3px}
+.chip.free{border-color:transparent;background:transparent;color:var(--k-hecho);font-size:11px}
+.chip.imp{border-color:transparent;background:var(--hover);color:var(--text-2);font-size:10.5px;gap:3px}
+
+/* ---- personas y equipos ---- */
+/* Avatar: iniciales sobre el color del equipo. Ocupa poco y se lee de lejos. */
+.av{width:22px;height:22px;border-radius:50%;flex:none;display:inline-grid;place-items:center;
+  font-size:9px;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--av);
+  font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif;user-select:none}
+.av.sm{width:18px;height:18px;font-size:8px}
+.av.none{background:transparent;border:1.4px dashed var(--line-2);color:var(--text-3);font-weight:600}
+.av.mas{background:var(--hover);color:var(--text-2);border:1px solid var(--line-2)}
+/* Pila: se solapan un poco y el borde del panel los separa visualmente */
+.avs{display:inline-flex;align-items:center;flex:none}
+.avs .av+.av{margin-left:-6px}
+.avs .av{box-shadow:0 0 0 1.5px var(--panel)}
+.row .avs .av{box-shadow:0 0 0 1.5px var(--bg)}
+.kcard .avs .av{box-shadow:0 0 0 1.5px var(--card)}
+.eqtag{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);white-space:nowrap}
+.eqtag i{width:7px;height:7px;border-radius:2px;background:var(--av);flex:none}
+.resp{display:flex;align-items:center;gap:6px;min-width:0}
+.resp .nm{font-size:11.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Fila de personas del filtro: se pulsa para aislar a una */
+.gente{display:flex;flex-wrap:wrap;gap:5px;padding:2px 6px 4px}
+.gente button{padding:0;border-radius:50%;opacity:.42;transition:opacity .16s ease,transform .16s ease}
+.gente button:hover{opacity:.8;transform:translateY(-1px)}
+.gente button[aria-pressed="true"]{opacity:1;box-shadow:0 0 0 2px var(--panel),0 0 0 3.5px var(--av)}
+.dash{color:var(--text-3);font-size:11.5px}
+.empty{color:var(--text-3);font-size:12.5px;padding:22px 8px}
+
+/* ------- tablero ------- */
+#view-board{overflow:hidden;flex-direction:column}
+.bhead{padding:16px 22px 0;display:flex;align-items:center;gap:14px}
+.bhead .t{font-size:13px;color:var(--text-2)}
+.bhead .ord{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3)}
+.bhead select{padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--panel);
+  font-size:12px;color:var(--text-2);cursor:pointer;outline:none}
+.cols{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:12px 22px 22px;overflow:hidden;min-height:0}
+.col{background:var(--paper);border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;
+  min-height:0;transition:background .2s ease,border-color .2s ease}
+.col.over{background:var(--hover);border-color:var(--tint-k)}
+.col.auto{border-style:dashed}
+.col>header{padding:10px 13px 8px;border-bottom:1px solid var(--line)}
+.col>header .l{display:flex;align-items:center;gap:8px}
+.col>header .dot{width:7px;height:7px;border-radius:50%;background:var(--tint-k);flex:none}
+.col>header .nm{font-size:12.5px;font-weight:600}
+.col>header .ct{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.col>header .sb{font-size:10.5px;color:var(--text-3);margin-top:2px;padding-left:15px}
+.col .stack{flex:1;overflow-y:auto;padding:9px;display:flex;flex-direction:column;gap:7px;min-height:0}
+.kcard{background:var(--card);border:1px solid var(--line-2);border-radius:7px;padding:8px 10px;cursor:grab;
+  transition:box-shadow .16s ease,transform .16s ease,opacity .2s ease,border-color .16s ease;
+  border-left:3px solid var(--tint)}
+.kcard:hover{box-shadow:0 1px 3px rgba(15,15,15,.09);transform:translateY(-1px);border-color:var(--tint)}
+.kcard.drag{opacity:.35;cursor:grabbing}
+.kcard .l1{display:flex;align-items:center;gap:7px;margin-bottom:3px}
+.kcard .kid{font-size:10.5px;font-weight:700;color:var(--tint);letter-spacing:.03em}
+.kcard .kt{font-size:12.3px;line-height:1.35}
+.kcard .l2{display:flex;align-items:center;gap:6px;margin-top:6px}
+.kcard.locked{border-left-style:dashed}
+.kempty{font-size:11.5px;color:var(--text-3);padding:12px 4px;text-align:center}
+
+/* ------- detalle ------- */
+.detail{position:absolute;top:0;right:0;bottom:0;width:400px;max-width:92vw;z-index:60;
+  background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow);
+  transform:translateX(102%);transition:transform .34s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column}
+.detail.on{transform:none}
+.detail header{padding:15px 18px 11px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:10px}
+.detail .idline{display:flex;align-items:center;gap:7px;margin-bottom:6px;flex-wrap:wrap}
+.detail .idtag{font-size:11.5px;font-weight:600;color:var(--tint);letter-spacing:.03em}
+.detail h2{font-size:16.5px;font-weight:600;letter-spacing:-.012em;line-height:1.35}
+.detail .body{padding:15px 18px 40px;overflow-y:auto;flex:1}
+.detail .desc{font-size:13.5px;line-height:1.62}
+.detail .blk{margin-top:20px}
+.detail .blk h4{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-3);margin-bottom:8px}
+.detail .blk h4 .cnt{text-transform:none;letter-spacing:0;color:var(--text-3);font-weight:500;margin-left:2px}
+/* Selector de personas */
+#d-quien{display:block}
+.qgente{display:flex;gap:5px;flex-wrap:wrap}
+.qclear{margin-top:8px;font-size:11px;padding:3px 10px}
+.qgente .per{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 4px;font-size:12px}
+.qgente .per .av{transition:none}
+.qgente .per[aria-pressed="true"] .av{box-shadow:0 0 0 1.5px #fff}
+.pills{display:flex;gap:5px;flex-wrap:wrap}
+.pill{padding:4px 11px;border-radius:6px;border:1px solid var(--line-2);font-size:12px;color:var(--text-2);
+  transition:background .14s ease,border-color .14s ease,color .14s ease}
+.pill:hover{background:var(--hover);color:var(--text)}
+.pill[aria-pressed="true"]{background:var(--pt);border-color:var(--pt);color:#fff;font-weight:500}
+.pill .d{font-size:10px;opacity:.75;margin-left:5px}
+/* La nota tiene dos caras: se lee como texto y se edita al hacer clic. Las de la
+   Fase 0 pasan de 1500 caracteres — dentro de un textarea quedaban en un cajón
+   con scroll propio, anidado en un panel que ya hace scroll. Ilegibles. */
+#d-nota-ver{font-size:12.8px;line-height:1.62;cursor:text;
+  padding:8px 10px;border-radius:6px;border:1px solid transparent;
+  transition:background .16s ease,border-color .16s ease}
+#d-nota-ver:hover{background:var(--hover);border-color:var(--line-2)}
+#d-nota-ver:focus-visible{outline:none;background:var(--hover);border-color:var(--text-3)}
+#d-nota-ver .vacio{color:var(--text-3);font-style:italic}
+#d-nota-ver p{margin:0 0 8px}
+#d-nota-ver p:last-child{margin-bottom:0}
+/* Viñeta colgada: el punto queda fuera del bloque de texto, así las líneas
+   envueltas se alinean bajo la primera y la lista se lee como lista. */
+#d-nota-ver p.li{position:relative;padding-left:14px;margin-bottom:5px}
+#d-nota-ver p.li::before{content:"·";position:absolute;left:3px;color:var(--text-3)}
+/* Los títulos en mayúsculas que abren cada bloque de la nota. */
+#d-nota-ver b{display:block;font-weight:600;font-size:11.4px;letter-spacing:.04em;
+  color:var(--text-2);margin:15px 0 5px}
+#d-nota-ver b:first-child{margin-top:0}
+textarea#d-nota{width:100%;min-height:160px;resize:vertical;padding:8px 10px;border-radius:6px;
+  border:1px solid var(--text-3);background:var(--panel);outline:none;font-size:12.8px;line-height:1.62;
+  font-family:inherit;transition:border-color .16s ease,background .16s ease}
+textarea#d-nota:focus{border-color:var(--text-3);background:var(--panel)}
+.blocknote{font-size:12.3px;color:var(--warn);display:flex;gap:6px;align-items:flex-start;
+  padding:8px 10px;border-radius:6px;background:var(--hover)}
+.blocknote b{font-weight:600}
+.rel{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:6px;cursor:pointer;
+  transition:background .14s ease,transform .14s ease}
+.rel:hover{background:var(--hover);transform:translateX(2px)}
+.rel .dot{width:7px;height:7px;border-radius:50%;background:var(--tint);flex:none}
+.rel .rl{font-size:11px;font-weight:600;color:var(--tint);width:52px;flex:none;letter-spacing:.02em}
+.rel .rn{font-size:12.6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.rel .rk{font-size:10.5px;color:var(--text-3);flex:none}
+.rel.done .rn{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--line-2)}
+.act{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:6px;
+  border:1px solid var(--line-2);font-size:12.5px;color:var(--text-2);transition:background .14s ease,color .14s ease}
+.act:hover{background:var(--hover);color:var(--text)}
+.none{font-size:12.5px;color:var(--text-3);padding:2px 9px}
+
+#toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,14px);z-index:300;opacity:0;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:7px;padding:7px 14px;
+  font-size:12.5px;box-shadow:var(--shadow);transition:opacity .2s ease,transform .2s ease;pointer-events:none}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--text-3);background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ===========================================================================
+   Responsive. Objetivo real: monitor 1920+ y laptop 1366×768.
+   En 1366 el escenario útil queda en 1124×588 px — de ahí salen los cortes.
+   =========================================================================== */
+
+/* 1560 — la barra superior empieza a apretar: se va el subtítulo */
+@media (max-width:1560px){
+  .brand .sub{display:none}
+  .topbar{gap:13px}
+  .rollup{gap:10px}
+}
+
+/* 1180 — el nombre del responsable se va y queda solo el avatar. La columna
+   sigue ahí: saber de quién es un ítem importa más que leer su nombre entero. */
+@media (max-width:1180px){
+  #view-list{padding:22px 22px 90px}
+  .row,.head{grid-template-columns:56px 1fr 34px 92px 104px 74px}
+  .resp .nm{display:none}
+}
+
+/* 1240 — el Kanban a 2×2 antes de que las tarjetas queden impracticables */
+@media (max-width:1240px){
+  .cols{grid-template-columns:repeat(2,1fr);grid-auto-rows:minmax(230px,1fr);
+        overflow-y:auto;overflow-x:hidden}
+  .rollup .bar{width:80px}
+}
+
+/* 1120 — el resumen de días estorba más de lo que aporta */
+@media (max-width:1120px){
+  .rollup{display:none}
+}
+
+/* 980 — se va la barra lateral; los filtros ya no caben */
+@media (max-width:980px){
+  .shell{grid-template-columns:0 1fr}
+  .sidebar{display:none}
+  .cols{grid-template-columns:1fr;grid-auto-rows:auto}
+  .col{min-height:260px}
+  .bhead{flex-wrap:wrap;gap:8px}
+  .bhead .ord{margin-left:0}
+  .row,.head{grid-template-columns:52px 1fr 30px 96px 70px}
+  .row>*:nth-child(4),.head>*:nth-child(4){display:none}
+  .detail{width:100%}
+}
+
+/* Altura corta (768 con barras del navegador): recuperar píxeles verticales */
+@media (max-height:700px){
+  .topbar{height:46px}
+  .shell{height:calc(100vh - 46px)}
+  .bhead{padding:10px 22px 0}
+  .cols{padding:8px 22px 14px;gap:10px}
+  .col>header{padding:8px 12px 6px}
+  .kcard{padding:7px 9px}
+  .sidebar{gap:11px;padding:11px 12px 10px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>Requerimientos de Subastín</h1>
+    <span class="sub" id="subcount"></span>
+  </div>
+  <div class="spacer"></div>
+  <div class="rollup" id="rollup"></div>
+  <span class="mode" id="mode">local</span>
+  <div class="seg" role="tablist">
+    <button id="tab-graph" role="tab" aria-selected="true">Mapa</button>
+    <button id="tab-list" role="tab" aria-selected="false">Lista</button>
+    <button id="tab-board" role="tab" aria-selected="false">Tablero</button>
+  </div>
+  <button class="iconbtn" id="theme" title="Tema">
+    <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</header>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="q" type="text" placeholder="Buscar" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="group" id="g-cat"><h3><i class="caret"></i>Categoría</h3><div id="f-cat"></div></div>
+    <div class="group" id="g-ph"><h3><i class="caret"></i>Fase</h3><div id="f-ph"></div></div>
+        <div class="group" id="g-eq" hidden><h3>Personas</h3><div><div class="gente" id="f-gente"></div><div id="f-eq"></div></div></div>
+    <div class="group" id="g-kb"><h3><i class="caret"></i>Estado de trabajo</h3><div id="f-kb"></div>
+      <label class="opt" style="--tint:var(--k-hecho)" id="solo-libres">
+        <input type="checkbox"><span class="box"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4 4.6-5"/></svg></span>
+        Solo desbloqueados<span class="n" id="n-libres"></span></label>
+    </div>
+    <div class="group closed" id="g-est"><h3><i class="caret"></i>Estimación</h3><div id="f-est"></div></div>
+    <div class="legend">
+      <div class="row"><span class="line"></span> requiere</div>
+      <div class="row"><span class="line dot"></span> condiciona</div>
+      <div class="row"><span class="line d"></span> define</div>
+      <div class="row"><span class="ring"></span> bloqueado por decisión</div>
+      <div class="row" style="margin-top:2px"><span class="kbd">/</span> buscar · <span class="kbd">esc</span> limpiar</div>
+    </div>
+    <div class="foot">
+      <div class="r"><button id="btn-export">Exportar</button></div>
+      <input type="file" id="file" accept="application/json" hidden>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <section class="view is-active" id="view-graph">
+      <svg id="graph">
+        <defs>
+          <marker id="a-idle" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6.5" markerHeight="6.5" markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M0,1 L10,5 L0,9 z" fill="var(--edge)"/></marker>
+          <marker id="a-up" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7.5" markerHeight="7.5" markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M0,1 L10,5 L0,9 z" fill="var(--up)"/></marker>
+          <marker id="a-down" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7.5" markerHeight="7.5" markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M0,1 L10,5 L0,9 z" fill="var(--down)"/></marker>
+        </defs>
+        <g id="vp"><g id="bands"></g><g id="edges"></g><g id="nodes"></g></g>
+      </svg>
+      <div class="phasebar" id="phasebar"></div>
+      <div class="tools">
+        <button id="btn-fit">Vista completa</button>
+        <button id="btn-zoom">Zoom 1:1</button>
+        <button id="btn-clear">Quitar foco</button>
+      </div>
+      <div class="hint" id="hint">El flujo va de izquierda a derecha · clic en una tarjeta para ver su cadena</div>
+    </section>
+
+    <section class="view" id="view-list">
+      <div class="doc">
+        <div class="lhead"><span class="ord">Agrupar por <select id="agrupar"></select></span></div>
+        <div id="doc"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-board">
+      <div class="bhead">
+        <span class="t" id="btitle"></span>
+        <span class="ord">Ordenar por <select id="orden"></select></span>
+      </div>
+      <div class="cols" id="cols"></div>
+    </section>
+  </main>
+
+  <aside class="detail" id="detail">
+    <header>
+      <div style="flex:1;min-width:0">
+        <div class="idline">
+          <span class="idtag mono" id="d-id"></span><span id="d-ph"></span>
+        </div>
+        <h2 id="d-title"></h2>
+      </div>
+      <button class="iconbtn" id="d-close" title="Cerrar">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div class="body">
+      <p class="desc" id="d-desc"></p>
+      <div id="d-block"></div>
+      <div class="blk" hidden><div class="pills" id="d-quien"></div></div><div class="blk" hidden><div id="d-nota-ver"></div><textarea id="d-nota" hidden></textarea></div>
+      <div class="blk"><h4>Estimación</h4><div class="pills" id="d-est"></div></div>
+      <div class="blk"><h4>Estado de trabajo</h4><div class="pills" id="d-kb"></div></div>
+      <div style="margin-top:16px"><button class="act" id="d-graph">Ver en el mapa</button></div>
+      <div class="blk"><h4>Depende de <span class="cnt" id="c-up"></span></h4><div id="d-up"></div></div>
+      <div class="blk"><h4>Habilita / impacta <span class="cnt" id="c-down"></span></h4><div id="d-down"></div></div>
+    </div>
+  </aside>
+</div>
+
+<div id="tip"><div class="i mono"></div><div class="t"></div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ==================================================================
+   CATÁLOGO. Fuente de verdad del proyecto; db/construir.mjs lo lee de aquí.
+
+   `f` = fase de ENTREGA (0-4). La elige el equipo, no el grafo.
+   `col` = columna del mapa. Esa sí la calcula el grafo más abajo.
+   Son dos ejes distintos: la columna dice qué se puede construir antes,
+   la fase dice qué se va a soltar antes.
+   ================================================================== */
+
+/* --catalogo-inicio-- */
+const NODES = [
+
+/* ---------- F0 · Infra — cuenta AWS y esqueleto desplegado ---------- */
+{id:"RNF-002",g:"RNF",f:0,t:"Disponibilidad",d:"Objetivo: 99%. Objetivo de MVP, sujeto a dependencias externas"},
+{id:"RNF-006",g:"RNF",f:0,t:"Observabilidad",d:"Objetivo: Logs, métricas y alertas. CloudWatch u observabilidad equivalente"},
+{id:"RB-011",g:"C",f:0,t:"WhatsApp/Kapso no forma parte de la conversación web…",d:"WhatsApp/Kapso no forma parte de la conversación web unificada del MVP"},
+
+/* ---------- F1 · Chat — conversaciones y mensajes, todavía sin IA ---------- */
+{id:"RF-001",g:"RF",f:1,t:"Chat web para usuarios autenticados y anónimos",d:"El widget/chat deberá poder abrirse sin exigir login. El usuario autenticado deberá quedar asociado a su identidad VMC"},
+{id:"RF-002",g:"RF",f:1,t:"El usuario anónimo inicia sin entregar datos",d:"No se solicitará DNI, teléfono ni correo para iniciar una consulta automática"},
+{id:"RF-003",g:"RF",f:1,t:"Correo obligatorio únicamente al derivar un usuario anónimo",d:"Cuando un usuario anónimo requiera atención humana, el flujo deberá solicitar correo antes de completar el handoff/ticket"},
+{id:"RF-004",g:"RF",f:1,t:"Sin historial persistente para usuarios anónimos",d:"Un usuario no autenticado no recuperará conversaciones anteriores entre sesiones o dispositivos"},
+{id:"RF-005",g:"RF",f:1,t:"Identificación funcional del usuario autenticado",d:"Subastín deberá recibir una identidad validada desde VMC para asociar usuario, conversaciones y mostrar saludo por nombre. El mecanismo técnico se define en D-001"},
+{id:"RF-008",g:"RF",f:1,t:"Persistencia de conversaciones y mensajes",d:"Cada mensaje persistido deberá almacenar al menos `conversation_id`, sender, timestamp, tipo de contenido y estado técnico"},
+{id:"RF-009",g:"RF",f:1,t:"Estados de conversación simplificados",d:"La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA`"},
+{id:"RF-010",g:"RF",f:1,t:"Máximo configurable de conversaciones activas",d:"Para anónimos el máximo es 1. Para autenticados el valor del MVP queda definido por D-002"},
+{id:"RF-011",g:"RF",f:1,t:"La conversación cerrada no desaparece instantáneamente",d:"El usuario verá que la conversación finalizó y tendrá una acción para iniciar una nueva. Reapertura/historial dependen de D-003"},
+{id:"RF-012",g:"RF",f:1,t:"Historial completo disponible para el asesor",d:"El asesor deberá poder consultar la conversación actual y conversaciones anteriores disponibles del usuario autenticado"},
+{id:"RF-013",g:"RF",f:1,t:"Contexto acotado para IA",d:"Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004"},
+{id:"RF-014",g:"RF",f:1,t:"Límites configurables contra abuso",d:"El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005"},
+{id:"RNF-003",g:"RNF",f:1,t:"Durabilidad de mensajes",d:"Objetivo: Persistencia confirmada antes de mostrarse como enviado. Excepto borrador local de retry fallido"},
+{id:"RNF-004",g:"RNF",f:1,t:"Idempotencia",d:"Objetivo: Sin duplicados por retries/webhooks. Aplicar claves idempotentes y deduplicación"},
+{id:"RNF-005",g:"RNF",f:1,t:"Seguridad de identidad",d:"Objetivo: No confiar en identidad enviada libremente por frontend. Mecanismo VMC ↔ Subastín se cierra en D-001"},
+{id:"RB-001",g:"C",f:1,t:"Un usuario anónimo puede utilizar el bot sin entregar datos",d:"Un usuario anónimo puede utilizar el bot sin entregar datos"},
+{id:"RB-003",g:"C",f:1,t:"Un anónimo no recupera historial entre sesiones/dispositivos",d:"Un anónimo no recupera historial entre sesiones/dispositivos"},
+{id:"RB-004",g:"C",f:1,t:"Un usuario autenticado se asocia a una identidad validada…",d:"Un usuario autenticado se asocia a una identidad validada por VMC"},
+{id:"RB-010",g:"C",f:1,t:"Subastín no modifica datos de VMC",d:"Subastín no modifica datos de VMC"},
+{id:"D-001",g:"D",f:1,t:"Mecanismo de identidad VMC ↔ Subastín",d:"Prioridad Alta. Hay que cerrar: Definir si la integración será iframe, script embebido, endpoint autenticado/token corto, servidor-servidor u otra opción. Validar cookies HttpOnly/SameSite y seguridad Responsables: Silvana y Julio."},
+{id:"D-002",g:"D",f:1,t:"Máximo de conversaciones activas para usuario autenticado",d:"Prioridad Alta. Hay que cerrar: Definir 1 conversación activa -recomendado para simplificar MVP- vs. hasta 3. Anónimo queda fijo en 1 Responsables: Silvana y Julio."},
+{id:"D-003",g:"D",f:1,t:"Cierre, reapertura e historial visible",d:"Prioridad Alta. Hay que cerrar: Definir inactividad para autocierre del bot, ventana de reapertura, creación de nueva conversación y cuántas conversaciones cerradas ve el usuario Responsables: Silvana y Julio."},
+{id:"D-005",g:"D",f:1,t:"Guardrails cuantitativos",d:"Prioridad Alta. Hay que cerrar: Definir máximo de mensajes por conversación -ej. 1,000-, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso Responsables: Silvana y Julio."},
+{id:"D-018",g:"D",f:1,t:"Sesión anónima activa",d:"Prioridad Media. Hay que cerrar: Definir duración técnica de la sesión anónima mientras el usuario permanece navegando y qué sucede al refrescar/cerrar navegador Responsables: Silvana y Julio."},
+
+/* ---------- F2 · IA — Haiku clasifica, Gemini redacta ---------- */
+{id:"RF-015",g:"RF",f:2,t:"Haiku como capa de lectura y orquestación",d:"Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general"},
+{id:"RF-016",g:"RF",f:2,t:"Intenciones mínimas del MVP",d:"El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor"},
+{id:"RF-020",g:"RF",f:2,t:"Gemini como capa de escritura",d:"Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana"},
+{id:"RF-021",g:"RF",f:2,t:"Tratamiento eficiente de mensajes triviales o repetitivos",d:"El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006"},
+{id:"RNF-001",g:"RNF",f:2,t:"Latencia de respuesta automática",d:"Objetivo: ≤ 10 s en condiciones normales. No implica esperar 10 s; es un máximo objetivo"},
+{id:"RNF-007",g:"RNF",f:2,t:"Protección de costo/abuso",d:"Objetivo: Límites configurables. Valores concretos en D-005/D-006"},
+{id:"D-004",g:"D",f:2,t:"Resumen de conversación para IA",d:"Prioridad Media. Hay que cerrar: Definir si siempre se genera resumen, cada cuántos mensajes, tamaño objetivo, cuándo se actualiza y si se usa junto a los últimos 20 mensajes Responsables: Silvana y Julio."},
+{id:"D-006",g:"D",f:2,t:"Optimización de saludos/spam/repetición",d:"Prioridad Media. Hay que cerrar: Definir qué mensajes no ameritan llamada completa a IA y cuándo se usa respuesta determinística, cooldown o bloqueo temporal Responsables: Silvana y Julio."},
+{id:"D-020",g:"D",f:2,t:"Debounce/agregación de mensajes consecutivos",d:"Prioridad Media. Hay que cerrar: Definir ventana corta para agrupar mensajes antes de llamar a IA y evitar múltiples llamadas por frases partidas Responsables: Silvana y Julio."},
+
+/* ---------- F3 · RAG — responde solo con evidencia recuperada ---------- */
+{id:"RF-017",g:"RF",f:3,t:"FAQ basada en conocimiento VMC recuperado",d:"Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado"},
+{id:"RF-018",g:"RF",f:3,t:"Prohibición de inventar cuando no existe evidencia suficiente",d:"Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff"},
+{id:"RF-019",g:"RF",f:3,t:"Fuentes/enlaces cuando estén disponibles",d:"La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista"},
+{id:"RB-009",g:"C",f:3,t:"La IA no debe responder FAQ fuera de las fuentes…",d:"La IA no debe responder FAQ fuera de las fuentes autorizadas cuando no existe evidencia suficiente"},
+
+/* ---------- F4 · Catálogo — búsqueda de vehículos en tiempo real ---------- */
+{id:"RF-044",g:"RF",f:4,t:"Integración con HERALD",d:"Subastín deberá consultar la API HERALD para resolver búsquedas de vehículos en tiempo real"},
+{id:"RF-045",g:"RF",f:4,t:"Mapeo de parámetros y resultados",d:"Filtros, autenticación, paginación, imágenes, enlaces y estructura de salida se implementarán según documentación validada en D-011"},
+{id:"RF-046",g:"RF",f:4,t:"Manejo controlado de indisponibilidad de HERALD",d:"El sistema no deberá inventar catálogo cuando HERALD falle. La UX exacta y si ofrece handoff se define en D-012"},
+{id:"D-011",g:"D",f:4,t:"Contrato HERALD",d:"Prioridad Alta. Hay que cerrar: Validar documentación: endpoints, auth, filtros, paginación, timeout, formato, imágenes, URLs, límites y errores Responsables: Silvana y Julio."},
+{id:"D-012",g:"D",f:4,t:"Fallback cuando HERALD no está disponible",d:"Prioridad Media. Hay que cerrar: Definir mensaje al usuario y si se ofrece/crea handoff automáticamente Responsables: Silvana y Julio."},
+
+/* ---------- F5 · Asesor — derivación, tickets y bandeja de atención ---------- */
+{id:"RF-006",g:"RF",f:5,t:"Acceso de asesores mediante Cognito e invitación por correo",d:"Las cuentas internas del MVP se crearán mediante invitación y autenticación de Cognito"},
+{id:"RF-007",g:"RF",f:5,t:"Un único rol funcional en el MVP: `ADVISOR`",d:"No se implementarán roles de administrador/supervisor en el MVP. El modelo deberá poder evolucionar posteriormente"},
+{id:"RF-022",g:"RF",f:5,t:"Criterios de handoff",d:"El sistema deberá poder derivar ante solicitud explícita de persona, baja confianza/no respuesta de RAG, repetición de consulta, frustración detectada u otras reglas definidas"},
+{id:"RF-023",g:"RF",f:5,t:"Ticket solo cuando existe atención humana",d:"Una conversación automática puede existir sin ticket. El ticket representa trabajo que requiere intervención de asesor"},
+{id:"RF-024",g:"RF",f:5,t:"Recolección previa de datos requeridos por tipo de ticket",d:"Antes de crear ciertos tickets, el bot podrá solicitar datos mínimos del caso. La taxonomía y campos se definen en D-008"},
+{id:"RF-025",g:"RF",f:5,t:"Desactivación de IA al entrar en `PENDIENTE_ASESOR`",d:"Una vez iniciado el handoff, la IA no seguirá respondiendo como bot mientras el caso espera asesor, salvo la política que se cierre en D-007"},
+{id:"RF-026",g:"RF",f:5,t:"Mensajes del usuario durante espera se conservan",d:"Todos los mensajes posteriores al handoff deberán almacenarse aunque la IA se encuentre deshabilitada"},
+{id:"RF-027",g:"RF",f:5,t:"Mensaje fijo de espera, máximo una vez por período pendiente",d:"Si el usuario insiste mientras espera, podrá enviarse una única respuesta automática/determinística informando que la solicitud está en espera. No se repetirá ante cada mensaje"},
+{id:"RF-028",g:"RF",f:5,t:"Notificación inmediata por Slack",d:"Al generarse un handoff/ticket deberá enviarse una notificación a Slack sin esperar a que un asesor tome la conversación"},
+{id:"RF-029",g:"RF",f:5,t:"Bandeja general y toma de conversación",d:"Los asesores podrán visualizar pendientes y ejecutar “Tomar conversación”. La asignación deberá ser atómica para evitar que dos asesores tomen el mismo caso"},
+{id:"RF-030",g:"RF",f:5,t:"Sin límite funcional de conversaciones simultáneas por asesor en MVP",d:"El sistema no impondrá un máximo de casos tomados por asesor durante el MVP"},
+{id:"RF-031",g:"RF",f:5,t:"Cierre manual por asesor",d:"El asesor podrá cerrar el caso. El sistema registrará el cierre y podrá emitir un mensaje automático de finalización"},
+{id:"RF-032",g:"RF",f:5,t:"Bandeja de conversaciones",d:"La lista mostrará al menos nombre/identificador, último mensaje, tiempo de espera, canal web, estado, asesor asignado cuando aplique y contador de no leídos"},
+{id:"RF-033",g:"RF",f:5,t:"Vista de conversación e información contextual",d:"El asesor podrá ver el hilo y datos disponibles/autorizados del usuario, como nombre, correo, empresa, identificadores y relaciones relevantes. Los campos definitivos se validan en D-010"},
+{id:"RF-034",g:"RF",f:5,t:"Envío de mensajes de texto",d:"El asesor podrá responder desde Subastín con texto, emojis, enlaces clickeables y copiar contenido"},
+{id:"RF-035",g:"RF",f:5,t:"Contador de no leídos",d:"Los mensajes entrantes aún no abiertos por el asesor incrementarán un contador; al abrir la conversación quedarán consumidos para efectos de contador"},
+{id:"RF-036",g:"RF",f:5,t:"Timestamp por mensaje",d:"Cada mensaje mostrado deberá incluir o permitir consultar su fecha/hora"},
+{id:"RF-037",g:"RF",f:5,t:"Retry de mensaje fallido sin persistir el fallo",d:"Si un envío falla antes de confirmarse en backend, se mantendrá localmente en el navegador con opción Reintentar. No se persistirá como mensaje enviado hasta recibir confirmación"},
+{id:"RF-038",g:"RF",f:5,t:"Idempotencia de reintentos",d:"Los reintentos deberán usar un identificador de cliente/idempotencia para evitar mensajes duplicados"},
+{id:"RF-039",g:"RF",f:5,t:"Funciones expresamente no incluidas en MVP",d:"No habrá edición/borrado de mensajes, búsqueda dentro de conversación, read receipts ni indicador de “escribiendo”"},
+{id:"RB-002",g:"C",f:5,t:"El correo se solicita al anónimo únicamente cuando se…",d:"El correo se solicita al anónimo únicamente cuando se necesita handoff humano"},
+{id:"RB-005",g:"C",f:5,t:"Una conversación no implica necesariamente un ticket",d:"Una conversación no implica necesariamente un ticket"},
+{id:"RB-006",g:"C",f:5,t:"Un ticket representa una necesidad de atención humana",d:"Un ticket representa una necesidad de atención humana"},
+{id:"RB-007",g:"C",f:5,t:"Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según…",d:"Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007"},
+{id:"RB-008",g:"C",f:5,t:"Un handoff genera notificación de Slack inmediatamente",d:"Un handoff genera notificación de Slack inmediatamente"},
+{id:"D-007",g:"D",f:5,t:"Duración del modo IA OFF durante handoff",d:"Prioridad Alta. Hay que cerrar: Definir si permanece apagada hasta que un asesor cierre el caso -recomendado- o si existe expiración/reevaluación, por ejemplo 8 h Responsables: Silvana y Julio."},
+{id:"D-008",g:"D",f:5,t:"Taxonomía de problemas y tickets",d:"Prioridad Alta. Hay que cerrar: Definir tipos de problema, qué genera ticket, campos obligatorios por tipo, área responsable, prioridad y criterios de cierre Responsables: Silvana y Julio."},
+{id:"D-009",g:"D",f:5,t:"Tags de negocio",d:"Prioridad Media. Hay que cerrar: Definir si existirán en MVP, catálogo inicial y si los asigna IA, asesor o ambos con edición manual Responsables: Silvana y Julio."},
+{id:"D-010",g:"D",f:5,t:"Campos de usuario visibles y utilizables",d:"Prioridad Alta. Hay que cerrar: Definir exactamente qué campos llegan desde VMC/JWT/API y cuáles puede ver el asesor o usar el bot: nombre, email, empresa, DNI, vehículos, etc. Responsables: Silvana y Julio."},
+{id:"D-016",g:"D",f:5,t:"Canal Slack y formato de notificación",d:"Prioridad Baja. Hay que cerrar: Definir canal/es, contenido mínimo, enlace profundo a Subastín y posibles re-alertas por espera Responsables: Silvana y Julio."},
+{id:"D-017",g:"D",f:5,t:"Relación conversación ↔ ticket",d:"Prioridad Alta. Hay que cerrar: Confirmar si una conversación puede tener múltiples tickets y si cerrar un ticket cierra o no la conversación Responsables: Silvana y Julio."},
+{id:"D-019",g:"D",f:5,t:"Handoff anónimo sin correo",d:"Prioridad Media. Hay que cerrar: Definir qué hacer si el usuario no entrega correo: impedir ticket, permitir ticket sin contacto o mantener conversación automática Responsables: Silvana y Julio."},
+
+/* ---------- F6 · Imágenes — adjuntar, ver e interpretar ---------- */
+{id:"RF-040",g:"RF",f:6,t:"Envío de imágenes en chat",d:"El usuario podrá adjuntar imágenes; el asesor podrá visualizarlas"},
+{id:"RF-041",g:"RF",f:6,t:"Carga desde selector, pegado y drag & drop",d:"La interfaz web soportará las tres formas de adjuntar imagen en los puntos donde se habilite carga"},
+{id:"RF-042",g:"RF",f:6,t:"Almacenamiento de imágenes en S3",d:"Las imágenes aceptadas deberán almacenarse fuera de la base de mensajes y referenciarse mediante metadatos/URL segura"},
+{id:"RF-043",g:"RF",f:6,t:"Interpretación de imágenes por IA",d:"El MVP contempla que la IA pueda interpretar imágenes. Resize, compresión, límites y modelo quedan definidos en D-015"},
+{id:"RNF-008",g:"RNF",f:6,t:"Optimización multimodal",d:"Objetivo: No enviar imágenes originales innecesariamente a IA. Resize/compresión según D-015"},
+{id:"D-015",g:"D",f:6,t:"Procesamiento de imágenes para IA",d:"Prioridad Media. Hay que cerrar: Definir dimensiones máximas, compresión/resize, formato, peso máximo, modelo multimodal y cuándo una imagen se envía a IA Responsables: Silvana y Julio."},
+
+/* ---------- F7 · Operación — métricas, retención y auditoría ---------- */
+{id:"RF-047",g:"RF",f:7,t:"Dashboard operativo para CSMs/asesores",d:"El MVP deberá incluir una vista numérica de operación, no de administración técnica"},
+{id:"RF-048",g:"RF",f:7,t:"Métricas básicas de operación",d:"El dashboard deberá poder mostrar volumen de conversaciones/tickets, pendientes, en atención, cerrados y tiempos de espera. El set final se valida en D-013"},
+{id:"RF-049",g:"RF",f:7,t:"Sin panel de configuración técnica en MVP",d:"Prompts, modelos IA, documentos, categorías, tags, costos y configuración avanzada no serán editables por asesores desde la interfaz MVP"},
+{id:"RF-050",g:"RF",f:7,t:"Auditoría de acciones críticas",d:"Se registrará como mínimo: handoff, creación/cierre de ticket, toma de conversación, cambios de estado, mensajes enviados por asesor, cierre y eventos administrativos futuros relevantes"},
+{id:"RF-051",g:"RF",f:7,t:"Solo lectura sobre información de VMC",d:"Subastín no podrá modificar correo, teléfono, estados, subastas, vehículos u otros datos de VMC desde el chatbot"},
+{id:"RF-052",g:"RF",f:7,t:"Restricción de datos sensibles para el bot",d:"El bot no deberá exponer información financiera detallada, documentos, datos internos ni información de otros usuarios. Cualquier dato personal futuro deberá estar explícitamente autorizado"},
+{id:"RF-053",g:"RF",f:7,t:"Retención configurable",d:"Conversaciones e imágenes deberán soportar una política de retención; se propone 6 meses, pendiente de D-014"},
+{id:"D-013",g:"D",f:7,t:"Métricas exactas del dashboard operativo",d:"Prioridad Media. Hay que cerrar: Definir tarjetas, ventanas de tiempo, fórmulas y métricas mínimas para CSMs/asesores Responsables: Silvana y Julio."},
+{id:"D-014",g:"D",f:7,t:"Retención de conversaciones e imágenes",d:"Prioridad Alta. Hay que cerrar: Confirmar 6 meses u otro período y comportamiento de borrado/archivo Responsables: Silvana y Julio."},
+];
+
+const EDGES = [
+["D-001","RF-005","requiere"],
+["D-001","RNF-005","requiere"],
+["D-002","RF-010","requiere"],
+["D-003","RF-011","requiere"],
+["D-004","RF-013","requiere"],
+["D-005","RF-014","requiere"],
+["D-005","RNF-007","requiere"],
+["D-006","RF-021","requiere"],
+["D-007","RF-025","requiere"],
+["D-008","RF-024","requiere"],
+["D-010","RF-033","requiere"],
+["D-011","RF-045","requiere"],
+["D-012","RF-046","requiere"],
+["D-013","RF-048","requiere"],
+["D-014","RF-053","requiere"],
+["D-015","RF-043","requiere"],
+["D-015","RNF-008","requiere"],
+["RB-002","RF-003","condiciona"],
+["RB-003","RF-004","condiciona"],
+["RB-005","RF-023","condiciona"],
+["RB-007","RF-025","condiciona"],
+["RB-008","RF-028","condiciona"],
+["RB-009","RF-018","condiciona"],
+["RB-010","RF-051","condiciona"],
+["RB-011","RF-044","condiciona"],
+["RF-001","RF-002","requiere"],
+["RF-001","RF-040","requiere"],
+["RF-002","RF-003","requiere"],
+["RF-005","RF-012","requiere"],
+["RF-006","RF-007","requiere"],
+["RF-006","RF-029","requiere"],
+["RF-006","RF-032","requiere"],
+["RF-008","RF-009","requiere"],
+["RF-008","RF-012","requiere"],
+["RF-008","RF-013","requiere"],
+["RF-008","RF-026","requiere"],
+["RF-015","RF-016","requiere"],
+["RF-015","RF-020","requiere"],
+["RF-016","RF-022","requiere"],
+["RF-017","RF-018","requiere"],
+["RF-017","RF-019","requiere"],
+["RF-018","RF-022","requiere"],
+["RF-022","RF-023","requiere"],
+["RF-022","RF-025","requiere"],
+["RF-022","RF-028","requiere"],
+["RF-023","RF-024","requiere"],
+["RF-025","RF-026","requiere"],
+["RF-025","RF-027","requiere"],
+["RF-029","RF-030","requiere"],
+["RF-029","RF-031","requiere"],
+["RF-029","RF-033","requiere"],
+["RF-029","RF-034","requiere"],
+["RF-031","RF-050","requiere"],
+["RF-032","RF-035","requiere"],
+["RF-034","RF-036","requiere"],
+["RF-034","RF-037","requiere"],
+["RF-037","RF-038","requiere"],
+["RF-040","RF-041","requiere"],
+["RF-040","RF-042","requiere"],
+["RF-042","RF-043","requiere"],
+["RF-044","RF-045","requiere"],
+["RF-044","RF-046","requiere"],
+["RF-047","RF-048","requiere"],
+["RNF-001","RF-020","condiciona"],
+["RNF-002","RF-044","condiciona"],
+["RNF-003","RF-037","condiciona"],
+["RNF-004","RF-038","condiciona"],
+["RNF-005","RF-005","condiciona"],
+["RNF-006","RF-050","condiciona"],
+["RNF-007","RF-014","condiciona"],
+["RNF-007","RF-021","condiciona"],
+["RNF-008","RF-043","condiciona"],
+];
+
+const CYCLE_BREAK = "";
+
+const PHASES = ["Infra", "Chat", "IA", "RAG", "Catálogo", "Asesor", "Imágenes", "Operación"];
+const PHASE_SUB = ["cuenta AWS y despliegue", "conversaciones, aún sin IA", "clasificar y redactar", "solo con evidencia", "vehículos en vivo", "derivación y bandeja", "adjuntar y ver", "métricas y retención"];
+
+const ESTIM = [
+  {k:"XS", label:"Corto",     rango:"≤ 1 día",     dias:1},
+  {k:"S",  label:"Medio",     rango:"2–3 días",    dias:2.5},
+  {k:"M",  label:"Largo",     rango:"~1 semana",   dias:5},
+  {k:"L",  label:"Muy largo", rango:"2+ semanas",  dias:10}
+];
+
+const PERSONAS = [];
+
+const KANBAN = [
+  {k:"backlog", label:"Backlog"},
+  {k:"curso",   label:"En curso"},
+  {k:"hecho",   label:"Hecho"}
+];
+
+const BOARD = [
+  {k:"backlog", label:"Backlog",            sub:"algo antes está sin cerrar", kb:"backlog", auto:false},
+  {k:"listo",   label:"Listo para empezar", sub:"sin bloqueos: se puede arrancar", kb:"backlog", auto:true},
+  {k:"curso",   label:"En curso",           sub:"",                                kb:"curso",   auto:false},
+  {k:"hecho",   label:"Hecho",              sub:"cierra decisiones y desbloquea",  kb:"hecho",   auto:false}
+];
+
+const CAT = {
+  RF: {label:"Funcionales", short:"Funcional", color:"var(--c-rf)"},
+  RNF:{label:"No funcionales", short:"No funcional", color:"var(--c-rnf)"},
+  C:  {label:"Restricciones", short:"Restricción", color:"var(--c-c)"},
+  D:  {label:"Pendientes de definición", short:"Decisión", color:"var(--c-d)"}
+};
+/* --catalogo-fin-- */
+
+/* ============================ ÍNDICES ============================ */
+const byId = new Map(NODES.map(n=>[n.id,n]));
+const estById = new Map(ESTIM.map(e=>[e.k,e]));
+const kbById  = new Map(KANBAN.map(k=>[k.k,k]));
+const peById  = new Map(PERSONAS.map(p=>[p.k,p]));
+/* Iniciales para el avatar: "Silvana Almandoz" -> "SA" */
+PERSONAS.forEach(p=>{
+  const w=p.nombre.trim().split(/\s+/);
+  p.ini = (w[0][0] + (w.length>1 ? w[w.length-1][0] : "")).toUpperCase();
+});
+const outAdj = new Map(), inAdj = new Map(), reqIn = new Map();
+NODES.forEach(n=>{outAdj.set(n.id,[]); inAdj.set(n.id,[]); reqIn.set(n.id,[]);});
+const LINKS = EDGES.map(([a,b,k],i)=>{
+  const s=byId.get(a), t=byId.get(b);
+  if(!s||!t) throw new Error("arista inválida: "+a+"→"+b);
+  outAdj.get(a).push({id:b,k}); inAdj.get(b).push({id:a,k});
+  if(k==="requiere") reqIn.get(b).push(a);
+  return {i,s,t,k};
+});
+NODES.forEach(n=>{
+  n.blocked = inAdj.get(n.id).some(e=>byId.get(e.id).g==="D");
+  n.hay = (n.id+" "+n.t+" "+n.d).toLowerCase();
+  n.est = null; n.kb = "backlog"; n.nota = "";
+  n.pes = [];                        // personas asignadas; varias por ítem
+});
+function reach(id, adj){
+  const seen=new Set(), q=[id];
+  while(q.length){ const cur=q.shift();
+    for(const e of adj.get(cur)) if(!seen.has(e.id) && e.id!==id){ seen.add(e.id); q.push(e.id); } }
+  return seen;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtD = d => (Math.round(d*10)/10).toString().replace(".",",");
+
+/* Predecesores duros (requiere / define) que aún no están en Hecho */
+function blockers(n){
+  return inAdj.get(n.id)
+    .filter(e=>e.k==="requiere"||e.k==="define")
+    .map(e=>byId.get(e.id))
+    .filter(m=>m.kb!=="hecho");
+}
+const libre = n => blockers(n).length===0;
+
+/* Impacto = cuántos ítems quedan habilitados después, en toda la cadena.
+   Es el criterio de prioridad por defecto del tablero: hacer primero lo que
+   destraba más cosas. Depende solo del grafo, así que se calcula una vez.  */
+NODES.forEach(n=>{ n.imp = reach(n.id, outAdj).size; });
+
+/* ====================== LAYOUT POR CAPAS (Sugiyama) ====================== */
+const CARD_W=176, PITCH=272, ROW_GAP=15, PAD_X=12, MAXCH=26;
+/* [columnaInicial, columnaFinal] de cada fase — lo llena layer() */
+const FASE_COLS=[];
+
+(function layer(){
+  const spine=new Map(), done=new Set();
+  const anchored = n => reqIn.get(n.id).length>0 || outAdj.get(n.id).some(e=>e.k==="requiere");
+  const visit = id => {
+    if(done.has(id)) return spine.get(id);
+    done.add(id);
+    let m=0; for(const p of reqIn.get(id)) m=Math.max(m, visit(p)+1);
+    spine.set(id,m); return m;
+  };
+  NODES.forEach(n=>visit(n.id));
+
+  const seen=new Set(), topo=[];
+  const dfs = id => {
+    if(seen.has(id)) return; seen.add(id);
+    for(const e of outAdj.get(id)) if((id+">"+e.id)!==CYCLE_BREAK) dfs(e.id);
+    topo.push(id);
+  };
+  NODES.forEach(n=>dfs(n.id));
+
+  const col=new Map();
+  NODES.forEach(n=>{ if(anchored(n)) col.set(n.id, spine.get(n.id)); });
+  for(const id of topo){
+    if(col.has(id)) continue;
+    const outs = outAdj.get(id).map(e=>col.get(e.id)).filter(v=>v!==undefined);
+    col.set(id, outs.length ? Math.min.apply(null,outs)-1 : 0);
+  }
+  const min = Math.min.apply(null, Array.from(col.values()));
+  NODES.forEach(n=>{ n.dep = col.get(n.id)-min; n.phase = n.f; });
+
+  /* El mapa se ordena por fase de entrega. Dentro de cada fase, si hay muchos
+     ítems se parte en sub-columnas siguiendo la profundidad de dependencia.
+     Una columna por fase dejaba el MVP con 21 tarjetas apiladas (lienzo
+     1264×1315, zoom 0,36); sub-columnar por cada nivel daba 4800×350. El corte
+     por altura máxima equilibra las dos cosas. */
+  /* Corte por altura. Bajarlo parte también F0 y F1, ensancha el lienzo y
+     empeora el zoom: en este catálogo el ancho manda sobre el alto. */
+  const MAX_POR_COL = 11;
+  let base = 0;
+  PHASES.forEach((_,f)=>{
+    const suyos = NODES.filter(n=>n.f===f);
+    if(!suyos.length){ FASE_COLS.push([base,base]); base++; return; }
+    const niveles = [...new Set(suyos.map(n=>n.dep))].sort((a,b)=>a-b);
+    const grupos = []; let actual = [], cuenta = 0;
+    for(const d of niveles){
+      const enNivel = suyos.filter(n=>n.dep===d).length;
+      if(cuenta && cuenta+enNivel > MAX_POR_COL){ grupos.push(actual); actual=[]; cuenta=0; }
+      actual.push(d); cuenta += enNivel;
+    }
+    if(actual.length) grupos.push(actual);
+    const destino = new Map();
+    grupos.forEach((g,i)=>g.forEach(d=>destino.set(d,i)));
+    suyos.forEach(n=>{ n.col = base + destino.get(n.dep); });
+    FASE_COLS.push([base, base+grupos.length-1]);
+    base += grupos.length;
+  });
+})();
+
+const NC = Math.max.apply(null, NODES.map(n=>n.col))+1;
+const COLS = Array.from({length:NC},(_,c)=>NODES.filter(n=>n.col===c));
+
+NODES.forEach(n=>{
+  const words=n.t.split(" "); const lines=[]; let cur="";
+  for(const w of words){
+    if(!cur) cur=w;
+    else if((cur+" "+w).length<=MAXCH) cur+=" "+w;
+    else { lines.push(cur); cur=w; }
+  }
+  if(cur) lines.push(cur);
+  n.lines = lines.slice(0,3);
+  if(lines.length>3) n.lines[2]=n.lines[2].slice(0,MAXCH-1)+"…";
+  n.w=CARD_W; n.h=30+n.lines.length*14; n.x=n.col*PITCH;
+});
+
+COLS.forEach(col=>col.forEach((n,i)=>n.ord=i));
+const nbIn  = n => inAdj.get(n.id).map(e=>byId.get(e.id)).filter(m=>m.col<n.col);
+const nbOut = n => outAdj.get(n.id).map(e=>byId.get(e.id)).filter(m=>m.col>n.col);
+function median(a){
+  if(!a.length) return -1;
+  a=a.slice().sort((x,y)=>x-y);
+  const m=a.length>>1;
+  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+}
+function crossings(c){
+  if(c<0||c+1>=NC) return 0;
+  const pairs=[];
+  for(const s of COLS[c]) for(const e of outAdj.get(s.id)){
+    const t=byId.get(e.id); if(t.col===c+1) pairs.push([s.ord,t.ord]);
+  }
+  let x=0;
+  for(let i=0;i<pairs.length;i++) for(let j=i+1;j<pairs.length;j++)
+    if((pairs[i][0]-pairs[j][0])*(pairs[i][1]-pairs[j][1])<0) x++;
+  return x;
+}
+/* Dentro de una fase, lo que no depende de nada va arriba y lo que depende de
+   más cosas va abajo. Da un orden de lectura vertical que sigue el trabajo. */
+COLS.forEach(col=>{
+  col.sort((a,b)=>a.dep-b.dep || a.g.localeCompare(b.g) || a.id.localeCompare(b.id));
+  col.forEach((n,i)=>n.ord=i);
+});
+
+(function reorder(){
+  for(let pass=0; pass<16; pass++){
+    const down = pass%2===0;
+    const seq = down ? COLS.map((_,i)=>i) : COLS.map((_,i)=>i).reverse();
+    for(const c of seq){
+      const col=COLS[c];
+      col.forEach(n=>{ const nb = down ? nbIn(n) : nbOut(n);
+        n.med = nb.length ? median(nb.map(m=>m.ord)) : -1; });
+      const fixed = col.filter(n=>n.med<0).map(n=>n.ord);
+      const moving = col.filter(n=>n.med>=0).sort((a,b)=>a.med-b.med || a.ord-b.ord);
+      let mi=0;
+      const slots = col.map((_,i)=>i).filter(i=>!fixed.includes(i));
+      const next = col.slice();
+      for(const s of slots) next[s]=moving[mi++];
+      next.forEach((n,i)=>n.ord=i);
+      COLS[c] = next.slice().sort((a,b)=>a.ord-b.ord);
+    }
+    let improved=true, guard=0;
+    while(improved && guard++<6){
+      improved=false;
+      for(let c=0;c<NC;c++){
+        const col=COLS[c];
+        for(let i=0;i<col.length-1;i++){
+          const before=crossings(c-1)+crossings(c);
+          const a=col[i], b=col[i+1];
+          [a.ord,b.ord]=[b.ord,a.ord]; col[i]=b; col[i+1]=a;
+          if(crossings(c-1)+crossings(c) < before) improved=true;
+          else { [a.ord,b.ord]=[b.ord,a.ord]; col[i]=a; col[i+1]=b; }
+        }
+      }
+    }
+  }
+})();
+
+function stack(){
+  COLS.forEach(col=>{
+    let y=0;
+    col.forEach(n=>{ n.y=y+n.h/2; y+=n.h+ROW_GAP; });
+    const mid=(y-ROW_GAP)/2;
+    col.forEach(n=>n.y-=mid);
+  });
+}
+function straighten(iters){
+  for(let it=0; it<iters; it++){
+    const down = it%2===0;
+    const seq = down ? COLS.map((_,i)=>i) : COLS.map((_,i)=>i).reverse();
+    for(const c of seq){
+      const col=COLS[c];
+      col.forEach(n=>{ const nb = down ? nbIn(n) : nbOut(n);
+        if(nb.length) n.y += (median(nb.map(m=>m.y)) - n.y)*.6; });
+      for(let i=1;i<col.length;i++){
+        const lo = col[i-1].y + col[i-1].h/2 + ROW_GAP + col[i].h/2;
+        if(col[i].y < lo) col[i].y = lo;
+      }
+      for(let i=col.length-2;i>=0;i--){
+        const hi = col[i+1].y - col[i+1].h/2 - ROW_GAP - col[i].h/2;
+        if(col[i].y > hi) col[i].y = hi;
+      }
+    }
+  }
+}
+const MAX_GAP = ROW_GAP*2.4;
+function compact(){
+  COLS.forEach(col=>{
+    for(let i=1;i<col.length;i++){
+      const gap = (col[i].y-col[i].h/2) - (col[i-1].y+col[i-1].h/2);
+      if(gap > MAX_GAP){
+        const shift = gap - MAX_GAP;
+        for(let j=i;j<col.length;j++) col[j].y -= shift;
+      }
+    }
+  });
+}
+function alignColumns(iters){
+  for(let it=0; it<iters; it++){
+    COLS.forEach((col,c)=>{
+      let sum=0, cnt=0;
+      col.forEach(n=>{
+        for(const e of inAdj.get(n.id)){ const m=byId.get(e.id); if(m.col!==c){ sum+=m.y-n.y; cnt++; } }
+        for(const e of outAdj.get(n.id)){ const m=byId.get(e.id); if(m.col!==c){ sum+=m.y-n.y; cnt++; } }
+      });
+      if(cnt){ const d=sum/cnt*.5; col.forEach(n=>n.y+=d); }
+    });
+  }
+}
+stack(); straighten(8); compact(); straighten(4); compact(); alignColumns(8); compact();
+(function normalize(){
+  const top=Math.min.apply(null,NODES.map(n=>n.y-n.h/2));
+  NODES.forEach(n=>n.y-=top-20);
+})();
+
+/* ========================= PERSISTENCIA ========================= */
+/* --- COPIA PARA ROTAR — generada por db/empaquetar.mjs el 2026-08-13 20:32 -------
+   Foto fija de requerimientos.db: todo el estado va incrustado aquí abajo.
+   No habla con el servidor y no usa localStorage — se abre con doble clic en
+   cualquier PC y siempre muestra esto mismo. Los cambios no se guardan.
+   Para regenerarla con datos frescos:  node db/empaquetar.mjs             */
+const EMPAQUETADO = [];
+const SELLO_COPIA = "2026-08-13 20:32";
+let avisadoCopia = false;
+function avisarSoloLectura(){
+  if(avisadoCopia) return;
+  avisadoCopia = true;
+  toast("Copia de consulta: los cambios no se guardan. Al recargar vuelve la foto original.");
+}
+const KEY="req-chatbot-estado-v1";
+const store = {
+  mode:"local",
+  async boot(){
+    this.mode="copia";
+    return EMPAQUETADO;      // foto fija: sin servidor y sin localStorage
+  },
+  async save(n){
+    const patch={estimacion:n.est, kanban:n.kb, nota:n.nota, personas:n.pes};
+    if(this.mode==="api"){
+      try{
+        await fetch("api/requerimiento/"+encodeURIComponent(n.id),
+          {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});
+      }catch(_){ toast("No se pudo guardar en la base"); }
+    }else{
+      avisarSoloLectura();   // copia: no se guarda nada
+    }
+  }
+};
+const snapshot = () => NODES.filter(n=>n.est||n.kb!=="backlog"||n.nota||n.pes.length)
+  .map(n=>({id:n.id, estimacion:n.est, kanban:n.kb, nota:n.nota, personas:n.pes}));
+function applyRows(rows){
+  for(const r of rows){
+    const n=byId.get(r.id); if(!n) continue;
+    n.est = r.estimacion && estById.has(r.estimacion) ? r.estimacion : null;
+    n.kb  = r.kanban && kbById.has(r.kanban) ? r.kanban : "backlog";
+    n.nota= r.nota||"";
+    /* Acepta el formato viejo (una sola persona) para no perder datos guardados */
+    const brutas = Array.isArray(r.personas) ? r.personas : (r.persona ? [r.persona] : []);
+    n.pes = brutas.filter(k=>peById.has(k));
+  }
+}
+
+/* ============================== ESTADO ============================== */
+const state = {
+  view:"graph", focus:null, query:"",
+  cats:new Set(Object.keys(CAT)),
+  phs:new Set(PHASES.map((_,i)=>i)),
+  ests:new Set(ESTIM.map(e=>e.k).concat(["—"])),
+  kbs:new Set(KANBAN.map(k=>k.k)),
+  pers:new Set(PERSONAS.map(p=>p.k).concat(["—"])),
+  soloLibres:false,
+  persona:null                       // null = todas; si no, la clave de una persona
+};
+const visible = n => state.cats.has(n.g) && state.phs.has(n.phase)
+  && state.ests.has(n.est||"—") && state.kbs.has(n.kb)
+  && (n.pes.length ? n.pes.some(k=>state.pers.has(k)) : state.pers.has("—"))
+  && (!state.persona || n.pes.includes(state.persona))
+  && (!state.soloLibres || libre(n) || n.kb!=="backlog")
+  && (!state.query || n.hay.includes(state.query));
+
+const $ = s=>document.querySelector(s);
+$("#subcount").textContent = NODES.length+" ítems · "+EDGES.length+" relaciones · "+PHASES.length+" fases";
+
+/* ============================== FILTROS ============================== */
+function optHTML(attr,val,tint,label,n){
+  return '<label class="opt is-on" style="--tint:'+tint+'" data-'+attr+'="'+val+'">'+
+    '<input type="checkbox" checked><span class="box"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.4 4.6-5"/></svg></span>'+
+    label+'<span class="n" data-cnt="'+attr+':'+val+'">'+n+'</span></label>';
+}
+function wire(root,attr,set,cast){
+  root.querySelectorAll("label").forEach(l=>{
+    l.querySelector("input").addEventListener("change",e=>{
+      const k=cast(l.dataset[attr]);
+      e.target.checked ? set.add(k) : set.delete(k);
+      l.classList.toggle("is-on", e.target.checked);
+      applyFilters();
+    });
+  });
+}
+$("#f-cat").innerHTML = Object.keys(CAT).map(k=>
+  optHTML("cat",k,CAT[k].color,CAT[k].label,NODES.filter(x=>x.g===k).length)).join("");
+$("#f-ph").innerHTML = PHASES.map((p,i)=>
+  optHTML("ph",i,"var(--text-2)",'<span style="font-variant-numeric:tabular-nums;color:var(--text-3);margin-right:6px">'+i+'</span>'+p,
+    NODES.filter(x=>x.phase===i).length)).join("");
+$("#f-kb").innerHTML = KANBAN.map(k=>
+  optHTML("kb",k.k,"var(--k-"+k.k+")",k.label,0)).join("");
+/* Una casilla por persona, más "Sin asignar". Las caras de arriba aíslan; estas
+   casillas suman o restan del conjunto visible. */
+$("#f-eq").innerHTML = PERSONAS.map(p=>
+  optHTML("eq",p.k,p.color,esc(p.nombre),0)).join("")
+  + optHTML("eq","—","var(--text-3)","Sin asignar",0);
+/* Las caras aíslan a una persona. Volver a pulsar la misma la quita. */
+$("#f-gente").innerHTML = PERSONAS.map(p=>
+  '<button data-pe="'+p.k+'" aria-pressed="false" style="--av:'+p.color+'" title="'+esc(p.nombre)+'">'+
+  '<span class="av" style="--av:'+p.color+'">'+p.ini+'</span></button>').join("");
+$("#f-gente").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  const k=b.dataset.pe;
+  state.persona = state.persona===k ? null : k;
+  $("#f-gente").querySelectorAll("button").forEach(x=>
+    x.setAttribute("aria-pressed", String(x.dataset.pe===state.persona)));
+  applyFilters();
+}));
+$("#f-est").innerHTML = ESTIM.map(e=>
+  optHTML("est",e.k,"var(--e-"+e.k+")",'<b class="mono" style="width:20px;display:inline-block">'+e.k+'</b> '+e.rango,0)).join("")
+  + optHTML("est","—","var(--text-3)","sin estimar",0);
+wire($("#f-cat"),"cat",state.cats,String);
+wire($("#f-ph"),"ph",state.phs,Number);
+wire($("#f-kb"),"kb",state.kbs,String);
+wire($("#f-eq"),"eq",state.pers,String);
+wire($("#f-est"),"est",state.ests,String);
+document.querySelectorAll(".group>h3").forEach(h=>
+  h.addEventListener("click",()=>h.parentElement.classList.toggle("closed")));
+$("#solo-libres").querySelector("input").addEventListener("change",e=>{
+  state.soloLibres=e.target.checked;
+  $("#solo-libres").classList.toggle("is-on",e.target.checked);
+  applyFilters();
+});
+
+/* ============================== MAPA ============================== */
+const SVG=$("#graph"), VP=$("#vp"), GB=$("#bands"), GE=$("#edges"), GN=$("#nodes"), PB=$("#phasebar");
+const NS="http://www.w3.org/2000/svg";
+const PBH=72;                       // alto de la barra de fases, en px
+let W=0,H=0;
+function measure(){ const r=SVG.getBoundingClientRect(); W=r.width; H=r.height; }
+measure();
+
+const yTop = Math.min.apply(null,NODES.map(n=>n.y-n.h/2))-26;
+const yBot = Math.max.apply(null,NODES.map(n=>n.y+n.h/2))+26;
+/* Una banda y una cabecera por FASE, abarcando el rango de columnas que ocupa. */
+const phEl=[];
+const faseX = f => {                       // [xIzq, xDer] de la fase, en coords del mapa
+  const [a,b]=FASE_COLS[f];
+  return [a*PITCH-PAD_X, b*PITCH+CARD_W+PAD_X];
+};
+PHASES.forEach((nombre,f)=>{
+  if(f%2===1){
+    const [x1,x2]=faseX(f);
+    const r=document.createElementNS(NS,"rect");
+    r.setAttribute("class","band");
+    r.setAttribute("x",x1); r.setAttribute("y",yTop);
+    r.setAttribute("width",x2-x1); r.setAttribute("height",yBot-yTop);
+    GB.appendChild(r);
+  }
+  const d=document.createElement("div");
+  d.className="phhead"; d.dataset.c=f;
+  d.innerHTML='<div class="pn">Fase '+f+'</div><div class="pt">'+esc(nombre)+'</div>'+
+    '<div class="ps">'+esc(PHASE_SUB[f]||"")+'</div><div class="pd" data-ph="'+f+'"></div>';
+  PB.appendChild(d); phEl.push(d);
+});
+
+const edgeEl=[];
+LINKS.forEach(l=>{
+  const p=document.createElementNS(NS,"path");
+  l.mismaFase = l.t.col===l.s.col;          // dependencia interna de una fase
+  l.back = l.t.col<l.s.col;
+  p.setAttribute("class","edge k-"+l.k+(l.back?" is-back":"")+(l.mismaFase?" is-intra":""));
+  p.setAttribute("marker-end","url(#a-idle)");
+  GE.appendChild(p); edgeEl.push(p);
+});
+
+const nodeEl=new Map();
+NODES.forEach(n=>{
+  const g=document.createElementNS(NS,"g");
+  g.setAttribute("class","node enter");
+  g.style.setProperty("--tint",CAT[n.g].color);
+  g.style.transition="opacity .5s ease "+(n.col*55+n.ord*14)+"ms";
+  g.dataset.id=n.id; g.dataset.kb=n.kb;
+  g.setAttribute("transform","translate("+n.x+","+(n.y-n.h/2)+")");
+
+  if(n.blocked){
+    const rk=document.createElementNS(NS,"rect");
+    rk.setAttribute("class","risk"); rk.setAttribute("x",-4); rk.setAttribute("y",-4);
+    rk.setAttribute("rx",9); rk.setAttribute("width",n.w+8); rk.setAttribute("height",n.h+8);
+    g.appendChild(rk);
+  }
+  const bg=document.createElementNS(NS,"rect");
+  bg.setAttribute("class","bg"); bg.setAttribute("width",n.w); bg.setAttribute("height",n.h); bg.setAttribute("rx",7);
+  const bar=document.createElementNS(NS,"rect");
+  bar.setAttribute("class","bar"); bar.setAttribute("x",0); bar.setAttribute("y",8);
+  bar.setAttribute("width",3); bar.setAttribute("height",n.h-16); bar.setAttribute("rx",1.5);
+  g.append(bg,bar);
+
+  const id=document.createElementNS(NS,"text");
+  id.setAttribute("class","nid"); id.setAttribute("x",12); id.setAttribute("y",16);
+  id.textContent=n.id; g.appendChild(id);
+
+  const est=document.createElementNS(NS,"text");
+  est.setAttribute("class","nest"); est.setAttribute("x",n.w-11); est.setAttribute("y",16);
+  g.appendChild(est); n.elEst=est;
+
+  n.lines.forEach((ln,li)=>{
+    const t=document.createElementNS(NS,"text");
+    t.setAttribute("class","ntxt"); t.setAttribute("x",12); t.setAttribute("y",31+li*14);
+    t.textContent=ln; g.appendChild(t);
+  });
+  const big=document.createElementNS(NS,"text");
+  big.setAttribute("class","nbig"); big.setAttribute("x",n.w/2); big.setAttribute("y",n.h/2+9);
+  big.textContent=n.id; g.appendChild(big);
+
+  /* Personas: círculos apilados sobre el borde derecho de la tarjeta */
+  const gp=document.createElementNS(NS,"g");
+  gp.setAttribute("class","npers"); g.appendChild(gp); n.elPers=gp;
+
+  GN.appendChild(g); nodeEl.set(n.id,g);
+});
+
+/* Círculos de personas montados sobre el borde derecho de la tarjeta, apilados
+   hacia abajo. Se redibujan solo cuando cambia la asignación. */
+const R_PERS=7.5;
+function pintarPersonas(n){
+  const g=n.elPers, firma=n.pes.join(",");
+  if(g.dataset.firma===firma) return;
+  g.dataset.firma=firma;
+  while(g.firstChild) g.removeChild(g.firstChild);
+  const TOPE=3, paso=R_PERS*2-3;
+  const circulo=(i,fill,ini,titulo,tenue)=>{
+    const c=document.createElementNS(NS,"circle");
+    c.setAttribute("cx",n.w); c.setAttribute("cy",13+i*paso);
+    c.setAttribute("r",R_PERS); c.setAttribute("fill",fill);
+    c.setAttribute("stroke","var(--card)"); c.setAttribute("stroke-width",1.5);
+    const ti=document.createElementNS(NS,"title"); ti.textContent=titulo;
+    c.appendChild(ti);
+    const t=document.createElementNS(NS,"text");
+    t.setAttribute("class","pini"+(tenue?" mas":"")); t.setAttribute("x",n.w);
+    t.setAttribute("y",13+i*paso+2.6); t.textContent=ini;
+    g.append(c,t);
+  };
+  n.pes.slice(0,TOPE).forEach((k,i)=>{
+    const p=peById.get(k);
+    circulo(i,p.color,p.ini,p.nombre,false);
+  });
+  const resto=n.pes.length-TOPE;
+  if(resto>0)
+    circulo(TOPE,"var(--hover)","+"+resto,
+      n.pes.slice(TOPE).map(k=>peById.get(k).nombre).join(", "),true);
+}
+
+function paintEdges(){
+  for(const l of LINKS){
+    const s=l.s,t=l.t;
+    let d;
+    if(l.mismaFase){
+      /* Misma columna: sale por la derecha, baja por un canal lateral y vuelve
+         a entrar por la derecha del destino. El desvío crece con la distancia
+         para que dos aristas paralelas no se pisen. */
+      const x1=s.x+s.w, x2=t.x+t.w;
+      const salto=Math.min(64, 16+Math.abs(t.y-s.y)*.10);
+      d="M"+x1+","+s.y+" C"+(x1+salto)+","+s.y+" "+(x2+salto)+","+t.y+" "+x2+","+t.y;
+    }else if(l.back){
+      const x1=s.x+s.w, x2=t.x;
+      d="M"+x1+","+s.y+" C"+(x1+78)+","+(s.y+54)+" "+(x2-78)+","+(t.y+54)+" "+x2+","+t.y;
+    }else{
+      const x1=s.x+s.w, x2=t.x;
+      const c=Math.max(46,(x2-x1)*.45);
+      d="M"+x1+","+s.y+" C"+(x1+c)+","+s.y+" "+(x2-c)+","+t.y+" "+x2+","+t.y;
+    }
+    edgeEl[l.i].setAttribute("d",d);
+  }
+}
+paintEdges();
+
+const view={k:1,x:0,y:0};
+function applyView(){
+  VP.setAttribute("transform","translate("+view.x+","+view.y+") scale("+view.k+")");
+  SVG.classList.toggle("lod", view.k<.58);   // bajo esto el título ya no se lee
+  for(let f=0;f<PHASES.length;f++){
+    const el=phEl[f], [x1,x2]=faseX(f);
+    const ancho=(x2-x1)*view.k;
+    el.style.left=(view.x+(x1+x2)/2*view.k)+"px";
+    el.classList.toggle("mini", ancho<150);
+    const fuera = view.x+x2*view.k<8 || view.x+x1*view.k>W-8;
+    el.style.opacity = (fuera || ancho<50) ? 0 : 1;
+  }
+}
+function bbox(){
+  let a=1e9,b=1e9,c=-1e9,d=-1e9,any=false;
+  for(const n of NODES){ if(!visible(n)) continue; any=true;
+    a=Math.min(a,n.x); b=Math.min(b,n.y-n.h/2); c=Math.max(c,n.x+n.w); d=Math.max(d,n.y+n.h/2); }
+  return any?{x:a,y:b,w:c-a,h:d-b}:{x:0,y:0,w:PITCH*NC,h:600};
+}
+let raf=null;
+function tweenView(target,ms){
+  ms=ms||520; const from={...view}, t0=performance.now();
+  cancelAnimationFrame(raf);
+  (function step(t){
+    const p=Math.min(1,(t-t0)/ms), e=1-Math.pow(1-p,3);
+    view.k=from.k+(target.k-from.k)*e;
+    view.x=from.x+(target.x-from.x)*e;
+    view.y=from.y+(target.y-from.y)*e;
+    applyView();
+    if(p<1) raf=requestAnimationFrame(step);
+  })(t0);
+}
+function fit(animate){
+  measure();
+  const bb=bbox();
+  const k=Math.max(.2,Math.min(1.4,Math.min((W-96)/bb.w,(H-PBH-58)/bb.h)));
+  const target={k, x:W/2-(bb.x+bb.w/2)*k, y:(H+PBH)/2-(bb.y+bb.h/2)*k};
+  animate===false?(Object.assign(view,target),applyView()):tweenView(target);
+}
+fit(false);
+
+SVG.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const r=SVG.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const k=Math.max(.15,Math.min(2.6,view.k*Math.pow(.998,e.deltaY)));
+  view.x=mx-(mx-view.x)*(k/view.k); view.y=my-(my-view.y)*(k/view.k); view.k=k;
+  applyView();
+},{passive:false});
+
+let drag=null;
+SVG.addEventListener("pointerdown",e=>{
+  try{ SVG.setPointerCapture(e.pointerId); }catch(_){}
+  const ng=e.target.closest(".node");
+  drag={moved:false,sx:e.clientX,sy:e.clientY,ox:view.x,oy:view.y,id:ng?ng.dataset.id:null};
+  SVG.classList.add("is-panning");
+});
+SVG.addEventListener("pointermove",e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.sx, dy=e.clientY-drag.sy;
+  if(Math.abs(dx)+Math.abs(dy)>3) drag.moved=true;
+  view.x=drag.ox+dx; view.y=drag.oy+dy; applyView();
+});
+function endDrag(){
+  if(!drag) return;
+  SVG.classList.remove("is-panning");
+  if(!drag.moved){ drag.id ? select(drag.id,true) : clearFocus(); }
+  drag=null;
+}
+SVG.addEventListener("pointerup",endDrag);
+SVG.addEventListener("pointercancel",endDrag);
+
+const TIP=$("#tip");
+SVG.addEventListener("mousemove",e=>{
+  const ng=e.target.closest(".node");
+  if(!ng||(drag&&drag.moved)){ TIP.classList.remove("on"); return; }
+  const n=byId.get(ng.dataset.id), b=blockers(n);
+  TIP.querySelector(".i").textContent="Fase "+n.phase+" · "+PHASES[n.phase]+" · "+CAT[n.g].short+
+    (n.est?" · "+n.est+" ("+estById.get(n.est).rango+")":" · sin estimar")+
+    (b.length?" · bloqueado por "+b.length:"");
+  TIP.querySelector(".t").textContent=n.id+" — "+n.t;
+  TIP.classList.add("on");
+  TIP.style.left=Math.min(window.innerWidth-TIP.offsetWidth-12,e.clientX+14)+"px";
+  TIP.style.top=Math.max(8,e.clientY-TIP.offsetHeight-12)+"px";
+});
+SVG.addEventListener("mouseleave",()=>TIP.classList.remove("on"));
+
+/* ============================== FOCO ============================== */
+function applyFocus(){
+  const id=state.focus;
+  phEl.forEach(el=>el.classList.remove("is-hot"));
+  if(!id){
+    NODES.forEach(n=>nodeEl.get(n.id).classList.remove("is-focus","is-up","is-down","is-mute"));
+    edgeEl.forEach(el=>{ el.classList.remove("is-up","is-down","is-mute"); el.setAttribute("marker-end","url(#a-idle)"); });
+    return;
+  }
+  const up=reach(id,inAdj), down=reach(id,outAdj);
+  NODES.forEach(n=>{
+    const el=nodeEl.get(n.id);
+    el.classList.remove("is-focus","is-up","is-down","is-mute");
+    if(n.id===id) el.classList.add("is-focus");
+    else if(up.has(n.id)) el.classList.add("is-up");
+    else if(down.has(n.id)) el.classList.add("is-down");
+    else el.classList.add("is-mute");
+  });
+  LINKS.forEach(l=>{
+    const el=edgeEl[l.i], a=l.s.id, b=l.t.id;
+    el.classList.remove("is-up","is-down","is-mute");
+    const inUp=(a===id||up.has(a))&&(b===id||up.has(b));
+    const inDown=(a===id||down.has(a))&&(b===id||down.has(b));
+    if(inUp){ el.classList.add("is-up"); el.setAttribute("marker-end","url(#a-up)"); }
+    else if(inDown){ el.classList.add("is-down"); el.setAttribute("marker-end","url(#a-down)"); }
+    else { el.classList.add("is-mute"); el.setAttribute("marker-end","url(#a-idle)"); }
+  });
+  const f=byId.get(id);
+  phEl[f.phase].classList.add("is-hot");
+  phEl[f.phase].style.setProperty("--tint-ph",CAT[f.g].color);
+}
+/* Centra el ítem en el espacio que queda LIBRE, no en el escenario completo:
+   con el panel de detalle abierto en 1366 px el nodo caía justo bajo el panel. */
+function centerOn(id){
+  const n=byId.get(id); measure();
+  const k=Math.max(view.k, 1.05);
+  const panel = DET.classList.contains("on") ? Math.min(DET.offsetWidth||400, W) : 0;
+  const libreW = Math.max(240, W-panel);
+  tweenView({k, x:libreW/2-(n.x+n.w/2)*k, y:(H+PBH)/2-n.y*k}, 560);
+}
+function clearFocus(){ state.focus=null; applyFocus(); renderAll(); closeDetail(); }
+
+/* ============================ RENDER GLOBAL ============================ */
+function applyFilters(){
+  NODES.forEach(n=>nodeEl.get(n.id).classList.toggle("is-hidden",!visible(n)));
+  LINKS.forEach(l=>edgeEl[l.i].classList.toggle("is-hidden",!visible(l.s)||!visible(l.t)));
+  phEl.forEach((el,c)=>el.style.display=state.phs.has(c)?"":"none");
+  renderAll();
+}
+function renderAll(){ renderRollup(); renderCounts(); renderList(); renderBoard(); paintNodes(); }
+
+function paintNodes(){
+  NODES.forEach(n=>{
+    const g=nodeEl.get(n.id);
+    g.dataset.kb=n.kb;
+    n.elEst.textContent = n.est || "";
+    n.elEst.style.fill = n.est ? "var(--e-"+n.est+")" : "var(--text-3)";
+    pintarPersonas(n);
+  });
+  PHASES.forEach((_,f)=>{
+    const items=NODES.filter(n=>n.f===f && visible(n));
+    const d=items.reduce((a,n)=>a+(n.est?estById.get(n.est).dias:0),0);
+    const sin=items.filter(n=>!n.est).length;
+    const el=phEl[f].querySelector(".pd");
+    el.textContent = d ? fmtD(d)+" d"+(sin?" · "+sin+" s/e":"") : (sin?sin+" sin estimar":"");
+  });
+}
+function renderRollup(){
+  const vis=NODES.filter(visible);
+  const tot=vis.reduce((a,n)=>a+(n.est?estById.get(n.est).dias:0),0);
+  const hecho=vis.filter(n=>n.kb==="hecho").reduce((a,n)=>a+(n.est?estById.get(n.est).dias:0),0);
+  const curso=vis.filter(n=>n.kb==="curso").reduce((a,n)=>a+(n.est?estById.get(n.est).dias:0),0);
+  const sin=vis.filter(n=>!n.est).length;
+  const pct=v=>tot?(v/tot*100):0;
+  $("#rollup").innerHTML =
+    '<span><b>'+fmtD(tot)+'</b> d estimados</span>'+
+    '<span class="bar"><i style="width:'+pct(hecho)+'%;background:var(--k-hecho)"></i>'+
+      '<i style="width:'+pct(curso)+'%;background:var(--k-curso)"></i></span>'+
+    '<span><b>'+fmtD(hecho)+'</b> d hechos</span>'+
+    '<span'+(sin?'':' style="color:var(--k-hecho)"')+'><b>'+sin+'</b> sin estimar</span>';
+}
+function renderCounts(){
+  document.querySelectorAll("[data-cnt]").forEach(el=>{
+    const [a,v]=el.dataset.cnt.split(":");
+    let f;
+    if(a==="cat") f=n=>n.g===v;
+    else if(a==="ph") f=n=>n.phase===Number(v);
+    else if(a==="kb") f=n=>n.kb===v;
+    else if(a==="est") f=n=>(n.est||"—")===v;
+    else f=n=> v==="—" ? !n.pes.length : n.pes.includes(v);
+    el.textContent=NODES.filter(f).length;
+  });
+  $("#n-libres").textContent=NODES.filter(n=>n.kb==="backlog"&&libre(n)).length;
+}
+
+/* ============================== LISTA ============================== */
+const DOC=$("#doc");
+function estChip(n){
+  if(!n.est) return '<span class="dash">—</span>';
+  const e=estById.get(n.est);
+  return '<span class="chip est" style="color:var(--e-'+e.k+');border-color:var(--e-'+e.k+')">'+e.k+'</span>';
+}
+function lockChip(n){
+  const b=blockers(n);
+  if(n.kb==="hecho") return '<span class="chip free">hecho</span>';
+  return b.length
+    ? '<span class="chip lock" title="'+b.map(x=>x.id).join(", ")+'">'+lockSVG+b.length+'</span>'
+    : '<span class="chip free">libre</span>';
+}
+const lockSVG='<svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+
+/* Pila de avatares. Se muestran hasta `tope` caras; el resto se resume en un
+   "+N" discreto. Sin nadie, un punto. */
+function avatares(n,sm,max){
+  const c=sm?" sm":"", tope=max||3;
+  if(!n.pes.length)
+    return '<span class="avs"><span class="av none'+c+'" title="Sin asignar">·</span></span>';
+  const ps=n.pes.map(k=>peById.get(k));
+  const ver=ps.slice(0,tope), resto=ps.length-ver.length;
+  return '<span class="avs">'+
+    ver.map(p=>'<span class="av'+c+'" style="--av:'+p.color+'" title="'+esc(p.nombre)+'">'+p.ini+'</span>').join("")+
+    (resto>0?'<span class="av mas'+c+'" title="'+esc(ps.slice(tope).map(p=>p.nombre).join(", "))+'">+'+resto+'</span>':'')+
+    '</span>';
+}
+/* Solo se escribe el nombre cuando hay exactamente una persona. Con varias,
+   hablan los avatares: poner "3 personas" repetía lo que ya se ve. */
+const nombreDe = n => n.pes.length===1 ? peById.get(n.pes[0]).nombre : "";
+function selHTML(cls,id,opts,cur){
+  return '<select class="pick" data-'+cls+'="'+id+'">'+opts.map(o=>
+    '<option value="'+o.v+'"'+(o.v===cur?' selected':'')+'>'+esc(o.l)+'</option>').join("")+'</select>';
+}
+const estOpts=[{v:"",l:"— sin estimar"}].concat(ESTIM.map(e=>({v:e.k,l:e.k+" · "+e.rango})));
+const kbOpts=KANBAN.map(k=>({v:k.k,l:k.label}));
+/* Cada modo devuelve los grupos como {clave, titulo, color, items}. Un ítem con
+   varias personas aparece en el grupo de cada una — a propósito: si dos lo
+   llevan, ambos deben verlo en su lista. */
+const AGRUPAR = {
+  cat:{label:"Categoría", grupos:()=>Object.keys(CAT).filter(k=>state.cats.has(k))
+        .map(k=>({clave:k, titulo:CAT[k].label, color:CAT[k].color,
+                  items:NODES.filter(n=>n.g===k)}))},
+  pers:{label:"Persona", grupos:()=>PERSONAS
+        .map(p=>({clave:p.k, titulo:p.nombre, color:p.color,
+                  items:NODES.filter(n=>n.pes.includes(p.k))}))
+        .concat([{clave:"—", titulo:"Sin asignar", color:"var(--text-3)",
+                  items:NODES.filter(n=>!n.pes.length)}])},
+  fase:{label:"Fase", grupos:()=>PHASES
+        .map((p,i)=>({clave:i, titulo:"F"+i+" · "+p, color:"var(--text-2)",
+                      items:NODES.filter(n=>n.f===i)}))}
+};
+state.agrupar = "cat";
+
+function renderList(){
+  const grupos = AGRUPAR[state.agrupar].grupos();
+  DOC.innerHTML = grupos.map(gr=>{
+    const items=gr.items.slice().sort((a,b)=>a.col-b.col||a.id.localeCompare(b.id));
+    const vis=items.filter(visible);
+    if(!vis.length) return "";          // grupo sin nada visible: no se dibuja
+    const dias=vis.reduce((a,n)=>a+(n.est?estById.get(n.est).dias:0),0);
+    const k=items[0].g;                 // color del chip de la fila
+    const rows=items.map(n=>
+      '<div class="row'+(visible(n)?'':' is-hidden')+(state.focus===n.id?' is-sel':'')+(n.kb==="hecho"?' is-done':'')+
+      '" data-id="'+n.id+'" style="--tint:'+CAT[k].color+'">'+
+      '<span class="rid mono">'+n.id+'</span>'+
+      '<span class="rt">'+esc(n.t)+'</span>'+
+      '<span class="resp">'+avatares(n,true)+'<span class="nm">'+esc(nombreDe(n)||"—")+'</span></span>'+
+      '<span>'+selHTML("est",n.id,estOpts,n.est||"")+'</span>'+
+      '<span>'+selHTML("kb",n.id,kbOpts,n.kb)+'</span>'+
+      '<span>'+lockChip(n)+'</span></div>').join("");
+    return '<section class="sec">'+
+      '<h2><i class="swatch" style="width:7px;height:7px;border-radius:50%;background:'+gr.color+'"></i>'+esc(gr.titulo)+'</h2>'+
+      '<div class="meta">'+vis.length+(vis.length!==items.length?" de "+items.length:"")+' ítems · '+fmtD(dias)+' d estimados</div>'+
+      '<div class="head"><span>ID</span><span>Requerimiento</span><span>Responsable</span><span>Estimación</span><span>Estado</span><span>Bloqueo</span></div>'+
+      '<div class="rows">'+rows+'</div></section>';
+  }).join("");
+  DOC.querySelectorAll(".row").forEach(r=>r.addEventListener("click",e=>{
+    if(e.target.closest(".pick")) return;
+    select(r.dataset.id,false);
+  }));
+  DOC.querySelectorAll("[data-est]").forEach(s=>s.addEventListener("change",e=>
+    setField(s.dataset.est,"est",e.target.value||null)));
+  DOC.querySelectorAll("[data-kb]").forEach(s=>s.addEventListener("change",e=>
+    setField(s.dataset.kb,"kb",e.target.value)));
+  if(!DOC.querySelector(".row:not(.is-hidden)"))
+    DOC.insertAdjacentHTML("beforeend",'<div class="empty">Sin resultados.</div>');
+}
+
+/* ============================== TABLERO ============================== */
+const COLSEL=$("#cols");
+const dias = n => n.est ? estById.get(n.est).dias : 0;
+const ORDEN = {
+  impacto:{label:"Impacto (desbloquea más)", cmp:(a,b)=>b.imp-a.imp||a.phase-b.phase||a.id.localeCompare(b.id)},
+  fase:   {label:"Fase",                     cmp:(a,b)=>a.phase-b.phase||b.imp-a.imp||a.id.localeCompare(b.id)},
+  peso:   {label:"Más grande primero",       cmp:(a,b)=>dias(b)-dias(a)||b.imp-a.imp||a.id.localeCompare(b.id)},
+  rapido: {label:"Más rápido primero",       cmp:(a,b)=>(dias(a)||99)-(dias(b)||99)||b.imp-a.imp||a.id.localeCompare(b.id)}
+};
+state.orden = "impacto";
+$("#orden").innerHTML=Object.keys(ORDEN).map(k=>
+  '<option value="'+k+'"'+(k===state.orden?" selected":"")+'>'+ORDEN[k].label+'</option>').join("");
+$("#orden").addEventListener("change",e=>{ state.orden=e.target.value; renderBoard(); });
+$("#agrupar").innerHTML=Object.keys(AGRUPAR).map(k=>
+  '<option value="'+k+'"'+(k===state.agrupar?" selected":"")+'>'+AGRUPAR[k].label+'</option>').join("");
+$("#agrupar").addEventListener("change",e=>{ state.agrupar=e.target.value; renderList(); });
+
+function renderBoard(){
+  const vis=NODES.filter(visible);
+  $("#btitle").textContent=vis.length+" ítems visibles";
+  const cmp=ORDEN[state.orden].cmp;
+
+  COLSEL.innerHTML=BOARD.map(c=>{
+    // "Listo para empezar" es un corte calculado de Backlog, no un estado guardado
+    const items=vis.filter(n=> c.k==="backlog" ? (n.kb==="backlog" && !libre(n))
+                             : c.k==="listo"   ? (n.kb==="backlog" &&  libre(n))
+                             : n.kb===c.kb).sort(cmp);
+    const d=items.reduce((a,n)=>a+dias(n),0);
+    const cards=items.map(n=>{
+      const b=blockers(n);
+      return '<div class="kcard'+(b.length?' locked':'')+'" draggable="true" data-id="'+n.id+'" style="--tint:'+CAT[n.g].color+'">'+
+        '<div class="l1"><span class="kid mono">'+n.id+'</span>'+
+        (b.length?'<span class="chip lock" title="Bloqueado por '+b.map(x=>x.id).join(", ")+'">'+lockSVG+b.length+'</span>':'')+
+        (n.imp?'<span class="chip imp" style="margin-left:auto" title="Desbloquea '+n.imp+' ítems">'+arrowSVG+n.imp+'</span>':'')+'</div>'+
+        '<div class="kt">'+esc(n.t)+'</div>'+
+        '<div class="l2"><span class="chip ph">F'+n.phase+' · '+esc(PHASES[n.phase])+'</span>'+estChip(n)+
+        '<span style="margin-left:auto">'+avatares(n,true)+'</span></div></div>';
+    }).join("") || '<div class="kempty">vacío</div>';
+    return '<div class="col'+(c.auto?" auto":"")+'" data-col="'+c.k+'" data-kb="'+c.kb+'" style="--tint-k:var(--k-'+c.k+')">'+
+      '<header><div class="l"><i class="dot"></i><span class="nm">'+c.label+'</span>'+
+      '<span class="ct">'+items.length+(d?' · '+fmtD(d)+' d':'')+'</span></div>'+
+      (c.sub?'<div class="sb">'+c.sub+'</div>':'')+'</header>'+
+      '<div class="stack">'+cards+'</div></div>';
+  }).join("");
+
+  COLSEL.querySelectorAll(".kcard").forEach(c=>{
+    c.addEventListener("click",()=>select(c.dataset.id,false));
+    c.addEventListener("dragstart",e=>{
+      e.dataTransfer.setData("text/plain",c.dataset.id);
+      e.dataTransfer.effectAllowed="move";
+      requestAnimationFrame(()=>c.classList.add("drag"));
+    });
+    c.addEventListener("dragend",()=>c.classList.remove("drag"));
+  });
+  COLSEL.querySelectorAll(".col").forEach(col=>{
+    col.addEventListener("dragover",e=>{ e.preventDefault(); e.dataTransfer.dropEffect="move"; col.classList.add("over"); });
+    col.addEventListener("dragleave",e=>{ if(!col.contains(e.relatedTarget)) col.classList.remove("over"); });
+    col.addEventListener("drop",e=>{
+      e.preventDefault(); col.classList.remove("over");
+      const id=e.dataTransfer.getData("text/plain");
+      if(!id) return;
+      const n=byId.get(id), b=blockers(n);
+      // soltar en "Listo para empezar" algo bloqueado no puede funcionar: lo decide el grafo
+      if(col.dataset.col==="listo" && b.length){
+        setField(id,"kb","backlog");
+        toast(id+" sigue bloqueado por "+b.map(x=>x.id).join(", "));
+        return;
+      }
+      setField(id,"kb",col.dataset.kb);
+    });
+  });
+}
+const arrowSVG='<svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
+
+/* ============================== MUTACIÓN ============================== */
+function setField(id,field,val){
+  const n=byId.get(id); if(!n) return;
+  if(n[field]===val) return;
+  n[field]=val;
+  store.save(n);
+  renderAll();
+  if(state.focus===id) openDetail(id);
+  if(field==="kb") toast(n.id+" → "+kbById.get(val).label);
+}
+/* La lista que llega es la lista final: reemplazo, no acumulación. */
+function setAsignacion(id,pes){
+  const n=byId.get(id); if(!n) return;
+  if(n.pes.length===pes.length && pes.every(k=>n.pes.includes(k))) return;
+  n.pes=pes.slice();
+  store.save(n);
+  renderAll();
+  if(state.focus===id) openDetail(id);
+  toast(pes.length===1 ? n.id+" → "+peById.get(pes[0]).nombre
+      : pes.length>1  ? n.id+" → "+pes.length+" personas"
+                      : n.id+" sin asignar");
+}
+let toastT=null;
+function toast(msg){
+  const t=$("#toast"); t.textContent=msg; t.classList.add("on");
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("on"),1600);
+}
+
+/* ============================== DETALLE ============================== */
+const DET=$("#detail");
+function relRow(e){
+  const n=byId.get(e.id);
+  return '<div class="rel'+(n.kb==="hecho"?" done":"")+'" data-id="'+n.id+'" style="--tint:'+CAT[n.g].color+'">'+
+    '<span class="dot"></span><span class="rl mono">'+n.id+'</span>'+
+    '<span class="rn">'+esc(n.t)+'</span><span class="rk">'+e.k+'</span></div>';
+}
+function openDetail(id){
+  const n=byId.get(id);
+  DET.style.setProperty("--tint",CAT[n.g].color);
+  $("#d-id").textContent=n.id+" · "+CAT[n.g].short;
+  $("#d-ph").innerHTML='<span class="chip ph">Fase '+n.phase+' · '+esc(PHASES[n.phase])+'</span>';
+  $("#d-title").textContent=n.t;
+  $("#d-desc").textContent=n.d;
+
+  const b=blockers(n);
+  $("#d-block").innerHTML = b.length
+    ? '<div class="blocknote" style="margin-top:14px">'+lockSVG+'<span>Bloqueado por <b>'+b.length+'</b>: '+
+      b.map(x=>x.id).join(", ")+'</span></div>'
+    : (n.kb!=="hecho" ? '<div class="blocknote" style="margin-top:14px;color:var(--k-hecho)"><span>Sin bloqueos: se puede empezar.</span></div>' : "");
+
+  /* Una cara por persona; cada una se enciende y apaga por separado. */
+  $("#d-quien").innerHTML =
+    '<div class="qgente">'+PERSONAS.map(p=>
+      '<button class="pill per" data-q="'+p.k+'" aria-pressed="'+n.pes.includes(p.k)+
+      '" style="--pt:'+p.color+'" title="'+esc(p.nombre)+'">'+
+      '<span class="av sm" style="--av:'+p.color+'">'+p.ini+'</span>'+esc(p.nombre.split(" ")[0])+'</button>').join("")+
+    '</div>'+
+    (n.pes.length ? '<button class="pill qclear" data-q="" style="--pt:var(--text-3)">Quitar a todos</button>' : '');
+  $("#d-quien").querySelectorAll(".pill").forEach(b=>b.onclick=()=>{
+    const k=b.dataset.q, m=byId.get(id);
+    if(!k) return setAsignacion(id,[]);
+    setAsignacion(id, m.pes.includes(k) ? m.pes.filter(x=>x!==k) : m.pes.concat(k));
+  });
+
+  $("#d-est").innerHTML = '<button class="pill" data-e="" aria-pressed="'+(!n.est)+'" style="--pt:var(--text-3)">sin estimar</button>'+
+    ESTIM.map(e=>'<button class="pill" data-e="'+e.k+'" aria-pressed="'+(n.est===e.k)+'" style="--pt:var(--e-'+e.k+')">'+
+      e.k+'<span class="d">'+e.rango+'</span></button>').join("");
+  $("#d-kb").innerHTML = KANBAN.map(k=>'<button class="pill" data-k="'+k.k+'" aria-pressed="'+(n.kb===k.k)+'" style="--pt:var(--k-'+k.k+')">'+
+      k.label+'</button>').join("");
+  pintarNota(n);
+
+  $("#d-est").querySelectorAll(".pill").forEach(p=>p.onclick=()=>setField(id,"est",p.dataset.e||null));
+  $("#d-kb").querySelectorAll(".pill").forEach(p=>p.onclick=()=>setField(id,"kb",p.dataset.k));
+
+  const up=inAdj.get(id), down=outAdj.get(id);
+  /* Directos entre paréntesis; el total de la cadena va aparte, porque es el
+     número que ordena el tablero. */
+  $("#c-up").textContent   = up.length ? "("+up.length+")" : "";
+  $("#c-down").textContent = down.length
+    ? "("+down.length+(n.imp>down.length ? " · "+n.imp+" en total" : "")+")" : "";
+  $("#d-up").innerHTML   = up.length   ? up.map(relRow).join("")   : '<div class="none">—</div>';
+  $("#d-down").innerHTML = down.length ? down.map(relRow).join("") : '<div class="none">—</div>';
+  DET.querySelectorAll(".rel").forEach(r=>r.addEventListener("click",()=>select(r.dataset.id,true)));
+  DET.classList.add("on");
+}
+function closeDetail(){ salirNota(); DET.classList.remove("on"); }
+
+/* ---- Nota: se lee como texto, se edita al hacer clic ---------------------- */
+const NOTA_VER=$("#d-nota-ver"), NOTA_ED=$("#d-nota");
+let notaT=null;
+
+/* Una línea sin sangría que empieza en mayúsculas sostenidas abre un bloque.
+   Cubre tanto "TEMAS PROHIBIDOS" como "BLOQUEAR — datos de terceros": en el
+   segundo caso solo el tramo anterior al guión va en mayúsculas. Es la
+   convención de las notas de la Fase 0; el resto del texto va tal cual. */
+const RE_TITULO=/^[A-ZÁÉÍÓÚÑÜ0-9][A-ZÁÉÍÓÚÑÜ0-9 ,:·/()%-]{2,}$/;
+function esTitulo(l){
+  if(l !== l.trimStart()) return false;              // sangrado = contenido
+  const s=l.trim();
+  if(s.length>70 || /\.$/.test(s)) return false;     // termina en punto = frase
+  const cabeza=s.split(/\s+[—–]\s+/)[0];             // "BLOQUEAR — datos de terceros"
+                                                      // "EL PUNTO REAL: EL ACUSE…" también entra
+  return RE_TITULO.test(cabeza) && /[A-ZÁÉÍÓÚÑ]/.test(cabeza);
+}
+/* Las notas vienen con las líneas cortadas a ~74 caracteres, pero el panel tiene
+   otro ancho: respetarlas tal cual mete saltos en mitad de las frases. Así que
+   los párrafos se rearman y fluyen, y solo las viñetas (·) y las líneas
+   sangradas conservan su forma, que ahí sí significa algo. */
+function pintarNota(n){
+  const t=(n.nota||"").trim();
+  if(!t){ NOTA_VER.innerHTML='<span class="vacio">Sin nota. Clic para escribir.</span>'; return; }
+  const out=[]; let parr=[];
+  const cerrar=()=>{ if(parr.length){ out.push('<p>'+esc(parr.join(" "))+'</p>'); parr=[]; } };
+  for(const l of t.split("\n")){
+    const s=l.trim();
+    if(!s){ cerrar(); continue; }
+    if(esTitulo(l)){ cerrar(); out.push("<b>"+esc(s)+"</b>"); continue; }
+    // Viñeta o continuación de viñeta: bloque propio, sin rearmar con el resto.
+    if(/^[·•-]\s/.test(s)){ cerrar(); out.push('<p class="li">'+esc(s.replace(/^[·•-]\s+/,""))+'</p>'); continue; }
+    if(out.length && out[out.length-1].startsWith('<p class="li">') && !parr.length){
+      out[out.length-1]=out[out.length-1].replace(/<\/p>$/, " "+esc(s)+"</p>"); continue;
+    }
+    parr.push(s);
+  }
+  cerrar();
+  NOTA_VER.innerHTML=out.join("");
+}
+function entrarNota(){
+  if(!state.focus || !NOTA_ED.hidden) return;
+  NOTA_ED.value = byId.get(state.focus).nota||"";
+  NOTA_VER.hidden=true; NOTA_ED.hidden=false;
+  NOTA_ED.style.height="auto";
+  NOTA_ED.style.height=Math.max(160, NOTA_ED.scrollHeight)+"px";
+  NOTA_ED.focus();
+}
+function salirNota(){
+  if(NOTA_ED.hidden) return;
+  clearTimeout(notaT);
+  if(state.focus){ const n=byId.get(state.focus); n.nota=NOTA_ED.value; store.save(n); pintarNota(n); }
+  NOTA_ED.hidden=true; NOTA_VER.hidden=false;
+}
+NOTA_VER.addEventListener("click",entrarNota);
+NOTA_VER.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); entrarNota(); } });
+NOTA_ED.addEventListener("blur",salirNota);
+NOTA_ED.addEventListener("keydown",e=>{ if(e.key==="Escape"){ e.stopPropagation(); salirNota(); } });
+NOTA_ED.addEventListener("input",e=>{
+  if(!state.focus) return;
+  e.target.style.height="auto";
+  e.target.style.height=Math.max(160, e.target.scrollHeight)+"px";
+  const n=byId.get(state.focus); n.nota=e.target.value;
+  clearTimeout(notaT); notaT=setTimeout(()=>store.save(n),350);
+});
+function select(id,center){
+  TIP.classList.remove("on");   // el panel entra bajo el cursor y el hover no se reevalúa solo
+  salirNota();                  // guarda contra el ítem anterior, antes de mover el foco
+  state.focus=id; applyFocus(); openDetail(id); renderList();
+  $("#hint").classList.add("is-off");
+  if(center&&state.view==="graph") centerOn(id);
+}
+
+/* ============================== VISTAS ============================== */
+const HASH={graph:"#mapa", list:"#lista", board:"#tablero"};
+function setView(v){
+  state.view=v;
+  TIP.classList.remove("on");        // el tooltip es fixed: si no, queda flotando sobre la otra vista
+  ["graph","list","board"].forEach(x=>{
+    $("#view-"+x).classList.toggle("is-active",v===x);
+    $("#tab-"+x).setAttribute("aria-selected",v===x);
+  });
+  if(location.hash!==HASH[v]) history.replaceState(null,"",HASH[v]);
+  if(v==="graph"){ measure(); fit(true); }
+}
+addEventListener("blur",()=>TIP.classList.remove("on"));
+document.addEventListener("scroll",()=>TIP.classList.remove("on"),true);
+["graph","list","board"].forEach(v=>$("#tab-"+v).addEventListener("click",()=>setView(v)));
+$("#d-close").addEventListener("click",clearFocus);
+$("#d-graph").addEventListener("click",()=>{ setView("graph"); requestAnimationFrame(()=>centerOn(state.focus)); });
+$("#btn-fit").addEventListener("click",()=>fit(true));
+$("#btn-clear").addEventListener("click",clearFocus);
+$("#btn-zoom").addEventListener("click",()=>{
+  measure();
+  const cx=(W/2-view.x)/view.k, cy=((H+PBH)/2-view.y)/view.k;
+  tweenView({k:1,x:W/2-cx,y:(H+PBH)/2-cy},420);
+});
+$("#q").addEventListener("input",e=>{ state.query=e.target.value.trim().toLowerCase(); applyFilters(); });
+$("#theme").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme");
+  const sysDark=window.matchMedia?matchMedia("(prefers-color-scheme: dark)").matches:false;
+  document.documentElement.setAttribute("data-theme",cur?(cur==="dark"?"light":"dark"):(sysDark?"light":"dark"));
+});
+$("#btn-export").addEventListener("click",()=>{
+  const blob=new Blob([JSON.stringify({generado:new Date().toISOString(),requerimientos:snapshot()},null,2)],
+    {type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="estado-requerimientos.json"; a.click();
+  URL.revokeObjectURL(a.href);
+  toast("Exportado");
+});
+/* Importar retirado en la copia: no hay base donde persistir. */
+$("#file").addEventListener("change",async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{
+    const j=JSON.parse(await f.text());
+    applyRows(j.requerimientos||j);
+    for(const n of NODES) await store.save(n);
+    renderAll(); toast("Importado");
+  }catch(_){ toast("Archivo no válido"); }
+  e.target.value="";
+});
+document.addEventListener("keydown",e=>{
+  const t=e.target.tagName;
+  if(t==="INPUT"||t==="TEXTAREA"||t==="SELECT"){
+    if(e.key==="Escape"&&e.target.id==="q"){ e.target.value=""; state.query=""; applyFilters(); e.target.blur(); }
+    return;
+  }
+  if(e.key==="/"){ e.preventDefault(); $("#q").focus(); }
+  else if(e.key==="Escape") clearFocus();
+  else if(e.key==="g") setView("graph");
+  else if(e.key==="l") setView("list");
+  else if(e.key==="t") setView("board");
+});
+let rz; addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(()=>{ measure(); fit(true); },180); });
+
+/* El primer encuadre corre antes de que el escenario tenga su alto definitivo,
+   y el mapa quedaba unos 60 px alto. En vez de adivinar el momento, se
+   reencuadra cada vez que el lienzo cambia de tamaño — incluido el paso de
+   display:none a visible al volver a la vista Mapa — y se deja de hacer en
+   cuanto el usuario mueve el mapa por su cuenta. */
+let tocado=false;
+const marcarTocado=()=>{ tocado=true; };
+SVG.addEventListener("wheel",marcarTocado,{passive:true});
+SVG.addEventListener("pointerdown",marcarTocado);
+if(window.ResizeObserver){
+  new ResizeObserver(()=>{ measure(); if(!tocado && W>0 && H>0) fit(false); }).observe(SVG);
+}
+
+/* ============================== ARRANQUE ============================== */
+(async function boot(){
+  const rows=await store.boot();
+  applyRows(rows);
+  const M=$("#mode");
+  M.textContent = "copia";
+  M.classList.remove("on");
+  M.title = "Foto de la base del " + SELLO_COPIA + ". Los datos van dentro de este archivo; "
+    + "los cambios no se guardan.";
+  renderAll();
+  const inicial=Object.keys(HASH).find(k=>HASH[k]===location.hash);
+  if(inicial && inicial!=="graph") setView(inicial);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    NODES.forEach(n=>nodeEl.get(n.id).classList.remove("enter"));
+  }));
+})();
+</script>
+</body>
+</html>
