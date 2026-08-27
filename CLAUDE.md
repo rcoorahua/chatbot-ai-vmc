@@ -24,6 +24,9 @@ python -m scripts.seed_data       # dataset base de las pruebas de lectura
 uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
 cd widget; python -m http.server 8080                # widget: http://localhost:8080/test.html
 
+python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/helpcenter/*.md + chunks.json
+python -m scripts.helpcenter_upload --verify         # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE)
+
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
 python -m pytest -k "gsi1" -q                        # un patrón / una prueba
@@ -168,7 +171,8 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   nuevo sigue este layout.
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
-  `agent/` tiene clasificador y redactor listos pero **sin pipeline** (`workers/ai_worker.py`
+  `agent/` tiene clasificador, redactor y **recuperación en Pinecone** listos, más la ingesta
+  del Centro de Ayuda (`scripts/helpcenter_*`), pero **sin pipeline** (`workers/ai_worker.py`
   bloqueado por D-004/D-006/D-020): el bot aún no responde. El resto son stubs con docstrings; se
   implementan fase por fase (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
@@ -200,6 +204,16 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Los marcadores de idempotencia viven en la tabla Messages con SK `CMID#…`; todo listado acota
   la SK por arriba con `"3"` para no verlos. Un query nuevo sin esa cota los devuelve como mensajes
   (y en orden descendente, primero).
+- **RAG**: el índice de Pinecone usa **embedding integrado** (`multilingual-e5-large` dentro de
+  Pinecone). Ingesta y consulta embeben con el mismo modelo por construcción; crear el índice a
+  mano con otro modelo no da error, solo resultados malos. Por eso lo crea
+  `scripts/helpcenter_upload.py`, no la consola web. Gemini **no** interviene en los embeddings.
+- `RAG_MIN_SCORE` es RF-018 hecho código: Pinecone siempre devuelve los `top_k` más cercanos,
+  también para una pregunta ajena al Centro de Ayuda. **Está sin calibrar** — el valor real se
+  mide con `python -m scripts.helpcenter_upload --verify`.
+- Los ids de chunk son estables (`hc-<artículo>-<pregunta>-<huella>`): con ids posicionales, una
+  pregunta nueva corre a todas las siguientes y el upsert sobrescribe cada vector con el texto de
+  otro, sin fallar. El upsert es aditivo: para un refresco completo, `--replace`.
 - `frontend/` usa **Next.js 16** (App Router, React 19, Tailwind v4): APIs y convenciones difieren
   del entrenamiento — consultar `frontend/node_modules/next/dist/docs/` antes de escribir código,
   como pide `frontend/AGENTS.md`. Se despliega fuera de CDK (TD-003).

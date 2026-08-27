@@ -24,6 +24,7 @@ _OPTIONAL_TEXT_FIELDS = (
     "notifications_queue_url",
     "vmc_identity_secret",
     "session_signing_key",
+    "pinecone_api_key",
 )
 
 
@@ -60,6 +61,24 @@ class Settings(BaseSettings):
     # D-018 (sesion anonima): valor PROVISIONAL derivado de la regla "el anonimo no conserva
     # historial" (RF-004). Solo acota cuanto dura el token; los datos los rige D-014.
     anonymous_session_ttl_hours: int = 24
+
+    # ── RAG en Pinecone (RF-017/018/019) ────────────────────────────────────────────────────
+    # Mismos nombres de variable que usaba el proyecto de referencia, para que una credencial
+    # ya existente sirva sin renombrar nada.
+    pinecone_api_key: str | None = None
+    pinecone_index_name: str = "subastin-rag"
+    # Un namespace por fuente de conocimiento: hoy solo el Centro de Ayuda. Separarlos permite
+    # re-subir una fuente entera sin tocar las demas.
+    pinecone_namespace: str = "helpcenter"
+    # Cuantos fragmentos se le pasan al redactor. Mas de 5 encarece el prompt y mete ruido
+    # (regla de la skill rag-architect); menos de 3 se queda corto en preguntas compuestas.
+    rag_top_k: int = 4
+    # Umbral de RF-018: por debajo de esto se considera que NO hay evidencia y el caso deriva,
+    # en vez de redactar con fragmentos que no vienen al caso.
+    # OJO: hay que calibrarlo con datos reales. `python -m scripts.helpcenter_upload --verify`
+    # imprime los scores de una consulta de prueba; el valor por defecto asume el rango tipico
+    # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
+    rag_min_score: float = 0.75
 
     # ── Limites (RF-014). PROVISIONALES hasta cerrar D-005 ──────────────────────────────────
     # Un mensaje sin tope se convertiria en un item DynamoDB de 400 KB y en un prompt caro.

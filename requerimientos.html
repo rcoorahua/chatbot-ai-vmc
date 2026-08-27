@@ -552,7 +552,7 @@ textarea#d-nota:focus{border-color:var(--text-3);background:var(--panel)}
     <div class="body">
       <p class="desc" id="d-desc"></p>
       <div id="d-block"></div>
-      <div class="blk" hidden><div class="pills" id="d-quien"></div></div><div class="blk" hidden><div id="d-nota-ver"></div><textarea id="d-nota" hidden></textarea></div>
+      <div class="blk" hidden><div class="pills" id="d-quien"></div></div><div class="blk"><h4>Nota</h4><div id="d-nota-ver"></div><textarea id="d-nota" hidden></textarea></div>
       <div class="blk"><h4>Estimación</h4><div class="pills" id="d-est"></div></div>
       <div class="blk"><h4>Estado de trabajo</h4><div class="pills" id="d-kb"></div></div>
       <div style="margin-top:16px"><button class="act" id="d-graph">Ver en el mapa</button></div>
@@ -605,11 +605,11 @@ const NODES = [
 {id:"RB-003",g:"C",f:1,t:"Un anónimo no recupera historial entre sesiones/dispositivos",d:"Un anónimo no recupera historial entre sesiones/dispositivos"},
 {id:"RB-004",g:"C",f:1,t:"Un usuario autenticado se asocia a una identidad validada…",d:"Un usuario autenticado se asocia a una identidad validada por VMC"},
 {id:"RB-010",g:"C",f:1,t:"Subastín no modifica datos de VMC",d:"Subastín no modifica datos de VMC"},
-{id:"D-001",g:"D",f:1,t:"Mecanismo de identidad VMC ↔ Subastín",d:"Prioridad Alta. Hay que cerrar: Definir si la integración será iframe, script embebido, endpoint autenticado/token corto, servidor-servidor u otra opción. Validar cookies HttpOnly/SameSite y seguridad Responsables: Silvana y Julio."},
-{id:"D-002",g:"D",f:1,t:"Máximo de conversaciones activas para usuario autenticado",d:"Prioridad Alta. Hay que cerrar: Definir 1 conversación activa -recomendado para simplificar MVP- vs. hasta 3. Anónimo queda fijo en 1 Responsables: Silvana y Julio."},
-{id:"D-003",g:"D",f:1,t:"Cierre, reapertura e historial visible",d:"Prioridad Alta. Hay que cerrar: Definir inactividad para autocierre del bot, ventana de reapertura, creación de nueva conversación y cuántas conversaciones cerradas ve el usuario Responsables: Silvana y Julio."},
+{id:"D-001",g:"D",f:1,t:"Mecanismo de identidad VMC ↔ Subastín",d:"CERRADA 27/08/2026 (Aaron) — Script embebido con JWT de identidad: el SERVIDOR de VMC firma un JWT HS256 con un secreto compartido y lo deja en la página (window.subastinSettings.userJwt); Subastín lo verifica y emite su propio token de sesión. Es el esquema de identity verification de Intercom. Las cookies de VMC (subastop_jwt) son HttpOnly, así que ningún script puede leerlas: por eso no se leen. Se descartaron iframe y servidor-servidor. Contrato para VMC en widget/README.md."},
+{id:"D-002",g:"D",f:1,t:"Máximo de conversaciones activas para usuario autenticado",d:"CERRADA 27/08/2026 (Aaron) — 1 conversación activa, tanto autenticado como anónimo. Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: no deriva a asesor ni genera ticket, porque sin identidad no hay forma de continuar el caso días después. Se descartó el máximo de 3."},
+{id:"D-003",g:"D",f:1,t:"Cierre, reapertura e historial visible",d:"CERRADA 27/08/2026 (Aaron) — Una sola conversación permanente por usuario: no se cierra, no se reabre y no se crea otra. Lo que se cierra son los TICKETS, y el historial son esos tickets dentro del mismo hilo: al cerrarse aparece la nota de sistema 'Ticket cerrado', igual que las notas del messenger de Intercom. Sin autocierre por inactividad. El plazo de un ticket sin respuesta se decide en D-007."},
 {id:"D-005",g:"D",f:1,t:"Guardrails cuantitativos",d:"Prioridad Alta. Hay que cerrar: Definir máximo de mensajes por conversación -ej. 1,000-, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso Responsables: Silvana y Julio."},
-{id:"D-018",g:"D",f:1,t:"Sesión anónima activa",d:"Prioridad Media. Hay que cerrar: Definir duración técnica de la sesión anónima mientras el usuario permanece navegando y qué sucede al refrescar/cerrar navegador Responsables: Silvana y Julio."},
+{id:"D-018",g:"D",f:1,t:"Sesión anónima activa",d:"PROVISIONAL 27/08/2026 (derivada de RF-004, falta confirmar) — La sesión anónima es la pestaña del navegador: sobrevive a navegar entre páginas y a recargar (sessionStorage), y muere al cerrarla. El token dura 24 h, configurable en ANONYMOUS_SESSION_TTL_HOURS. Responsables: Silvana y Julio."},
 
 /* ---------- F2 · IA — Haiku clasifica, Gemini redacta ---------- */
 {id:"RF-015",g:"RF",f:2,t:"Haiku como capa de lectura y orquestación",d:"Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general"},
@@ -666,8 +666,8 @@ const NODES = [
 {id:"D-009",g:"D",f:5,t:"Tags de negocio",d:"Prioridad Media. Hay que cerrar: Definir si existirán en MVP, catálogo inicial y si los asigna IA, asesor o ambos con edición manual Responsables: Silvana y Julio."},
 {id:"D-010",g:"D",f:5,t:"Campos de usuario visibles y utilizables",d:"Prioridad Alta. Hay que cerrar: Definir exactamente qué campos llegan desde VMC/JWT/API y cuáles puede ver el asesor o usar el bot: nombre, email, empresa, DNI, vehículos, etc. Responsables: Silvana y Julio."},
 {id:"D-016",g:"D",f:5,t:"Canal Slack y formato de notificación",d:"Prioridad Baja. Hay que cerrar: Definir canal/es, contenido mínimo, enlace profundo a Subastín y posibles re-alertas por espera Responsables: Silvana y Julio."},
-{id:"D-017",g:"D",f:5,t:"Relación conversación ↔ ticket",d:"Prioridad Alta. Hay que cerrar: Confirmar si una conversación puede tener múltiples tickets y si cerrar un ticket cierra o no la conversación Responsables: Silvana y Julio."},
-{id:"D-019",g:"D",f:5,t:"Handoff anónimo sin correo",d:"Prioridad Media. Hay que cerrar: Definir qué hacer si el usuario no entrega correo: impedir ticket, permitir ticket sin contacto o mantener conversación automática Responsables: Silvana y Julio."},
+{id:"D-017",g:"D",f:5,t:"Relación conversación ↔ ticket",d:"CERRADA 27/08/2026 (derivada de D-002 y D-003) — Una conversación puede tener VARIOS tickets, con un máximo de 5 activos por usuario. Cerrar un ticket NO cierra la conversación: la conversación es permanente y el ticket cerrado queda como nota de sistema en el hilo."},
+{id:"D-019",g:"D",f:5,t:"Handoff anónimo sin correo",d:"CERRADA 27/08/2026 (derivada de D-002) — Se mantiene la conversación automática: el anónimo no deriva a asesor, así que nunca hay ticket sin correo. El bot lo invita a iniciar sesión en VMC. OJO: esto deja RF-003, AC-003 y RB-002 (correo obligatorio al derivar anónimo) sin efecto — hay que retirarlos del spec o confirmar la lectura alternativa."},
 
 /* ---------- F6 · Imágenes — adjuntar, ver e interpretar ---------- */
 {id:"RF-040",g:"RF",f:6,t:"Envío de imágenes en chat",d:"El usuario podrá adjuntar imágenes; el asesor podrá visualizarlas"},
@@ -1074,6 +1074,10 @@ const EMPAQUETADO = [
 {id:"D-003",kanban:"hecho",nota:"Cerrada 27/08 (Aaron): una sola conversacion permanente; se cierran tickets, visibles en el hilo como nota de sistema (como Intercom). Sin autocierre."},
 {id:"D-017",kanban:"hecho",nota:"Cerrada por D-002/D-003: N tickets por conversacion (max. 5 activos); cerrar un ticket no cierra la conversacion."},
 {id:"D-018",kanban:"curso",nota:"Provisional (derivada de RF-004): sesion anonima = pestaña del navegador, token de 24 h. Confirmar con Silvana + Julio."},
+{id:"RF-017",kanban:"curso",nota:"27/08: capa lista — backend/agent/rag.py busca en Pinecone e ingesta del Centro de Ayuda con scripts.helpcenter_fetch/upload (22 articulos, 133 chunks). Falta el pipeline que la usa (worker-ai, bloqueado por D-004/D-006/D-020)."},
+{id:"RF-018",kanban:"curso",nota:"27/08: implementado en dos sitios — rag.search descarta lo que no supera RAG_MIN_SCORE y devuelve vacio, y writer.write_answer sin fragmentos ni llama al modelo. OJO: el umbral esta SIN CALIBRAR; se mide con scripts.helpcenter_upload --verify."},
+{id:"RF-019",kanban:"curso",nota:"27/08: cada chunk guarda su source_url y el fragmento llega al redactor con la linea '(Fuente: ...)'. Falta comprobar que el modelo la cite en la respuesta final (golden set)."},
+{id:"RB-009",kanban:"curso",nota:"27/08: cubierto por RF-018 en la capa de recuperacion y de redaccion; queda por verificar de punta a punta cuando exista el pipeline."},
 {id:"D-019",kanban:"hecho",nota:"Cerrada por D-002: el anonimo no deriva a asesor, asi que no existe el ticket anonimo. RF-003/AC-003/RB-002 quedan sin efecto — revisar el spec."},
 ];
 const SELLO_COPIA = "2026-08-27";

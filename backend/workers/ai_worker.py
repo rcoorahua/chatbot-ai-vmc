@@ -41,6 +41,7 @@ def _process(body: str) -> None:
     #
     # Piezas ya disponibles para componer aqui (TD-008: Gemini atiende ambas etapas):
     #   agent.classifier.classify(mensaje, ultimo_mensaje_del_asistente) -> ClassificationResult
+    #   agent.rag.search(mensaje) -> list[Fragment]  ·  agent.rag.as_context(fragmentos)
     #   agent.writer.write_answer(mensaje, fragmentos, historial)        -> WriterResult
     #
     # Al conectarlas, dos contratos que no son opcionales:
