@@ -1,9 +1,9 @@
 import Link from "next/link";
 import Table from "@/concorde/components/Table";
-import Button from "@/concorde/components/Button";
 import AvatarZone from "@/concorde/components/AvatarZone";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
+import { ChevronRightIcon } from "@/components/icons";
 import { MOCK_CONVERSATIONS } from "@/lib/mock-data";
 import { formatWaitTime, MOCK_NOW_MS, STATUS_LABEL } from "@/lib/format";
 import type { ConversationStatus } from "@/lib/types";
@@ -12,6 +12,9 @@ import type { ConversationStatus } from "@/lib/types";
  * Dashboard operativo (RF-047/048). D-013 sigue abierta: este es el set mínimo que el spec
  * ya pide (volumen, pendientes, en atención, cerrados, espera) — nada de costos IA ni panel de
  * configuración (RF-049, fuera de alcance del MVP).
+ *
+ * Una sola columna, de arriba a abajo — se probó un layout de contenido+rail fijo y resultó
+ * confuso; el escaneo vertical simple es lo que de verdad es fácil de usar acá.
  */
 
 const STATUSES: ConversationStatus[] = ["PENDING_ADVISOR", "IN_ATTENTION", "BOT_ATTENDING", "CLOSED"];
@@ -21,6 +24,21 @@ const BAR_COLOR: Record<ConversationStatus, string> = {
   IN_ATTENTION: "#00AEB1",
   BOT_ATTENDING: "#8460E5",
   CLOSED: "#C7C9CC",
+};
+
+/** Mismo tono oscuro que StatusBadge usa como texto — el único seguro en contraste sobre blanco. */
+const DEEP_COLOR: Record<ConversationStatus, string> = {
+  PENDING_ADVISOR: "#9A4A0F",
+  IN_ATTENTION: "#00696B",
+  BOT_ATTENDING: "#3B1782",
+  CLOSED: "#5C6266",
+};
+
+const FILTER_PARAM: Record<ConversationStatus, string> = {
+  PENDING_ADVISOR: "pendientes",
+  IN_ATTENTION: "atencion",
+  BOT_ATTENDING: "todas",
+  CLOSED: "cerradas",
 };
 
 export default function DashboardPage() {
@@ -42,68 +60,91 @@ export default function DashboardPage() {
         );
 
   const recent = [...MOCK_CONVERSATIONS].sort((a, b) => (a.last_message_at < b.last_message_at ? 1 : -1));
+  const presentStatuses = STATUSES.filter((s) => countByStatus[s] > 0);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-bold text-[#191C1C]">Dashboard operativo</h1>
-        <p className="mt-1 text-sm text-[#9A4A0F]">
-          Borrador — el set exacto de métricas y ventanas de tiempo está pendiente de D-013.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-        <StatCard label="Conversaciones" value={String(total)} />
+    <div className="flex flex-col gap-3">
+      {/* Señales vitales: un solo instrumento con dos lecturas, no dos cards repetidas. */}
+      <div className="flex flex-col divide-y divide-black/5 rounded-2xl bg-white shadow-sm ring-1 ring-inset ring-[color:var(--vmc-color-orange-600)]/20 sm:flex-row sm:divide-x sm:divide-y-0">
         <StatCard
-          label="Pendientes"
+          bare
+          size="hero"
+          label="Pendientes de asesor"
           value={String(countByStatus.PENDING_ADVISOR)}
           dot={BAR_COLOR.PENDING_ADVISOR}
+          valueColor={countByStatus.PENDING_ADVISOR > 0 ? DEEP_COLOR.PENDING_ADVISOR : undefined}
+          pulse={countByStatus.PENDING_ADVISOR > 0}
+          hint={countByStatus.PENDING_ADVISOR > 0 ? "Nadie los ha tomado todavía" : "La cola está al día"}
+          href="/advisor/inbox?estado=pendientes"
         />
+        <StatCard
+          bare
+          size="hero"
+          label="Espera promedio"
+          value={avgWaitMinutes === null ? "—" : `${avgWaitMinutes} min`}
+          dot={BAR_COLOR.PENDING_ADVISOR}
+          valueColor={avgWaitMinutes !== null ? DEEP_COLOR.PENDING_ADVISOR : undefined}
+          hint="Solo casos pendientes de asesor"
+          href="/advisor/inbox?estado=pendientes"
+        />
+      </div>
+
+      {/* Contexto: volumen general, no exige acción inmediata. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Conversaciones" value={String(total)} href="/advisor/inbox" />
         <StatCard
           label="En atención"
           value={String(countByStatus.IN_ATTENTION)}
           dot={BAR_COLOR.IN_ATTENTION}
-        />
-        <StatCard label="Cerradas" value={String(countByStatus.CLOSED)} dot={BAR_COLOR.CLOSED} />
-        <StatCard
-          label="Casos derivados"
-          value={String(handoffs.length)}
-          hint="Proxy de tickets — Tickets aún no existe (D-008)"
+          valueColor={countByStatus.IN_ATTENTION > 0 ? DEEP_COLOR.IN_ATTENTION : undefined}
+          href="/advisor/inbox?estado=atencion"
         />
         <StatCard
-          label="Espera promedio"
-          value={avgWaitMinutes === null ? "—" : `${avgWaitMinutes} min`}
-          hint="Solo pendientes de asesor"
+          label="Cerradas"
+          value={String(countByStatus.CLOSED)}
+          dot={BAR_COLOR.CLOSED}
+          href="/advisor/inbox?estado=cerradas"
         />
+        <StatCard label="Casos derivados" value={String(handoffs.length)} hint="Proxy de tickets (D-008)" />
       </div>
 
-      <div className="rounded-2xl bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">
-          Distribución por estado
-        </h2>
-        <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-neutral-100">
-          {STATUSES.map((status) =>
-            countByStatus[status] > 0 ? (
-              <div
-                key={status}
-                style={{ width: `${(countByStatus[status] / total) * 100}%`, background: BAR_COLOR[status] }}
-                title={`${STATUS_LABEL[status]}: ${countByStatus[status]}`}
-              />
-            ) : null,
-          )}
+      <div className="rounded-2xl bg-white p-3.5 shadow-sm">
+        <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Distribución por estado</h2>
+        {/* Medidor segmentado, no una barra continua — cada estado es su propio bloque redondeado
+            con espacio real entre ellos. Grid + fr reparte el ancho ya restando los gaps. */}
+        <div
+          className="mt-2.5 grid h-2.5 gap-1"
+          style={{ gridTemplateColumns: presentStatuses.map((s) => `${countByStatus[s]}fr`).join(" ") }}
+        >
+          {presentStatuses.map((status) => (
+            <Link
+              key={status}
+              href={`/advisor/inbox?estado=${FILTER_PARAM[status]}`}
+              style={{ background: BAR_COLOR[status] }}
+              title={`${STATUS_LABEL[status]}: ${countByStatus[status]}`}
+              className="rounded-full transition hover:brightness-110"
+            />
+          ))}
         </div>
-        <div className="mt-3 flex flex-wrap gap-4 text-xs text-neutral-500">
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
           {STATUSES.map((status) => (
-            <span key={status} className="flex items-center gap-1.5">
+            <Link
+              key={status}
+              href={`/advisor/inbox?estado=${FILTER_PARAM[status]}`}
+              className="flex items-center gap-1.5 rounded-full text-neutral-600 transition hover:text-[#191C1C]"
+            >
               <span className="h-2 w-2 rounded-full" style={{ background: BAR_COLOR[status] }} />
-              {STATUS_LABEL[status]} ({countByStatus[status]})
-            </span>
+              {STATUS_LABEL[status]}
+              <span className="font-bold" style={{ color: DEEP_COLOR[status] }}>
+                {countByStatus[status]}
+              </span>
+            </Link>
           ))}
         </div>
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-neutral-500">
+        <h2 className="mb-2.5 text-xs font-bold uppercase tracking-wide text-neutral-500">
           Conversaciones recientes
         </h2>
         <Table
@@ -113,10 +154,15 @@ export default function DashboardPage() {
             { header: "Último mensaje", className: "hidden md:table-cell" },
             { header: "Estado", align: "center" },
             { header: "Espera", align: "center" },
-            { header: "", align: "right" },
+            { header: "", align: "right", width: 40 },
           ]}
           rows={recent.map((conv) => [
             <div key="user" className="flex items-center gap-3">
+              <span
+                className="h-2 w-2 flex-shrink-0 rounded-full"
+                style={{ background: BAR_COLOR[conv.status] }}
+                aria-hidden
+              />
               <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
               <div>
                 <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
@@ -129,8 +175,12 @@ export default function DashboardPage() {
             <StatusBadge key="status" status={conv.status} />,
             <span key="wait">{formatWaitTime(conv.last_message_at, MOCK_NOW_MS)}</span>,
             <div key="open" className="flex justify-end">
-              <Link href={`/advisor/conversations/${conv.conversation_id}`}>
-                <Button variant="outline">Ver</Button>
+              <Link
+                href={`/advisor/inbox/${conv.conversation_id}`}
+                aria-label={`Abrir conversación con ${conv.user_name ?? "usuario anónimo"}`}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 transition hover:bg-[color:var(--vmc-color-vault-500)]/10 hover:text-[color:var(--vmc-color-vault-700)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)]"
+              >
+                <ChevronRightIcon />
               </Link>
             </div>,
           ])}
