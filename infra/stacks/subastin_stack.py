@@ -213,6 +213,11 @@ class SubastinStack(Stack):
         # PythonFunction bundlea backend/requirements.txt dentro de Docker (TD-005 si crece >250MB).
         common_env = {
             "STAGE": cfg.stage,
+            # Observabilidad por stage (RNF-006): el formato es JSON dentro de Lambda por
+            # defecto (core/observability.py lo detecta), asi que aqui solo va nivel y politica.
+            "LOG_LEVEL": cfg.log_level,
+            "LOG_CONTENT": "1" if cfg.log_content else "0",
+            "DEV_OBSERVABILITY": "1" if cfg.dev_observability else "0",
             "TABLE_CONVERSATIONS": conversations.table_name,
             "TABLE_MESSAGES": messages.table_name,
             "TABLE_TICKETS": tickets.table_name,

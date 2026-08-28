@@ -129,6 +129,10 @@ python -m scripts.run_ai_worker                      # en otra terminal: el bot 
 - **Widget** (en otra terminal): `cd widget; python -m http.server 8080` →
   <http://localhost:8080/test.html>, que simula la página de VMC en modo anónimo o autenticado.
   Detalle en [widget/README.md](widget/README.md).
+- **Consola de observabilidad** en la misma `test.html`: por cada mensaje muestra qué capa
+  decidió (trivial, guardrail, regla o modelo), el modelo, los tokens, el costo y la latencia,
+  leyendo `GET /dev/conversations/{id}/ai-usage` (solo dev/stage; 404 en prod). Los logs de la
+  terminal siguen la misma política: `LOG_LEVEL`/`LOG_CONTENT` vacías = detallado en dev.
 - App del asesor: `cd frontend; npm run dev` → <http://localhost:3000> (hoy con datos de prueba).
   La API `/advisor/*` ya funciona en local: pon `ADVISOR_DEV_AUTH=1` y `ADVISOR_DEV_JWT_SECRET=algo`
   en `.env`, emite un token con `python -m scripts.advisor_token --sub sub-ana-001 --name "Ana"`

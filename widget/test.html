@@ -8,7 +8,7 @@
   body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f2e; background: #f6f6f9; }
   header { background: #3b2a8c; color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
   header strong { font-size: 18px; }
-  main { max-width: 760px; margin: 28px auto; padding: 0 20px; }
+  main { max-width: 980px; margin: 28px auto; padding: 0 20px; }
   .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 10px rgba(24,16,64,.08); margin-bottom: 18px; }
   h2 { margin: 0 0 12px; font-size: 17px; }
   label { display: block; font-size: 13px; color: #555; margin: 10px 0 4px; }
@@ -16,10 +16,34 @@
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .mode { display: flex; gap: 18px; margin: 6px 0 4px; }
   button.primary { background: #ff6a4d; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 16px; }
+  button.ghost { background: #fff; color: #3b2a8c; border: 1px solid #c9c3e8; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
   .warn { background: #fff1f0; color: #8a1c12; border: 1px solid #f5c2bd; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
   pre { background: #1f1f2e; color: #e8e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; }
   .muted { color: #6a6a7e; font-size: 13px; }
   #status { font-size: 13px; margin-top: 8px; }
+
+  /* Consola de observabilidad */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .chip { background: #f0eefa; color: #3b2a8c; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .chip.on { background: #e6f7ee; color: #146c3a; }
+  .chip.off { background: #fff1f0; color: #8a1c12; }
+  .chip.money { background: #fff7e6; color: #7a4b00; }
+  .table-wrap { overflow-x: auto; margin-top: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ececf3; white-space: nowrap; vertical-align: top; }
+  th { background: #f6f6f9; color: #55556a; font-weight: 600; position: sticky; top: 0; }
+  td.num { text-align: right; }
+  tr.paid td { background: #fffdf5; }
+  tr.handoff td { background: #fff4f2; }
+  tr.guardrail td { background: #f3f0ff; }
+  .tag { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 11px; background: #ececf3; color: #333; }
+  .tag.model { background: #ffe9b3; color: #5c3a00; }
+  .tag.free { background: #dff5e7; color: #14532d; }
+  .tag.guard { background: #e2dcff; color: #2f1f7a; }
+  .tag.handoff { background: #ffd6cf; color: #7a1c12; }
+  .console-bar { display: flex; align-items: center; gap: 14px; margin-top: 10px; font-size: 13px; }
+  .console-bar label { display: inline; margin: 0; }
+  .legend { font-size: 12px; color: #6a6a7e; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -34,8 +58,9 @@
     <p class="muted">
       Simula una página de <code>vmcsubastas.com</code> con el widget embebido. Necesita la API local
       corriendo (<code>uvicorn backend.api.main:app --reload --port 8000</code>) con
-      <code>VMC_IDENTITY_SECRET</code> en <code>.env</code>. Elige un modo, aplica y usa el botón morado
-      abajo a la derecha.
+      <code>VMC_IDENTITY_SECRET</code> en <code>.env</code>, y el worker de IA en otra terminal
+      (<code>python -m scripts.run_ai_worker</code>) para que el bot responda. Elige un modo, aplica y
+      usa el botón morado abajo a la derecha.
     </p>
     <p class="warn">
       <strong>Solo para pruebas locales.</strong> Aquí el JWT de identidad se firma en el navegador con el
@@ -76,6 +101,37 @@
     <div id="status" class="muted"></div>
   </form>
 
+  <div class="card" id="console-card">
+    <h2>Consola de observabilidad <span class="muted">· GET /dev/conversations/{id}/ai-usage</span></h2>
+    <p class="muted">
+      Qué decidió Subastín con cada mensaje: la capa que resolvió (trivial, guardrail, regla o modelo),
+      qué modelo llamó, cuántos tokens gastó, cuánto costó y cuánto tardó. Lee la tabla
+      <code>AIUsage</code> de la conversación de esta pestaña; nunca muestra el texto de los mensajes.
+    </p>
+    <div id="conv-state" class="chips"></div>
+    <div id="totals" class="chips"></div>
+    <div class="table-wrap">
+      <table id="exec-table">
+        <thead>
+          <tr>
+            <th>Hora</th><th>Msg</th><th>Etapa</th><th>Intent</th><th>Decidió</th><th>Modelo</th>
+            <th class="num">Tokens in/out</th><th class="num">Costo US$</th><th class="num">ms</th><th>RAG</th><th>Handoff</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="legend">
+      Fondo amarillo = pagó tokens · morado = guardrail (sin IA) · rojo = derivó a asesor.
+      "Decidió" es la capa o la regla exacta (p. ej. <code>legal_threat</code>, <code>guardrail:prompt_injection:…</code>).
+    </div>
+    <div class="console-bar">
+      <label><input type="checkbox" id="console-auto" checked> Auto-actualizar cada 3 s</label>
+      <button type="button" class="ghost" id="console-refresh">Actualizar ahora</button>
+      <span id="console-status" class="muted"></span>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Lo que la página deja para el widget</h2>
     <p class="muted">Así queda <code>window.subastinSettings</code> con la configuración actual:</p>
@@ -104,11 +160,14 @@
     if (params.has(field)) form.elements[field].value = params.get(field);
   }
 
+  function apiUrl() {
+    return form.elements.api.value.trim().replace(/\/+$/, "");
+  }
+
   async function boot() {
     const status = document.getElementById("status");
     const dump = document.getElementById("settings-dump");
-    const apiUrl = form.elements.api.value.trim();
-    const settings = { apiUrl };
+    const settings = { apiUrl: apiUrl() };
 
     if (mode === "auth") {
       if (!window.crypto || !crypto.subtle) {
@@ -135,6 +194,151 @@
     script.async = true;
     document.body.appendChild(script);
   }
+
+  // ───────────────────────── Consola de observabilidad (solo dev/stage) ─────────────────────────
+  // Lee la sesion que el widget guarda en sessionStorage (mismo origen) y consulta /dev/.../ai-usage.
+  // Todo se construye con nodos DOM y textContent: nada de HTML crudo (los datos vienen del backend,
+  // pero la regla del repo es no renderizar HTML jamas).
+  const SESSION_KEY = "subastin.session.v1";
+  const consoleStatus = document.getElementById("console-status");
+  const autoCheckbox = document.getElementById("console-auto");
+  let lastPayload = null;
+
+  function readSession() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function node(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+
+  function replaceChildren(parent, children) {
+    while (parent.firstChild) parent.removeChild(parent.firstChild);
+    for (const child of children) parent.appendChild(child);
+  }
+
+  function chip(text, kind) {
+    return node("span", "chip" + (kind ? " " + kind : ""), text);
+  }
+
+  function shortId(value) {
+    return value ? String(value).slice(0, 8) : "";
+  }
+
+  function hora(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? String(iso).slice(11, 19) : d.toLocaleTimeString("es-PE", { hour12: false });
+  }
+
+  function money(value) {
+    return Number(value || 0).toFixed(6);
+  }
+
+  function decidedTag(execution) {
+    const source = execution.source || "";
+    if (source.startsWith("guardrail:")) return node("span", "tag guard", source);
+    if (execution.handoff_triggered || source.startsWith("handoff:")) return node("span", "tag handoff", source);
+    if (execution.provider && execution.provider !== "NONE") return node("span", "tag model", source);
+    return node("span", "tag free", source);
+  }
+
+  function renderConsole(data) {
+    const conv = data.conversation;
+    replaceChildren(document.getElementById("conv-state"), [
+      chip("conv " + shortId(conv.conversation_id)),
+      chip(conv.status, conv.status === "BOT_ATTENDING" ? "on" : "off"),
+      chip(conv.bot_enabled ? "bot ON" : "bot OFF", conv.bot_enabled ? "on" : "off"),
+      chip("mensajes " + conv.message_count),
+      ...(conv.handoff_reason ? [chip("handoff: " + conv.handoff_reason, "off")] : []),
+      ...(conv.wait_message_sent ? [chip("aviso de espera enviado")] : []),
+    ]);
+
+    const t = data.totals;
+    const freePct = t.executions ? Math.round((100 * t.free_executions) / t.executions) : 0;
+    replaceChildren(document.getElementById("totals"), [
+      chip("ejecuciones " + t.executions),
+      chip("llamadas IA " + t.ai_calls, "money"),
+      chip("sin IA " + t.free_executions + " (" + freePct + "%)", "on"),
+      chip("tokens in " + t.input_tokens + " / out " + t.output_tokens + (t.cached_tokens ? " / cache " + t.cached_tokens : "")),
+      chip("costo US$ " + money(t.estimated_cost_usd), "money"),
+      chip("latencia IA " + t.total_latency_ms + " ms"),
+    ]);
+
+    const rows = data.executions.map((e) => {
+      const tr = document.createElement("tr");
+      const source = e.source || "";
+      if (source.startsWith("guardrail:")) tr.className = "guardrail";
+      else if (e.handoff_triggered) tr.className = "handoff";
+      else if (e.provider && e.provider !== "NONE") tr.className = "paid";
+
+      const decided = node("td");
+      decided.appendChild(decidedTag(e));
+      const tokens = e.provider && e.provider !== "NONE" ? e.input_tokens + " / " + e.output_tokens : "";
+      const cells = [
+        node("td", null, hora(e.created_at)),
+        node("td", null, shortId(e.message_id)),
+        node("td", null, e.execution_type === "CLASSIFICATION" ? "clasifica" : "responde"),
+        node("td", null, e.intent || ""),
+        decided,
+        node("td", null, e.model || "sin modelo"),
+        node("td", "num", tokens),
+        node("td", "num", e.provider && e.provider !== "NONE" ? money(e.estimated_cost_usd) : "0"),
+        node("td", "num", e.latency_ms || ""),
+        node("td", null, e.rag_used ? (e.rag_results_count ?? "sí") + " frag." : ""),
+        node("td", null, e.handoff_triggered ? "sí" : ""),
+      ];
+      for (const cell of cells) tr.appendChild(cell);
+      return tr;
+    });
+    replaceChildren(document.querySelector("#exec-table tbody"), rows);
+  }
+
+  async function refreshConsole() {
+    const session = readSession();
+    if (!session || !session.conversationId || !session.token) {
+      consoleStatus.textContent = "Sin sesión todavía: abre el widget (botón morado) y envía un mensaje.";
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${apiUrl()}/dev/conversations/${encodeURIComponent(session.conversationId)}/ai-usage?limit=100`,
+        { headers: { Accept: "application/json", Authorization: `Bearer ${session.token}` } }
+      );
+      if (response.status === 404) {
+        consoleStatus.textContent = "La API respondió 404: DEV_OBSERVABILITY apagado o versión sin /dev.";
+        return;
+      }
+      if (response.status === 401) {
+        consoleStatus.textContent = "Sesión expirada o inválida: recarga la página.";
+        return;
+      }
+      if (!response.ok) {
+        consoleStatus.textContent = `Error ${response.status} al consultar la consola.`;
+        return;
+      }
+      const data = await response.json();
+      const changed = JSON.stringify(data) !== lastPayload;
+      lastPayload = JSON.stringify(data);
+      if (changed) renderConsole(data);
+      consoleStatus.textContent = `Actualizado ${new Date().toLocaleTimeString("es-PE", { hour12: false })} · ${data.executions.length} ejecuciones`;
+    } catch (error) {
+      consoleStatus.textContent = "No se pudo conectar con la API (" + (error && error.message ? error.message : "sin detalle") + ").";
+    }
+  }
+
+  document.getElementById("console-refresh").addEventListener("click", refreshConsole);
+  setInterval(() => {
+    if (autoCheckbox.checked && document.visibilityState === "visible") refreshConsole();
+  }, 3000);
+  refreshConsole();
 
   boot();
 </script>

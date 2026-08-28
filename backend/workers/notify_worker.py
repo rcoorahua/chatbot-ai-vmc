@@ -6,6 +6,10 @@ el caso (RF-028). Aislada del pipeline IA: si Slack cae, solo esta cola se atras
 BLOQUEADO POR: D-016 (canal, contenido minimo, enlace profundo, re-alertas).
 """
 
+from backend.core.observability import configure_logging
+
+configure_logging()
+
 
 def handler(event: dict, context) -> dict:
     failures: list[dict[str, str]] = []

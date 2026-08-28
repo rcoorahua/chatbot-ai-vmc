@@ -19,6 +19,9 @@ del widget). `.env` a partir de `.env.example`: el chat necesita `VMC_IDENTITY_S
 `AI_JOBS_QUEUE_URL=http://localhost:4566/000000000000/subastin-dev-ai-jobs` — sin ella el
 mensaje se guarda como `QUEUE_FAILED` y nunca llega al worker. Una variable vacía en `.env` cae
 al default del campo (`core/config.py`), así que copiar la plantilla tal cual no rompe nada.
+Para que el bot responda de verdad: `GEMINI_API_KEY` (y `PINECONE_API_KEY`, sin ella toda FAQ
+deriva). Observabilidad: `LOG_LEVEL`/`LOG_CONTENT`/`LOG_FORMAT`/`DEV_OBSERVABILITY` vacías =
+decidir por `STAGE` (dev y stage detallados, prod sobrio; ver `core/observability.py`).
 
 ```powershell
 docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
@@ -261,6 +264,15 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `/advisor`: el stack ya trae el User Pool y el authorizer, y se despliega junto con el código.
 - Los workers devuelven siempre `{"batchItemFailures": [...]}` (contrato de SQS partial batch
   response, T3) — lo verifica `tests/test_smoke.py`.
+- **Observabilidad (RNF-006)**: `core/observability.py` configura el logging al importar cada
+  entrada (`api/main.py`, workers). Política: dev/stage `DEBUG` con vista previa del contenido;
+  prod `INFO` **sin contenido** (`content_preview` devuelve solo el largo). JSON dentro de Lambda,
+  texto en local. Convención: el mensaje del log es el nombre del evento (`ai.execution`,
+  `ai.handoff`, `ai.debounce.skip`…) y los datos van en `extra`; `usage.record_execution` emite
+  un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. La ruta
+  `GET /dev/conversations/{id}/ai-usage` (`api/routers/dev.py`) alimenta la consola de
+  `widget/test.html`; con `DEV_OBSERVABILITY=0` (prod) responde 404. Nunca loguear contenido
+  fuera de `content_preview`.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
   nunca como variables de entorno del stack. Hoy `core/config.py` y `core/llm.py` los leen del
   entorno (dev); al desplegar hay que resolverlos desde el secreto antes de construir `Settings`.

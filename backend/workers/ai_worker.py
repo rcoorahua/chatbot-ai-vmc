@@ -45,7 +45,9 @@ from backend.core import llm
 from backend.core.clock import minutes_ago_iso
 from backend.core.config import get_settings
 from backend.core.jobs import AIJob
+from backend.core.observability import configure_logging, content_preview
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 _GOOGLE = "GOOGLE"
@@ -79,7 +81,20 @@ def _process(body: str) -> None:
     if message is None or message.sender_type != SenderType.USER:
         return
     if message.status == MessageStatus.PROCESSED:
+        logger.debug(
+            "ai.job.duplicate",
+            extra={"conversation_id": job.conversation_id, "message_id": job.message_id},
+        )
         return  # SQS entrega al menos una vez: la re-entrega de un job atendido no repite nada
+    logger.debug(
+        "ai.job.received",
+        extra={
+            "conversation_id": job.conversation_id,
+            "message_id": job.message_id,
+            "status": str(conversation.status),
+            "bot_enabled": conversation.bot_enabled,
+        },
+    )
 
     try:
         if not conversation.bot_enabled:
@@ -97,8 +112,17 @@ def _process(body: str) -> None:
 def _while_bot_off(conversation: Conversation) -> None:
     """El mensaje ya esta guardado (RF-026); la IA no responde (RF-025). Si el caso espera
     asesor, el aviso de espera sale maximo una vez por periodo (RF-027 / AC-004)."""
+    sent = False
     if conversation.status == ConversationStatus.PENDING_ADVISOR:
-        service.send_wait_message_once(conversation, prompts.HANDOFF_WAIT_RESPONSE)
+        sent = service.send_wait_message_once(conversation, prompts.HANDOFF_WAIT_RESPONSE)
+    logger.info(
+        "ai.bot_off",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "status": str(conversation.status),
+            "wait_message_sent_now": sent,
+        },
+    )
 
 
 def _attend(conversation: Conversation, message: Message) -> None:
@@ -107,13 +131,28 @@ def _attend(conversation: Conversation, message: Message) -> None:
     block_keys = [m.message_key for m in block]
 
     if message.message_key not in block_keys:
-        return  # el hilo ya siguio (hay respuesta posterior): job viejo, nada que responder
+        # El hilo ya siguio (hay respuesta posterior): job viejo, nada que responder.
+        _log_skip(conversation, message, "already_answered")
+        return
     if message.message_key != block_keys[-1]:
-        return  # D-020: hay un mensaje mas nuevo; su job respondera el bloque completo
+        # D-020: hay un mensaje mas nuevo; su job respondera el bloque completo.
+        _log_skip(conversation, message, "newer_message")
+        return
 
     text = "\n".join(m.content for m in block if m.content).strip()
     if not text:
         return
+    logger.debug(
+        "ai.attend",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "user_type": str(conversation.user_type),
+            "block_messages": len(block),
+            "window_messages": len(window),
+            "text": content_preview(text),
+        },
+    )
 
     # ── D-006: triviales, sin llamada IA ──
     kind = trivial.match_trivial(text)
@@ -182,6 +221,16 @@ def _answer_faq(
     """FAQ con RAG (RF-017): recuperar, redactar con evidencia, y sin evidencia derivar en vez
     de inventar (RF-018 / AC-002)."""
     fragments = rag.search(text)
+    logger.debug(
+        "ai.rag",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "results": len(fragments),
+            "best_score": round(max((f.score for f in fragments), default=0.0), 3),
+            "topics": [f.topic for f in fragments][:5],
+        },
+    )
     result = writer.write_answer(
         text,
         [fragment.as_context() for fragment in fragments],
@@ -230,7 +279,18 @@ def _handoff(
     record: bool = True,
 ) -> None:
     """Handoff minimo (RF-022): sin ticket (F5) y sin Slack (D-016) todavia."""
-    if service.start_handoff(conversation, reason=reason):
+    started = service.start_handoff(conversation, reason=reason)
+    logger.info(
+        "ai.handoff",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "reason": reason,
+            "intent": str(intent),
+            "started": started,
+        },
+    )
+    if started:
         service.post_bot_message(conversation.conversation_id, response)
     else:
         # Otro job gano la carrera y la conversacion ya espera asesor: aplica RF-027.
@@ -256,6 +316,17 @@ def _reply_fixed(
 
 
 # ──────────────────────────────────── Apoyos del flujo ────────────────────────────────────
+
+
+def _log_skip(conversation: Conversation, message: Message, reason: str) -> None:
+    logger.debug(
+        "ai.debounce.skip",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "reason": reason,
+        },
+    )
 
 
 def _trailing_user_block(window: list[Message]) -> list[Message]:
