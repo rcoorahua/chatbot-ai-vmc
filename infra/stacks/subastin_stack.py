@@ -220,6 +220,21 @@ class SubastinStack(Stack):
             "TABLE_AI_USAGE": ai_usage.table_name,
             "IMAGES_BUCKET": images_bucket.bucket_name,
             "CORS_ALLOWED_ORIGINS": cfg.cors_allowed_origins,
+            # Guardrails y ventana de contexto (RNF-007: configuracion, no constantes). Van
+            # explicitos aunque coincidan con los defaults de core/config.py para poder ajustarlos
+            # en la consola de Lambda durante un incidente, sin desplegar codigo.
+            # Valores de D-004 y D-005, cerradas el 2026-08-28.
+            "AI_DEBOUNCE_SECONDS": "6",
+            "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
+            "AI_ANSWER_MAX_TOKENS": "600",
+            "AI_CONTEXT_MESSAGES": "20",
+            "AI_CONTEXT_WINDOW_MINUTES": "60",
+            "MAX_MESSAGE_CHARS": "2000",
+            "MAX_MESSAGES_PER_MINUTE": "10",
+            "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
+            "MAX_IMAGES_PER_MESSAGE": "3",
+            "MAX_IMAGES_PER_HOUR": "20",
+            "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
             # Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC): leer de Secrets Manager por
             # ARN en runtime, NUNCA como variables de entorno en claro (PLAN.md §3). Incluye los
             # dos de identidad del chat (D-001): VMC_IDENTITY_SECRET (compartido con VMC) y

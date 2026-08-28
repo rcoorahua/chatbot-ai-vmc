@@ -26,6 +26,8 @@ cd widget; python -m http.server 8080                # widget: http://localhost:
 
 python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/helpcenter/*.md + chunks.json
 python -m scripts.helpcenter_upload --verify         # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE)
+python -m scripts.advisor_token --sub sub-ana-001 --name "Ana Torres"   # Bearer para /advisor en local (ADVISOR_DEV_AUTH=1)
+python -m scripts.run_ai_worker                      # el bot responde en local (worker contra la cola de localstack; pide GEMINI_API_KEY)
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
@@ -117,9 +119,34 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   crea otra ni se "reabre". Lo que se cierra son los **tickets**, que quedan en el hilo como notas
   de sistema (mensaje SYSTEM `TICKET_CLOSED` → "Ticket cerrado"), igual que las notas de Intercom.
   Cierra también **D-017**: N tickets por conversación (máx. 5 activos) y cerrar un ticket **no**
-  cierra la conversación. Sigue abierto el autocierre de un ticket sin respuesta (lo absorbe D-007).
+  cierra la conversación. El autocierre de un ticket sin respuesta quedó descartado por D-007
+  (cerrada 28/08: nada se cierra ni se re-enciende solo).
 - **D-018 (provisional, derivada de RF-004)**: sesión anónima = la pestaña del navegador
   (`sessionStorage`) con token de 24 h (`ANONYMOUS_SESSION_TTL_HOURS`). Confirmar con Silvana + Julio.
+- **D-021 Alta de asesores**: auto-alta `ACTIVE` al primer login con JWT válido de Cognito
+  (`advisors/service.py`). La invitación en Cognito es el único control; `DISABLED` se rechaza.
+- **D-022 Quién responde**: solo el asesor que **tomó** la conversación (asignada a él,
+  `IN_ATTENTION`); tomar no requiere ticket. Se puede tomar `PENDING_ADVISOR` y también
+  `BOT_ATTENDING` sin asesor (intervención proactiva); tomarla apaga el bot. Toma atómica (AC-005).
+- **D-023 Cierre mínimo sin ticket (provisional hasta F5)**: `POST /advisor/…/close` deja la nota
+  `TICKET_CLOSED`, devuelve la conversación a `BOT_ATTENDING` con bot encendido y sin asesor. No
+  crea fila en Tickets; cuando exista el módulo, el cierre pasa a cerrar el ticket.
+- **D-004 Contexto para IA (2026-08-28)**: **no hay resumen**. La memoria del bot son los últimos
+  **20 mensajes de la última hora** (`service.context_window`). Pasada la ventana, el mensaje se
+  atiende solo. `summary`/`summary_updated_at` quedan en el modelo sin uso.
+- **D-005 Guardrails (2026-08-28)**: 2000 caracteres por mensaje; **10 mensajes/min** por
+  conversación → 429 con `Retry-After` (el rechazado no se persiste); imágenes 5 MB, 3 por
+  mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo**: con D-003 la conversación es
+  permanente, así que un tope duro la dejaría inservible de por vida.
+- **D-007 IA OFF en handoff (2026-08-28)**: opción simple — la IA **no se re-enciende sola**.
+  Queda apagada hasta que un asesor tome y cierre el caso (D-023 la devuelve al bot). Sin
+  expiración ni temporizador; si nadie atiende, el caso espera en la bandeja.
+- **D-006 Triviales (2026-08-28)**: saludo/gracias sueltos y mensaje repetido (<10 min) reciben
+  respuesta fija sin llamada IA (`agent/trivial.py`); el aviso de repetición sale UNA vez y
+  luego silencio. El spam por volumen lo frena el rate limit de D-005.
+- **D-020 Debounce (2026-08-28)**: 6 s (`AI_DEBOUNCE_SECONDS`) como `DelaySeconds` de SQS; el
+  worker salta el job si hay un mensaje más nuevo y el job del último responde la ráfaga en UNA
+  llamada IA. Sin estado extra.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -127,10 +154,6 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-004 | Estrategia de resumen para IA | Media | pipeline IA |
-| D-005 | Guardrails cuantitativos (límites, rate limit) | Alta | Valores **provisionales** en `core/config.py` (`MAX_MESSAGE_CHARS=2000`); sin rate limit aún |
-| D-006 | Saludos/spam/repetición sin llamada IA | Media | F2 |
-| D-007 | Duración IA OFF durante handoff | Alta | F5 |
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
 | D-009 | Tags de negocio | Media | Tickets |
 | D-010 | Campos de usuario VMC visibles/usables | Alta | F5, vista asesor |
@@ -140,9 +163,8 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-014 | Retención (¿6 meses?) conversaciones/imágenes | Alta | TTL, S3 lifecycle |
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
-| D-020 | Debounce/agregación de mensajes antes de IA | Media | F2 |
 
-D-001, D-002, D-003, D-017 y D-019 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-017, D-019, D-020 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
@@ -171,10 +193,14 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   nuevo sigue este layout.
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
-  `agent/` tiene clasificador, redactor y **recuperación en Pinecone** listos, más la ingesta
-  del Centro de Ayuda (`scripts/helpcenter_*`), pero **sin pipeline** (`workers/ai_worker.py`
-  bloqueado por D-004/D-006/D-020): el bot aún no responde. El resto son stubs con docstrings; se
-  implementan fase por fase (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
+  **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
+  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
+  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
+  (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
+  mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
+  `scripts/run_ai_worker.py`). Falta calibrar `RAG_MIN_SCORE`, la notificación Slack (D-016) y
+  el ticket al derivar (D-008). El resto son stubs con docstrings; se implementan fase por fase
+  (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
 - Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
   entorno local de dev — mantener ambos en sync al agregar una dependencia.
@@ -189,7 +215,11 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
 - `backend/api/main.py`: `Mangum(app, lifespan="off")` — con lifespan activo la Lambda se cuelga
   en el startup. Los routers `advisor`/`dashboard` **no** validan JWT en código: lo hace el
-  authorizer de Cognito en el API Gateway (T1).
+  authorizer de Cognito en el API Gateway (T1); el backend solo lee los claims que Mangum deja en
+  `request.scope["aws.event"]` (`core/auth.py`). En local `ADVISOR_DEV_AUTH=1` instala
+  `api/dev_auth.py`, que verifica un JWT propio (`ADVISOR_DEV_JWT_SECRET`) y deja los claims en el
+  mismo sitio; se ignora dentro de una Lambda. Por eso no hay que "pushear el infra" para probar
+  `/advisor`: el stack ya trae el User Pool y el authorizer, y se despliega junto con el código.
 - Los workers devuelven siempre `{"batchItemFailures": [...]}` (contrato de SQS partial batch
   response, T3) — lo verifica `tests/test_smoke.py`.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,

@@ -164,3 +164,81 @@ WRITER_NO_EVIDENCE_FALLBACK = (
     "No tengo ese dato a la mano y prefiero no darte informacion incorrecta. "
     "Te puedo derivar con un asesor del equipo para que lo revise contigo."
 )
+
+
+# ────────────────── Respuestas fijas del pipeline (D-006, RF-016, RF-027) ──────────────────
+#
+# Texto determinista, no generado: cada una existe para NO pagar una llamada IA (D-006, skill
+# llm-cost-optimizer) o para no generar justo donde el modelo inventaria (RF-018/RF-027).
+# Viven aqui y no en el worker por la regla 1 de prompt-governance: todo texto que ve el
+# usuario sale de este registro versionado.
+
+# D-006: saludo suelto ("hola", "buenas"). Sin llamada IA.
+TRIVIAL_GREETING_RESPONSE = (
+    "¡Hola! Soy Subastin, el asistente de VMC Subastas. "
+    "Cuentame en que te ayudo: registro, ofertas, SubasCoins, billetera o cualquier duda."
+)
+
+# D-006: agradecimiento o cierre corto ("gracias", "ok"). Sin llamada IA.
+TRIVIAL_THANKS_RESPONSE = "¡Con gusto! Si te surge otra duda, aqui estoy."
+
+# D-006: mensaje identico repetido dentro de la ventana. Se envia UNA vez; a la siguiente
+# repeticion el bot guarda silencio (el mensaje queda almacenado igual).
+TRIVIAL_REPEAT_RESPONSE = (
+    "Te respondi esa consulta un poco mas arriba. "
+    "Si la respuesta no te sirvio, dime que parte y lo vemos, o te conecto con un asesor."
+)
+
+# RF-016: mensaje sin relacion con VMC (intent OTHER). Sin llamada IA: redirigir no requiere
+# generar, y generar seria invitar al modelo a conversar fuera del dominio.
+OTHER_INTENT_RESPONSE = (
+    "Eso se me escapa: solo puedo ayudarte con VMC Subastas — registro, ofertas, SubasCoins, "
+    "billetera, consignacion y el proceso de compra. ¿Te ayudo con algo de eso?"
+)
+
+# Intent CATALOG mientras el contrato con HERALD siga abierto (D-011): fijo con enlace, sin
+# llamada IA. Cuando D-011 cierre, este texto se reemplaza por la busqueda real (T-23).
+CATALOG_FALLBACK_RESPONSE = (
+    "Los vehiculos disponibles los puedes ver en el catalogo de VMC: "
+    "https://www.vmcsubastas.com — ahi filtras por marca, modelo y año. "
+    "Si quieres, tambien te puedo conectar con un asesor para que te ayude a buscar."
+)
+
+# Handoff iniciado (RF-022): confirmacion al usuario. El "cuanto tarda" no se promete: depende
+# de la bandeja, y prometer un plazo que no controlamos es inventar.
+HANDOFF_STARTED_RESPONSE = (
+    "Listo, te conecto con un asesor del equipo. "
+    "Deja aqui cualquier detalle extra mientras tanto: el asesor vera toda la conversacion."
+)
+
+# RF-027 / AC-004: el usuario insiste mientras espera. Se envia UNA sola vez por periodo de
+# espera (flag `wait_message_sent`); los mensajes siguientes se guardan sin respuesta.
+HANDOFF_WAIT_RESPONSE = (
+    "Tu solicitud ya esta con el equipo: un asesor te respondera por aqui mismo. "
+    "Todo lo que escribas mientras tanto le va a llegar."
+)
+
+# D-002: el anonimo no deriva (no hay forma de retomar su caso dias despues). Se le invita a
+# iniciar sesion; el texto lo usa tambien el camino FAQ-sin-evidencia del anonimo.
+ANONYMOUS_ADVISOR_RESPONSE = (
+    "Para conectarte con un asesor necesito que inicies sesion en VMC Subastas, "
+    "asi tu caso queda asociado a tu cuenta y podemos darte seguimiento. "
+    "Entra a tu cuenta y vuelve a escribirme por aqui."
+)
+
+
+# AC-002 (FAQ sin evidencia, usuario autenticado): se reconoce el limite y se deriva de una
+# vez, en el mismo mensaje. Dos mensajes seguidos del bot ("no se" y luego "te derivo") leen
+# como dos fallos; uno solo lee como una atencion.
+FAQ_NO_EVIDENCE_HANDOFF_RESPONSE = (
+    "No tengo ese dato a la mano y prefiero no darte informacion incorrecta, "
+    "asi que te conecto con un asesor del equipo. "
+    "Deja aqui cualquier detalle extra: el asesor vera toda la conversacion."
+)
+
+# FAQ sin evidencia para el ANONIMO: no puede derivar (D-002), se le invita a iniciar sesion.
+FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE = (
+    "No tengo ese dato a la mano y prefiero no darte informacion incorrecta. "
+    "Para conectarte con un asesor inicia sesion en VMC Subastas y vuelve a escribirme: "
+    "asi tu caso queda asociado a tu cuenta."
+)

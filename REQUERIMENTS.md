@@ -14,7 +14,7 @@ Este documento consolida:
 |---|---|
 | Última actualización | **27/08/2026** |
 | Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx`; **✅ Hecho** = implementado y validado con tests en el repo |
-| Decisiones abiertas | 14 (`D-004`…`D-016`, `D-020`) + `D-018` provisional — §6. Cerradas el 27/08/2026: D-001, D-002, D-003 y, por derivación, D-017 y D-019 |
+| Decisiones abiertas | 9 (`D-008`…`D-016`) + `D-018` provisional — §6. Cerradas: D-001, D-002, D-003, D-017, D-019, D-021, D-022, D-023 (27/08) y **D-004, D-005, D-006, D-007, D-020** (28/08) |
 | Pendiente sobre el modelo | 6 ajustes detectados en la revisión; 1–4 y 6 ya implementados, el 5 (GSI *sparse*) por decidir — ver §1.11 |
 
 | Fecha | Cambio |
@@ -22,6 +22,10 @@ Este documento consolida:
 | 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
 | 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
 | 27/08/2026 | F1 implementada: se cierran D-001/D-002/D-003 (y D-017/D-019 por derivación), se marcan ✅ los RF/RNF/RB cubiertos, se añade el ajuste 6 (`status` en Messages) y se señala que RF-003/AC-003/RB-002 quedan sin efecto por D-002 |
+| 28/08/2026 | Se cierra **D-007** (opción simple: la IA no se re-enciende sola; apagada hasta que un asesor tome y cierre — sin expiración). Ya estaba implementado así; se retira el 'provisional' de RF-025 y RB-007 |
+| 28/08/2026 | **Pipeline IA completo** (`workers/ai_worker.py` + `scripts/run_ai_worker.py`): se cierran **D-006** (triviales fijos sin llamada IA) y **D-020** (debounce de 6 s vía DelaySeconds de SQS); RF-015..022 y RF-025..027 pasan a ✅ (Gemini también orquesta por TD-008). AC-001/002/004 cubiertos por tests. Slack (RF-028) sigue esperando D-016 |
+| 28/08/2026 | Se cierran **D-004** (ventana de contexto: últimos 20 mensajes de la última hora, sin resumen) y **D-005** (guardrails: 2000 caracteres, 10 mensajes/min → 429, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo). RF-009, RF-013 y RF-014 pasan a ✅ |
+| 27/08/2026 | Mensajería del asesor (`/advisor/*`): RF-012, RF-029, RF-032, RF-034, RF-035, RF-038 ✅; RF-006, RF-031, RF-033 parciales. Se cierran D-021 (alta de asesores), D-022 (quién responde) y D-023 (cierre mínimo sin ticket, provisional). AC-005 y AC-006 cubiertos por tests |
 
 **Documentos relacionados:** [PLAN.md](PLAN.md) traduce esto a arquitectura ·
 [BACKLOG.md](BACKLOG.md) lo divide en tickets · [CLAUDE.md](CLAUDE.md) registra el estado vivo de
@@ -370,7 +374,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RF-003 | Correo obligatorio únicamente al derivar un usuario anónimo | Cuando un usuario anónimo requiera atención humana, el flujo deberá solicitar correo antes de completar el handoff/ticket | Acordado — **sin efecto por D-002** (el anónimo no deriva). Retirar o confirmar |
 | RF-004 | Sin historial persistente para usuarios anónimos | Un usuario no autenticado no recuperará conversaciones anteriores entre sesiones o dispositivos | ✅ Hecho 27/08/2026 |
 | RF-005 | Identificación funcional del usuario autenticado | Subastín deberá recibir una identidad validada desde VMC para asociar usuario, conversaciones y mostrar saludo por nombre. El mecanismo técnico se define en D-001 | ✅ Hecho 27/08/2026 (JWT firmado por VMC, D-001) |
-| RF-006 | Acceso de asesores mediante Cognito e invitación por correo | Las cuentas internas del MVP se crearán mediante invitación y autenticación de Cognito | Acordado |
+| RF-006 | Acceso de asesores mediante Cognito e invitación por correo | Las cuentas internas del MVP se crearán mediante invitación y autenticación de Cognito | Parcial ✅ 27/08/2026 — backend listo: claims del authorizer de Cognito (T1) + auto-alta al primer login (D-021). Falta desplegar el User Pool e invitar (equipo AWS) |
 | RF-007 | Un único rol funcional en el MVP: `ADVISOR` | No se implementarán roles de administrador/supervisor en el MVP. El modelo deberá poder evolucionar posteriormente | Acordado |
 
 ## 3.2 Conversaciones, mensajes y estados
@@ -378,51 +382,51 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
 | RF-008 | Persistencia de conversaciones y mensajes | Cada mensaje persistido deberá almacenar al menos `conversation_id`, sender, timestamp, tipo de contenido y estado técnico | ✅ Hecho 27/08/2026 (`conversations/repository.py`) |
-| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | Acordado (enum en el modelo; transiciones en F5) |
+| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | ✅ Hecho 27/08/2026 — enum `ConversationStatus` (`BOT_ATTENDING`, `PENDING_ADVISOR`, `IN_ATTENTION`, `CLOSED`, en inglés por T7) y las transiciones que hoy existen: tomar (`→ IN_ATTENTION`) y cerrar (`→ BOT_ATTENDING`). El handoff (`→ PENDING_ADVISOR`) llega con F5 |
 | RF-010 | Máximo configurable de conversaciones activas | Para anónimos el máximo es 1. Para autenticados el valor del MVP queda definido por D-002 | ✅ Hecho 27/08/2026 — D-002: 1 para todos |
 | RF-011 | La conversación cerrada no desaparece instantáneamente | El usuario verá que la conversación finalizó y tendrá una acción para iniciar una nueva. Reapertura/historial dependen de D-003 | Acordado — redefinido por D-003: lo que cierra es el **ticket**, la conversación permanece y muestra la nota "Ticket cerrado" (widget ✅; cierre en F5) |
-| RF-012 | Historial completo disponible para el asesor | El asesor deberá poder consultar la conversación actual y conversaciones anteriores disponibles del usuario autenticado | Acordado |
-| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | Acordado (`list_recent_messages` ✅; uso en F2) |
-| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | Parcial ✅ — largo de mensaje configurable; rate limit y el resto esperan D-005 |
+| RF-012 | Historial completo disponible para el asesor | El asesor deberá poder consultar la conversación actual y conversaciones anteriores disponibles del usuario autenticado | ✅ Hecho 27/08/2026 — `GET /advisor/conversations/{id}/messages` con paginación hacia atrás (`before`); una sola conversación por usuario (D-003), así que el historial es el hilo completo |
+| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | ✅ Hecho 28/08/2026 — D-004 cerrada: `conversations.service.context_window` devuelve los últimos 20 mensajes de la última hora. Sin resumen; el worker la usa desde el 28/08 |
+| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | ✅ Hecho 28/08/2026 — D-005 cerrada: largo de mensaje (2000), rate limit (10/min → 429) y límites de imagen configurados. La aplicación de los de imagen es F6 |
 
 ## 3.3 IA, clasificación y FAQ/RAG
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-015 | Haiku como capa de lectura y orquestación | Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general | Acordado |
-| RF-016 | Intenciones mínimas del MVP | El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor | Acordado |
-| RF-017 | FAQ basada en conocimiento VMC recuperado | Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado | Parcial ✅ — recuperación e ingesta hechas 27/08/2026 (22 artículos, 133 chunks); falta el pipeline que las usa |
-| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | Parcial ✅ — umbral en `rag.search` + redactor sin fragmentos; el umbral está **sin calibrar** |
-| RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | Parcial ✅ — cada fragmento llega al redactor con su `source_url`; falta verificar que el modelo la cite |
-| RF-020 | Gemini como capa de escritura | Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana | Acordado |
-| RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | Parcial |
+| RF-015 | Haiku como capa de lectura y orquestación | Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general | ✅ Hecho 28/08/2026 — reglas deterministas primero (`agent/heuristics.py`, costo cero) y el resto al tier FAST. **Por TD-008 hoy Gemini (`gemini-3.1-flash-lite`) también orquesta**; Haiku sigue siendo el plan B del tier si el golden set muestra que el routing no alcanza |
+| RF-016 | Intenciones mínimas del MVP | El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor | ✅ Hecho 28/08/2026 — `FAQ / CATALOG / ADVISOR / OTHER` (T7); datos personales → `ADVISOR` (regla + prompt). CATALOG responde fijo con enlace mientras D-011 siga abierta |
+| RF-017 | FAQ basada en conocimiento VMC recuperado | Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado | ✅ Hecho 28/08/2026 — pipeline conectado: el worker recupera de Pinecone y redacta solo con esa evidencia. Falta calibrar `RAG_MIN_SCORE` con scores reales |
+| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | ✅ Hecho 28/08/2026 — doble corte: `rag.search` descarta bajo el umbral y el redactor no genera sin evidencia; sin evidencia el autenticado deriva (AC-002) y el anónimo recibe invitación a iniciar sesión |
+| RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | ✅ Hecho 28/08/2026 — cada fragmento viaja con su `(Fuente: url)` y el prompt del redactor pide incluir el enlace cuando exista |
+| RF-020 | Gemini como capa de escritura | Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana | ✅ Hecho 28/08/2026 — `gemini-3.7-flash` redacta con el mensaje, la ventana de contexto (D-004) y los fragmentos; los casos que derivan directo no pasan por él |
+| RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | ✅ Hecho 28/08/2026 — D-006 cerrada: saludo/gracias sueltos y mensaje repetido se responden fijo sin llamada IA (el aviso de repetición sale una vez); la ráfaga la agrupa D-020 y el volumen lo frena el rate limit de D-005 |
 
 ## 3.4 Derivación humana y tickets
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-022 | Criterios de handoff | El sistema deberá poder derivar ante solicitud explícita de persona, baja confianza/no respuesta de RAG, repetición de consulta, frustración detectada u otras reglas definidas | Acordado |
+| RF-022 | Criterios de handoff | El sistema deberá poder derivar ante solicitud explícita de persona, baja confianza/no respuesta de RAG, repetición de consulta, frustración detectada u otras reglas definidas | ✅ Hecho 28/08/2026 (handoff mínimo) — deriva por solicitud explícita (regla o modelo), datos personales y FAQ sin evidencia; la frustración orienta al clasificador. Sin ticket ni Slack todavía (F5 / D-016) |
 | RF-023 | Ticket solo cuando existe atención humana | Una conversación automática puede existir sin ticket. El ticket representa trabajo que requiere intervención de asesor | Acordado |
 | RF-024 | Recolección previa de datos requeridos por tipo de ticket | Antes de crear ciertos tickets, el bot podrá solicitar datos mínimos del caso. La taxonomía y campos se definen en D-008 | Parcial |
-| RF-025 | Desactivación de IA al entrar en `PENDIENTE_ASESOR` | Una vez iniciado el handoff, la IA no seguirá respondiendo como bot mientras el caso espera asesor, salvo la política que se cierre en D-007 | Acordado |
-| RF-026 | Mensajes del usuario durante espera se conservan | Todos los mensajes posteriores al handoff deberán almacenarse aunque la IA se encuentre deshabilitada | Acordado |
-| RF-027 | Mensaje fijo de espera, máximo una vez por período pendiente | Si el usuario insiste mientras espera, podrá enviarse una única respuesta automática/determinística informando que la solicitud está en espera. No se repetirá ante cada mensaje | Acordado |
+| RF-025 | Desactivación de IA al entrar en `PENDIENTE_ASESOR` | Una vez iniciado el handoff, la IA no seguirá respondiendo como bot mientras el caso espera asesor, salvo la política que se cierre en D-007 | ✅ Hecho 28/08/2026 — al entrar en `PENDING_ADVISOR` el bot se apaga y no vuelve a responder; queda apagado hasta que un asesor tome y cierre el caso (D-007 cerrada: sin expiración) |
+| RF-026 | Mensajes del usuario durante espera se conservan | Todos los mensajes posteriores al handoff deberán almacenarse aunque la IA se encuentre deshabilitada | ✅ Hecho 28/08/2026 — con el bot apagado los mensajes se persisten igual (el guardado es de la API; el worker solo calla) |
+| RF-027 | Mensaje fijo de espera, máximo una vez por período pendiente | Si el usuario insiste mientras espera, podrá enviarse una única respuesta automática/determinística informando que la solicitud está en espera. No se repetirá ante cada mensaje | ✅ Hecho 28/08/2026 — aviso fijo una sola vez por período pendiente (`wait_message_sent`, ganado con update condicional); se reinicia al cerrar el caso (AC-004) |
 | RF-028 | Notificación inmediata por Slack | Al generarse un handoff/ticket deberá enviarse una notificación a Slack sin esperar a que un asesor tome la conversación | Acordado |
-| RF-029 | Bandeja general y toma de conversación | Los asesores podrán visualizar pendientes y ejecutar “Tomar conversación”. La asignación deberá ser atómica para evitar que dos asesores tomen el mismo caso | Acordado |
+| RF-029 | Bandeja general y toma de conversación | Los asesores podrán visualizar pendientes y ejecutar “Tomar conversación”. La asignación deberá ser atómica para evitar que dos asesores tomen el mismo caso | ✅ Hecho 27/08/2026 — bandeja `GET /advisor/conversations` y toma atómica `POST …/take` (AC-005, D-022) |
 | RF-030 | Sin límite funcional de conversaciones simultáneas por asesor en MVP | El sistema no impondrá un máximo de casos tomados por asesor durante el MVP | Acordado |
-| RF-031 | Cierre manual por asesor | El asesor podrá cerrar el caso. El sistema registrará el cierre y podrá emitir un mensaje automático de finalización | Acordado |
+| RF-031 | Cierre manual por asesor | El asesor podrá cerrar el caso. El sistema registrará el cierre y podrá emitir un mensaje automático de finalización | Parcial ✅ 27/08/2026 — cierre mínimo `POST …/close` sin ticket (D-023): nota `TICKET_CLOSED` en el hilo y la conversación vuelve al bot. El registro en Tickets llega con F5 (D-007/D-008) |
 
 ## 3.5 Aplicación del asesor
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-032 | Bandeja de conversaciones | La lista mostrará al menos nombre/identificador, último mensaje, tiempo de espera, canal web, estado, asesor asignado cuando aplique y contador de no leídos | Acordado |
-| RF-033 | Vista de conversación e información contextual | El asesor podrá ver el hilo y datos disponibles/autorizados del usuario, como nombre, correo, empresa, identificadores y relaciones relevantes. Los campos definitivos se validan en D-010 | Parcial |
-| RF-034 | Envío de mensajes de texto | El asesor podrá responder desde Subastín con texto, emojis, enlaces clickeables y copiar contenido | Acordado |
-| RF-035 | Contador de no leídos | Los mensajes entrantes aún no abiertos por el asesor incrementarán un contador; al abrir la conversación quedarán consumidos para efectos de contador | Acordado |
-| RF-036 | Timestamp por mensaje | Cada mensaje mostrado deberá incluir o permitir consultar su fecha/hora | Acordado — ✅ widget 27/08/2026; pendiente app asesor |
+| RF-032 | Bandeja de conversaciones | La lista mostrará al menos nombre/identificador, último mensaje, tiempo de espera, canal web, estado, asesor asignado cuando aplique y contador de no leídos | ✅ Hecho 27/08/2026 en la API (estado, asesor, último mensaje, `last_message_at` para el tiempo de espera, no leídos). Pendiente conectar la app del asesor (hoy usa datos de prueba) |
+| RF-033 | Vista de conversación e información contextual | El asesor podrá ver el hilo y datos disponibles/autorizados del usuario, como nombre, correo, empresa, identificadores y relaciones relevantes. Los campos definitivos se validan en D-010 | Parcial ✅ 27/08/2026 — hilo (últimos 20) + los campos que ya guarda la conversación (nombre, correo, empresa, id VMC). Los campos definitivos siguen en D-010 |
+| RF-034 | Envío de mensajes de texto | El asesor podrá responder desde Subastín con texto, emojis, enlaces clickeables y copiar contenido | ✅ Hecho 27/08/2026 en la API — `POST /advisor/conversations/{id}/messages`, solo tras tomar la conversación (D-022). Enlaces/emojis/copiar son del frontend |
+| RF-035 | Contador de no leídos | Los mensajes entrantes aún no abiertos por el asesor incrementarán un contador; al abrir la conversación quedarán consumidos para efectos de contador | ✅ Hecho 27/08/2026 — cuenta al persistir con el bot apagado; abrir el hilo lo consume |
+| RF-036 | Timestamp por mensaje | Cada mensaje mostrado deberá incluir o permitir consultar su fecha/hora | ✅ Hecho 27/08/2026 — widget y API del asesor (`created_at` en cada mensaje); pendiente render en la app |
 | RF-037 | Retry de mensaje fallido sin persistir el fallo | Si un envío falla antes de confirmarse en backend, se mantendrá localmente en el navegador con opción Reintentar. No se persistirá como mensaje enviado hasta recibir confirmación | Acordado — ✅ widget 27/08/2026; pendiente app asesor |
-| RF-038 | Idempotencia de reintentos | Los reintentos deberán usar un identificador de cliente/idempotencia para evitar mensajes duplicados | ✅ Hecho 27/08/2026 (backend + widget); pendiente app asesor |
+| RF-038 | Idempotencia de reintentos | Los reintentos deberán usar un identificador de cliente/idempotencia para evitar mensajes duplicados | ✅ Hecho 27/08/2026 — backend, widget y API del asesor (mismo marcador `CMID#`); pendiente reintento en la app |
 | RF-039 | Funciones expresamente no incluidas en MVP | No habrá edición/borrado de mensajes, búsqueda dentro de conversación, read receipts ni indicador de “escribiendo” | Acordado |
 
 ## 3.6 Imágenes
@@ -471,7 +475,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RNF-004 | Idempotencia | Sin duplicados por retries/webhooks | Aplicar claves idempotentes y deduplicación — ✅ 27/08/2026 (`client_message_id` + marcador transaccional) |
 | RNF-005 | Seguridad de identidad | No confiar en identidad enviada libremente por frontend | Mecanismo VMC ↔ Subastín cerrado en D-001 — ✅ 27/08/2026 |
 | RNF-006 | Observabilidad | Logs, métricas y alertas | CloudWatch u observabilidad equivalente |
-| RNF-007 | Protección de costo/abuso | Límites configurables | Valores concretos en D-005/D-006 |
+| RNF-007 | Protección de costo/abuso | Límites configurables | ✅ Valores de D-005 en `core/config.py` y en `common_env` del stack (ajustables sin desplegar código). D-006 (triviales) sigue abierta |
 | RNF-008 | Optimización multimodal | No enviar imágenes originales innecesariamente a IA | Resize/compresión según D-015 |
 
 ---
@@ -486,9 +490,9 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RB-004 | Un usuario autenticado se asocia a una identidad validada por VMC — ✅ 27/08/2026 |
 | RB-005 | Una conversación no implica necesariamente un ticket |
 | RB-006 | Un ticket representa una necesidad de atención humana |
-| RB-007 | Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007 |
+| RB-007 | Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007 — ✅ 28/08/2026 (D-007 cerrada: apagada hasta que el asesor cierra, sin expiración) |
 | RB-008 | Un handoff genera notificación de Slack inmediatamente |
-| RB-009 | La IA no debe responder FAQ fuera de las fuentes autorizadas cuando no existe evidencia suficiente |
+| RB-009 | La IA no debe responder FAQ fuera de las fuentes autorizadas cuando no existe evidencia suficiente — ✅ 28/08/2026 (RF-018 end-to-end en el worker) |
 | RB-010 | Subastín no modifica datos de VMC |
 | RB-011 | WhatsApp/Kapso no forma parte de la conversación web unificada del MVP |
 
@@ -501,17 +505,20 @@ Todas las decisiones de esta sección tienen como responsables de cierre a **Sil
 Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 
 **Cerradas el 27/08/2026 (Aaron):** D-001, D-002, D-003 y, por derivación, D-017 y D-019; D-018
-queda provisional. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D-022 y D-023.
+**Cerradas el 28/08/2026 (Aaron):** D-004 (sin resumen; ventana de 20 mensajes / 1 hora), D-005
+(guardrails cuantitativos), D-006 (triviales fijos sin llamada IA), D-007 (IA apagada hasta que
+el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de SQS). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
 
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|
 | D-001 | Mecanismo de identidad VMC ↔ Subastín | **✅ Cerrada 27/08/2026:** JWT HS256 firmado por el **servidor** de VMC con un secreto compartido, dejado en la página como `window.subastinSettings.userJwt`; Subastín lo verifica y emite su propio token de sesión (esquema de *identity verification* de Intercom). Las cookies de VMC son HttpOnly y no se leen. Identidad visible del asistente: "Subastín" | Alta |
 | D-002 | Máximo de conversaciones activas para usuario autenticado | **✅ Cerrada 27/08/2026:** 1 conversación activa (autenticado y anónimo). Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: sin handoff ni ticket, porque no hay forma de identificarlo para continuar un ticket días después | Alta |
 | D-003 | Cierre, reapertura e historial visible | **✅ Cerrada 27/08/2026:** una sola conversación permanente por usuario autenticado; el historial son los tickets, que al cerrarse dejan la nota "Ticket cerrado" en el hilo (como Intercom). Sin autocierre de conversación; el ticket sin respuesta se decide en D-007 | Alta |
-| D-004 | Resumen de conversación para IA | Definir si siempre se genera resumen, cada cuántos mensajes, tamaño objetivo, cuándo se actualiza y si se usa junto a los últimos 20 mensajes | Media |
-| D-005 | Guardrails cuantitativos | Definir máximo de mensajes por conversación —ej. 1,000—, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso | Alta |
-| D-006 | Optimización de saludos/spam/repetición | Definir qué mensajes no ameritan llamada completa a IA y cuándo se usa respuesta determinística, cooldown o bloqueo temporal | Media |
-| D-007 | Duración del modo IA OFF durante handoff | Definir si permanece apagada hasta que un asesor cierre el caso —recomendado— o si existe expiración/reevaluación, por ejemplo 8 h | Alta |
+| D-004 | Resumen de conversación para IA | **✅ Cerrada 28/08/2026 (Aaron):** **no hay resumen**. La memoria del bot son los últimos 20 mensajes **de la última hora** (`AI_CONTEXT_MESSAGES` / `AI_CONTEXT_WINDOW_MINUTES`). Pasada la ventana el mensaje se atiende solo. Motivo: con D-003 la conversación no se cierra nunca, así que sin corte temporal el contexto crecería indefinidamente; `summary`/`summary_updated_at` quedan en el modelo sin uso | Media |
+| D-005 | Guardrails cuantitativos | **✅ Cerrada 28/08/2026 (Aaron):** 2000 caracteres por mensaje; **10 mensajes/min** por conversación (= por usuario con D-002) → 429 con `Retry-After`; imágenes 5 MB, 3 por mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo** de mensajes por conversación: con D-003 es permanente y un tope duro la dejaría inservible de por vida; el crecimiento lo rige la retención (D-014). Todos los valores son variables de entorno (RNF-007) | Alta |
+| D-006 | Optimización de saludos/spam/repetición | **✅ Cerrada 28/08/2026 (Aaron):** saludo o agradecimiento SUELTOS → respuesta fija sin llamada IA; mensaje idéntico repetido en <10 min → aviso fijo UNA vez (a la siguiente, silencio; el mensaje se guarda igual). El volumen lo frena el rate limit de D-005. Código: `agent/trivial.py` + worker | Media |
+| D-007 | Duración del modo IA OFF durante handoff | **✅ Cerrada 28/08/2026 (Aaron), opción simple:** la IA **no se re-enciende sola**. Queda apagada hasta que un asesor tome el caso y lo cierre (el cierre — D-023 — la devuelve a `BOT_ATTENDING`). Sin expiración, sin reevaluación, sin temporizador: si nadie lo atiende, el caso sigue esperando en la bandeja | Alta |
 | D-008 | Taxonomía de problemas y tickets | Definir tipos de problema, qué genera ticket, campos obligatorios por tipo, área responsable, prioridad y criterios de cierre | Alta |
 | D-009 | Tags de negocio | Definir si existirán en MVP, catálogo inicial y si los asigna IA, asesor o ambos con edición manual | Media |
 | D-010 | Campos de usuario visibles y utilizables | Definir exactamente qué campos llegan desde VMC/JWT/API y cuáles puede ver el asesor o usar el bot: nombre, email, empresa, DNI, vehículos, etc. | Alta |
@@ -524,7 +531,10 @@ queda provisional. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en
 | D-017 | Relación conversación ↔ ticket | **✅ Cerrada 27/08/2026 (derivada de D-002/D-003):** varios tickets por conversación (máx. 5 activos); cerrar un ticket no cierra la conversación | Alta |
 | D-018 | Sesión anónima activa | **Provisional 27/08/2026:** la sesión anónima es la pestaña del navegador (sobrevive a navegar y recargar, muere al cerrarla) con token de 24 h configurable (`ANONYMOUS_SESSION_TTL_HOURS`). Falta confirmación de Silvana + Julio | Media |
 | D-019 | Handoff anónimo sin correo | **✅ Cerrada 27/08/2026 (derivada de D-002):** no existe handoff anónimo, luego tampoco ticket sin correo. Deja RF-003, AC-003 y RB-002 sin efecto | Media |
-| D-020 | Debounce/agregación de mensajes consecutivos | Definir ventana corta para agrupar mensajes antes de llamar a IA y evitar múltiples llamadas por frases partidas | Media |
+| D-020 | Debounce/agregación de mensajes consecutivos | **✅ Cerrada 28/08/2026 (Aaron):** 6 segundos (`AI_DEBOUNCE_SECONDS`), implementados como `DelaySeconds` de SQS — patrón estándar de message timers. Cada mensaje encola su job retrasado; si al procesarlo hay uno más nuevo, se salta, y el job del último responde la ráfaga completa en UNA llamada. Sin estado extra | Media |
+| D-021 | Alta de asesores | **✅ Cerrada 27/08/2026 (Aaron):** auto-alta `ACTIVE` al primer login con un JWT válido de Cognito. La invitación en Cognito (RF-006) es el único control de acceso; no hay lista paralela que administrar. `DISABLED` se rechaza aunque Cognito siga emitiendo tokens | Media |
+| D-022 | Quién puede responder y cuándo | **✅ Cerrada 27/08/2026 (Aaron):** solo el asesor que **tomó** la conversación (asignada a él, `IN_ATTENTION`) puede escribir; tomarla no requiere ticket. Se puede tomar una `PENDING_ADVISOR` y también una `BOT_ATTENDING` sin asesor (intervención proactiva); tomarla apaga el bot | Alta |
+| D-023 | Cierre de caso sin ticket | **✅ Cerrada 27/08/2026 (Aaron), provisional hasta F5:** el asesor asignado cierra con `POST …/close`: nota `TICKET_CLOSED` en el hilo, conversación de vuelta a `BOT_ATTENDING` con el bot encendido y sin asesor (D-003: la conversación no se cierra). No se crea fila en Tickets; cuando exista el módulo, el cierre pasará a cerrar el ticket | Alta |
 
 ---
 
@@ -553,11 +563,17 @@ queda provisional. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en
 **cuando** envía una pregunta FAQ con evidencia suficiente en la base de conocimiento,  
 **entonces** Subastín debe responder automáticamente sin solicitar correo y guardar únicamente la sesión activa.
 
+> ✅ **Cubierto 28/08/2026** por `tests/test_ai_worker.py`: la conversación anónima recibe la
+> respuesta FAQ sin pedir ningún dato.
+
 ## AC-002 · FAQ sin evidencia
 
 **Dado** un mensaje cuya recuperación no contiene evidencia suficiente,  
 **cuando** Haiku/RAG determina que no puede responderse de forma segura,  
 **entonces** el sistema debe iniciar handoff en lugar de inventar una respuesta.
+
+> ✅ **Cubierto 28/08/2026** por `tests/test_ai_worker.py` (sin evidencia: autenticado deriva con
+> nota `HANDOFF_REQUESTED`; anónimo recibe invitación a iniciar sesión — D-002).
 
 ## AC-003 · Handoff anónimo
 
@@ -574,17 +590,27 @@ queda provisional. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en
 **cuando** el usuario envía mensajes adicionales,  
 **entonces** los mensajes se almacenan, la IA no responde como bot y el mensaje fijo de espera no se repite indefinidamente.
 
+> ✅ **Cubierto 28/08/2026** por `tests/test_ai_worker.py`: tres mensajes en espera → los tres
+> guardados, un solo aviso fijo, cero llamadas IA.
+
 ## AC-005 · Toma concurrente
 
 **Dado** un ticket pendiente visible para dos asesores,  
 **cuando** ambos intentan tomarlo casi simultáneamente,  
 **entonces** solo uno obtiene la asignación y el otro recibe un estado actualizado sin duplicar atención.
 
+> ✅ **Cubierto 27/08/2026** por `tests/test_advisor_api.py` (la toma es un `UpdateItem` condicional;
+> el segundo asesor recibe 409 con la conversación ya asignada). La toma es a nivel conversación
+> (D-022): no requiere ticket.
+
 ## AC-006 · Retry
 
 **Dado** un mensaje del asesor cuyo envío falla antes de confirmación,  
 **cuando** el frontend muestra Reintentar y el asesor reintenta,  
 **entonces** el backend debe persistir una sola copia del mensaje confirmado.
+
+> ✅ **Cubierto 27/08/2026** por `tests/test_advisor_api.py`: el reintento con el mismo
+> `client_message_id` devuelve el mensaje original con `duplicate: true`.
 
 ## AC-007 · Imagen
 

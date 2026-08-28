@@ -8,14 +8,18 @@ Patrones que viven aqui y en ningun otro sitio:
   `CMID#<client_message_id>` + el mensaje + los contadores de la conversacion (ajuste 4 de
   REQUERIMENTS.md §1.11, validado en tests/test_dynamo_queries.py);
 - listado cronologico por SK y ventana reciente para la IA (RF-013), ambos dejando fuera los
-  marcadores de idempotencia.
+  marcadores de idempotencia;
+- bandeja por estado (GSI2) y casos de un asesor (GSI3) para RF-032;
+- toma ATOMICA de la conversacion (AC-005) y cierre del caso: un UpdateItem condicional sobre
+  la conversacion + la nota SYSTEM en el hilo, en una sola transaccion;
+- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`.
 
 Los tests de este modulo corren contra dynamodb-local real: un GSI mal usado falla aqui.
 """
 
 from typing import Any
 
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from backend.conversations.models import (
@@ -71,6 +75,29 @@ def find_conversations_by_user(user_id: str, *, limit: int = 10) -> list[Convers
     return [Conversation.from_item(item) for item in response["Items"]]
 
 
+def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> list[Conversation]:
+    """Bandeja por estado (GSI2, RF-032). Los pendientes salen del mas antiguo al mas nuevo:
+    el que mas espera va primero."""
+    response = _conversations().query(
+        IndexName="gsi2_inbox",
+        KeyConditionExpression=Key("status").eq(status),
+        ScanIndexForward=oldest_first,
+        Limit=limit,
+    )
+    return [Conversation.from_item(item) for item in response["Items"]]
+
+
+def find_conversations_by_advisor(advisor_id: str, *, limit: int = 50) -> list[Conversation]:
+    """Casos asignados a un asesor, mas reciente primero (GSI3)."""
+    response = _conversations().query(
+        IndexName="gsi3_advisor",
+        KeyConditionExpression=Key("assigned_advisor_id").eq(advisor_id),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [Conversation.from_item(item) for item in response["Items"]]
+
+
 def create_conversation(conversation: Conversation) -> bool:
     """Crea la conversacion si no existe. Devuelve False si otro request gano la carrera."""
     try:
@@ -102,6 +129,131 @@ def update_user_profile(
         UpdateExpression="SET " + ", ".join(sets),
         ExpressionAttributeValues=values,
     )
+
+
+def reset_unread(conversation_id: str) -> None:
+    """RF-035: al abrir el hilo, los no leidos quedan consumidos. Condicional para no escribir
+    en cada sondeo cuando ya esta en cero."""
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression="SET unread_count = :zero",
+            ConditionExpression="unread_count > :zero",
+            ExpressionAttributeValues={":zero": 0},
+        )
+    except ClientError as exc:
+        if not _is_condition_failure(exc):
+            raise
+
+
+def assign_advisor(
+    conversation_id: str, advisor_id: str, *, allowed_statuses: list[str], note: Message
+) -> bool:
+    """Toma atomica (AC-005): asigna, pasa a IN_ATTENTION y apaga el bot solo si nadie la tiene
+    y el estado lo permite; en la misma transaccion deja la nota SYSTEM en el hilo. Devuelve
+    False si otro asesor gano la carrera (o el estado ya no es tomable)."""
+    placeholders = {f":s{i}": value for i, value in enumerate(allowed_statuses)}
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", assigned_advisor_id = :advisor, #status = :in_attention, bot_enabled = :off"
+    )
+    update["ConditionExpression"] = (
+        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+        f"AND #status IN ({', '.join(placeholders)})"
+    )
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {":advisor": advisor_id, ":in_attention": "IN_ATTENTION", ":off": False, **placeholders}
+    )
+    return _transact_note(update, note)
+
+
+def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> bool:
+    """Cierre del caso (RF-031 con D-003): la conversacion NO se cierra, vuelve a BOT_ATTENDING
+    con el bot encendido y sin asesor; la nota SYSTEM `TICKET_CLOSED` queda en el hilo. Solo el
+    asesor asignado puede cerrar. Devuelve False si no es el asignado."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :bot_attending, bot_enabled = :on, wait_message_sent = :off, "
+        "unread_count = :zero REMOVE assigned_advisor_id, handoff_requested_at, handoff_reason"
+    )
+    update["ConditionExpression"] = "assigned_advisor_id = :advisor"
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {
+            ":advisor": advisor_id,
+            ":bot_attending": "BOT_ATTENDING",
+            ":on": True,
+            ":off": False,
+            ":zero": 0,
+        }
+    )
+    return _transact_note(update, note)
+
+
+def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
+    """Handoff minimo (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el bot
+    atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma transaccion.
+    `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
+    Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
+        "handoff_requested_at = :requested_at, handoff_reason = :reason"
+    )
+    update["ConditionExpression"] = (
+        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+        "AND #status = :bot_attending"
+    )
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {
+            ":pending": "PENDING_ADVISOR",
+            ":bot_attending": "BOT_ATTENDING",
+            ":off": False,
+            ":requested_at": at,
+            ":reason": reason,
+        }
+    )
+    return _transact_note(update, note)
+
+
+def mark_wait_message_sent(conversation_id: str) -> bool:
+    """Gana el derecho a enviar el mensaje de espera (RF-027): pasa el flag de False a True de
+    forma condicional, asi dos workers concurrentes no lo envian dos veces. Devuelve True solo
+    para el que gano."""
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression="SET wait_message_sent = :sent",
+            ConditionExpression="wait_message_sent = :not_sent",
+            ExpressionAttributeValues={":sent": True, ":not_sent": False},
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return False
+        raise
+    return True
+
+
+def _transact_note(conversation_update: dict[str, Any], note: Message) -> bool:
+    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada."""
+    client = dynamodb_resource().meta.client
+    try:
+        client.transact_write_items(
+            TransactItems=[
+                {"Update": conversation_update},
+                {"Put": {"TableName": get_settings().table_messages, "Item": note.to_item()}},
+            ]
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
+        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
+        if reasons and reasons[0] == "ConditionalCheckFailed":
+            return False
+        raise
+    return True
 
 
 # ─────────────────────────────────────── Messages ───────────────────────────────────────
@@ -146,8 +298,14 @@ def list_messages(
     return messages[:limit]
 
 
-def list_recent_messages(conversation_id: str, *, limit: int = 20) -> list[Message]:
+def list_recent_messages(
+    conversation_id: str, *, limit: int = 20, since: str | None = None
+) -> list[Message]:
     """Los ultimos N mensajes en orden natural: la ventana de contexto de la IA (RF-013).
+
+    `since` es el corte temporal de D-004 (un ISO-8601 del mismo formato que la SK): solo entra
+    lo posterior. Va en la KeyConditionExpression, no como filtro, porque un filtro se aplica
+    DESPUES del Limit y devolveria menos mensajes de los pedidos.
 
     Se consulta descendente con Limit y se reinvierte. La cota superior de la SK importa aun
     mas aqui: en orden descendente los marcadores `CMID#` saldrian PRIMERO y se comerian el
@@ -155,11 +313,49 @@ def list_recent_messages(conversation_id: str, *, limit: int = 20) -> list[Messa
     """
     response = _messages().query(
         KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        & Key("message_key").between(_FIRST_MESSAGE_KEY, _LAST_MESSAGE_KEY),
+        & Key("message_key").between(since or _FIRST_MESSAGE_KEY, _LAST_MESSAGE_KEY),
         ScanIndexForward=False,
         Limit=limit,
     )
     return [Message.from_item(item) for item in reversed(response["Items"])]
+
+
+def count_messages_since(conversation_id: str, *, since: str, sender_type: str) -> int:
+    """Cuantos mensajes de ese remitente hay desde `since`. Base del rate limit (RF-014).
+
+    Cuenta contra la tabla en vez de un contador aparte: la ventana es de un minuto, asi que
+    son pocos items, y no hay que mantener ningun estado que pueda quedar desincronizado.
+    `Select=COUNT` no trae los items, solo el numero.
+    """
+    response = _messages().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+        & Key("message_key").between(since, _LAST_MESSAGE_KEY),
+        FilterExpression=Attr("sender_type").eq(sender_type),
+        Select="COUNT",
+    )
+    return int(response.get("Count", 0))
+
+
+def list_messages_before(
+    conversation_id: str, *, before: str | None = None, limit: int = 20
+) -> tuple[list[Message], bool]:
+    """Historial hacia atras para el asesor (RF-012): los `limit` mensajes anteriores a `before`
+    (exclusivo; None = los ultimos), en orden cronologico, y si queda mas historia detras.
+
+    Se pide uno de mas para saber si hay otra pagina sin una segunda consulta.
+    """
+    upper = before or _LAST_MESSAGE_KEY
+    response = _messages().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+        & Key("message_key").between(_FIRST_MESSAGE_KEY, upper),
+        ScanIndexForward=False,
+        Limit=limit + 2 if before else limit + 1,
+    )
+    items = [Message.from_item(item) for item in response["Items"]]
+    if before and items and items[0].message_key == before:
+        items = items[1:]
+    has_more = len(items) > limit
+    return list(reversed(items[:limit])), has_more
 
 
 def _touch_conversation_update(
@@ -187,14 +383,15 @@ def _touch_conversation_update(
     }
 
 
-def save_user_message(message: Message, *, count_as_unread: bool) -> tuple[Message, bool]:
-    """Guarda un mensaje entrante una sola vez por `client_message_id` (RF-038 / RNF-004).
+def save_message_idempotent(message: Message, *, count_as_unread: bool) -> tuple[Message, bool]:
+    """Guarda un mensaje una sola vez por `client_message_id` (RF-038 / RNF-004).
 
+    Sirve para el usuario (widget) y para el asesor (app): los dos reintentan con el mismo id.
     Devuelve `(mensaje, True)` si se guardo ahora y `(mensaje original, False)` si era un
     reintento: el frontend recibe en ambos casos el mismo mensaje confirmado (AC-006).
     """
     if not message.client_message_id:
-        raise ValueError("un mensaje de usuario necesita client_message_id")
+        raise ValueError("un mensaje idempotente necesita client_message_id")
     table_messages = get_settings().table_messages
     marker = {
         "conversation_id": message.conversation_id,

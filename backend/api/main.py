@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
+from backend.api import dev_auth
 from backend.api.routers import advisor, chat, dashboard
 from backend.core.config import get_settings
 
@@ -22,6 +23,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# Solo en dev local: imita al JWT authorizer de Cognito para /advisor y /dashboard. En AWS el
+# authorizer esta en el API Gateway (T1) y este middleware no se instala (dev_auth.py).
+if dev_auth.should_install():
+    app.add_middleware(dev_auth.DevCognitoAuthorizer)
 
 app.include_router(chat.router)
 app.include_router(advisor.router)

@@ -188,6 +188,13 @@ def post_message(
         raise HTTPException(422, str(exc)) from exc
     except service.EmptyMessage as exc:
         raise HTTPException(422, str(exc)) from exc
+    except service.RateLimited as exc:
+        # `Retry-After` es el estandar de 429: el widget lo respeta en vez de reintentar solo.
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Estas enviando mensajes muy rapido. Espera un momento.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
     except repository.ConversationNotFound as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada") from exc
 

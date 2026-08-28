@@ -15,13 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.agent import prompts
+from backend.core.config import get_settings
 from backend.core.llm import LLMError, ModelTier, empty_usage, get_client
 
-# Tope de salida: caben tres o cuatro frases con margen. La brevedad la pide el prompt, pero el
-# tope es lo que la garantiza cuando el modelo se extiende de todas formas.
-# TODO D-005: mover a Settings cuando se cierren los guardrails cuantitativos; RNF-007 exige
-# que los limites sean configurables y no literales en el codigo.
-_MAX_OUTPUT_TOKENS = 600
+# El tope de salida vive en Settings (`ai_answer_max_tokens`, D-005 cerrada 2026-08-28): la
+# brevedad la pide el prompt, el tope la garantiza cuando el modelo se extiende igual.
 
 # Presupuesto de evidencia. Recortar por caracteres es una aproximacion deliberada: contar
 # tokens exige una llamada extra al proveedor y el objetivo aqui es acotar el costo, no medirlo
@@ -75,7 +73,7 @@ def write_answer(
             tier=ModelTier.ANSWER,
             system=system_prompt,
             messages=_build_messages(message, history),
-            max_output_tokens=_MAX_OUTPUT_TOKENS,
+            max_output_tokens=get_settings().ai_answer_max_tokens,
             # Temperatura baja, no cero: la respuesta debe ceñirse a la evidencia, pero cero
             # produce un fraseo rigido y repetitivo entre conversaciones parecidas.
             temperature=0.2,

@@ -73,6 +73,9 @@
     send: "Enviar",
     sending: "Enviando…",
     failed: "No se pudo enviar",
+    // 429 (RF-014 / D-005): reintentar de inmediato solo empeora la rafaga, asi que el texto
+    // pide esperar y el boton de reintentar sigue disponible por si el usuario insiste.
+    tooFast: "Vas muy rapido. Espera un momento",
     retry: "Reintentar",
     anonHint:
       "Estás chateando como visitante: tu historial no se conserva al cerrar la pestaña. " +
@@ -443,6 +446,7 @@
     } catch (error) {
       draft.status = "failed";
       draft.error = error.message;
+      draft.rateLimited = error.status === 429;
     }
     render();
   }
@@ -651,7 +655,8 @@
 
   function renderBubble(message) {
     const mine = message.sender_type === "USER";
-    const who = message.sender_type === "ADVISOR" ? "Asesor" : TEXT.agent;
+    // El asesor firma con su nombre (metadata.sender_name, lo pone la API); si no viene, "Asesor".
+    const who = message.sender_type === "ADVISOR" ? ((message.metadata && message.metadata.sender_name) || "Asesor") : TEXT.agent;
     return h(
       "div",
       { class: "row" + (mine ? " row-mine" : "") },
@@ -684,7 +689,7 @@
           ? h(
               "small",
               { class: "meta meta-error" },
-              TEXT.failed + " · ",
+              (draft.rateLimited ? TEXT.tooFast : TEXT.failed) + " · ",
               h("button", { class: "link", type: "button", text: TEXT.retry, onclick: () => deliver(clientMessageId) })
             )
           : h("small", { class: "meta", text: TEXT.sending })

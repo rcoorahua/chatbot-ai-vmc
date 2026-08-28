@@ -30,9 +30,9 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
 
-El siguiente bloque grande (T-24, el worker de IA que hace que el bot responda) espera solo a
-D-004, D-006 y D-020 — tres optimizaciones que pueden cerrarse con "no por ahora". Con eso, las
-piezas que ya existen (clasificador, RAG, redactor) quedan conectadas y el bot contesta.
+**T-24 hecho (2026-08-28):** D-004/D-006/D-020 se cerraron y el worker quedó conectado — el bot
+responde (en local: `python -m scripts.run_ai_worker`). También T-04 (AIUsage). El siguiente
+bloque grande es F5: tickets (D-008) y Slack (D-016).
 
 ---
 
@@ -108,20 +108,20 @@ cronológicamente y ventana de contexto.
 son T-05 y están bloqueadas.
 Criterio: los tests de consulta existentes pasan usando el repositorio en vez de boto3 directo.
 
-**T-03 · Módulo de asesores**
-Requerimientos: RF-006, RF-007 · Depende de: T-01 · Bloqueado por: nada
+**T-03 · Módulo de asesores** — ✅ hecho 2026-08-27 (`tests/test_advisor_api.py`)
+Requerimientos: RF-006, RF-007 · Depende de: T-01 · Cerrada: D-021 (auto-alta al primer login)
 Archivos: `backend/advisors/*`
 Qué incluye: modelo `Advisor`, repositorio (por id y por `cognito_sub`), y el servicio que
 resuelve un asesor a partir de los claims del JWT y registra `last_login_at`. Rol único `ADVISOR`,
 pero el campo `role` queda listo para crecer.
 Criterio: dado un `cognito_sub`, el servicio devuelve el asesor y marca su último acceso.
 
-**T-05 · Lógica de conversación** — ✅ hecho 2026-08-27 en lo que D-002/D-003/D-018 cubren
+**T-05 · Lógica de conversación** — ✅ hecho 2026-08-28
 Requerimientos: RF-009, RF-010, RF-011, RF-013, RF-014 · Depende de: T-02
 Cerradas: D-002 (1 conversación), D-003 (conversación permanente; se cierran tickets), D-018
-(provisional). **Pendiente:** rate limit y límites por conversación (D-005 — hoy solo el largo del
-mensaje, configurable) y el resumen (D-004). Las transiciones de estado y el cierre de tickets
-llegan con T-07 (F5).
+(provisional), **D-004** (ventana de 20 mensajes de la última hora, sin resumen) y **D-005**
+(2000 caracteres, 10 mensajes/min → 429, límites de imagen). **Pendiente:** aplicar los límites
+de imagen (F6) y el handoff, que trae la transición a `PENDING_ADVISOR` (T-07).
 Archivos: `backend/conversations/service.py`
 
 **T-06 · Endpoints del chat público** — ✅ hecho 2026-08-27 (`tests/test_chat_api.py`)
@@ -134,7 +134,7 @@ frontend (RNF-005).
 
 **T-07 · Handoff y tickets**
 Requerimientos: RF-022..RF-028 · Depende de: T-05, T-03, T-30
-**Bloqueado por: D-007** (cuánto dura la IA apagada), **D-008** (taxonomía), D-016 (formato
+**Bloqueado por: D-008** (taxonomía), D-016 (formato
 Slack). D-017 y D-019 quedaron cerradas el 2026-08-27: N tickets por conversación (máx. 5
 activos), cerrar un ticket no cierra la conversación, y el anónimo no deriva (RF-003 sin efecto).
 Archivos: `backend/tickets/*`
@@ -142,9 +142,12 @@ Qué incluye: criterios de derivación, creación del ticket (tope de 5 activos 
 de la IA, mensaje de espera una sola vez, encolado de la notificación a Slack, y al cerrar: mensaje
 SYSTEM `TICKET_CLOSED` en el hilo + conversación de vuelta a `BOT_ATTENDING`.
 
-**T-08 · Endpoints del asesor**
+**T-08 · Endpoints del asesor** — ✅ mensajería hecha 2026-08-27 (`tests/test_advisor_api.py`)
 Requerimientos: RF-029..RF-039 · Depende de: T-07, T-03
-**Bloqueado por: D-010** (qué campos del usuario ve el asesor) · Requiere Cognito desplegado
+Hecho: bandeja, tomar (atómico), hilo con paginación, responder (idempotente), no leídos y cierre
+mínimo sin ticket (D-021/D-022/D-023). **Pendiente:** el cierre real del ticket (T-07) y los
+campos definitivos del usuario (**D-010** — hoy se exponen los que guarda la conversación).
+En local el authorizer se imita con `ADVISOR_DEV_AUTH=1`; en AWS requiere Cognito desplegado
 Archivos: `backend/api/routers/advisor.py`
 Qué incluye: bandeja, tomar conversación (actualización condicional, ya probada), ver hilo con
 contexto, responder, contador de no leídos, cerrar caso.
@@ -159,16 +162,15 @@ y la consulta de costo mensual por el índice de facturación. El costo se calcu
 vigente al momento, como configuración con fecha — nunca un número suelto en el código.
 Criterio: registrar dos ejecuciones y obtener el total del mes agregado por proveedor.
 
-**T-20 · Clasificador de intención**
+**T-20 · Clasificador de intención** — ✅ hecho 2026-08-27 (vía TD-008: Gemini también orquesta)
 Requerimientos: RF-015, RF-016 · Depende de: T-04
-**Bloqueado por: TD-002** (¿Haiku por la API de Anthropic o por Bedrock?) — se desbloquea
-preguntándole al equipo de AWS si Bedrock está habilitado
+TD-002 dejó de bloquear: el tier FAST lo atiende Gemini; Haiku es el plan B
 Archivos: `backend/agent/classifier.py`, `backend/agent/prompts.py`
 Criterio: un conjunto de mensajes de ejemplo se clasifica correctamente en FAQ, CATALOG, ADVISOR
 u OTHER, con al menos 95% de acierto (skill `prompt-governance`).
 
-**T-21 · Redactor de respuestas**
-Requerimientos: RF-019, RF-020 · Depende de: T-20 · Bloqueado por: D-004 (resumen)
+**T-21 · Redactor de respuestas** — ✅ hecho 2026-08-27 (D-004 cerrada el 28: ventana sin resumen)
+Requerimientos: RF-019, RF-020 · Depende de: T-20
 Archivos: `backend/agent/writer.py`
 
 **T-22 · Recuperación en Pinecone** — ✅ hecho 2026-08-27 (`tests/test_agent_rag.py`,
@@ -178,20 +180,21 @@ Archivos: `backend/agent/rag.py`, `scripts/helpcenter_fetch.py`, `scripts/helpce
 Ingesta definida (lo que estaba bloqueado): **entra el Centro de Ayuda público de VMC**, un chunk
 por pregunta; lo cura quien revisa los `.md` que deja el fetch; se re-indexa corriendo los dos
 scripts (`--replace` para un refresco completo). Detalle en `data/helpcenter/README.md`.
-**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) y
-conectar la recuperación al pipeline (T-24).
+**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`).
+La conexión al pipeline (T-24) quedó hecha el 2026-08-28.
 
 **T-23 · Catálogo HERALD**
 Requerimientos: RF-044..RF-046 · Depende de: T-20
 **Bloqueado por: D-011** (contrato de la API), D-012 (qué hacer si se cae)
 Archivos: `backend/catalog/*`
 
-**T-24 · Worker de IA**
-Requerimientos: orquesta RF-015..RF-021 · Depende de: T-20, T-21, T-22
-Bloqueado por: D-006 (mensajes triviales), D-020 (agrupar mensajes seguidos)
-Archivos: `backend/workers/ai_worker.py`
-Qué incluye: la composición del pipeline completo. Es el único sitio donde el dominio y las
-integraciones se juntan (regla de capas en `backend/__init__.py`).
+**T-24 · Worker de IA** — ✅ hecho 2026-08-28 (`tests/test_ai_worker.py`, 19 casos)
+Requerimientos: orquesta RF-015..RF-022, RF-025..RF-027 · Cerradas: D-006, D-020
+Archivos: `backend/workers/ai_worker.py`, `backend/agent/trivial.py`, `backend/agent/usage.py`,
+`scripts/run_ai_worker.py`
+Qué incluyó: debounce por DelaySeconds + triviales + clasificación + RAG/redacción + handoff
+mínimo + AIUsage. Es el único sitio donde dominio e integraciones se juntan (regla de capas).
+**Pendiente:** Slack al derivar (T-30/D-016) y ticket al derivar (T-07/D-008).
 
 ### Integraciones
 
@@ -264,11 +267,11 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 | Decisión | Desbloquea | Impacto |
 |---|---|---|
 | ~~**D-001** identidad VMC~~ | cerrada 2026-08-27 | — |
-| **D-005** guardrails | T-40 y el rate limit de T-05 (el largo de mensaje ya es configurable) | Alto |
+| ~~**D-005** guardrails~~ | **Cerrada 28/08/2026** — límites en `core/config.py` y en el stack | — |
 | ~~**D-002** máx. conversaciones~~ | cerrada 2026-08-27 | — |
 | ~~**D-018** sesión anónima~~ | provisional desde 2026-08-27 (confirmar) | — |
 | **D-008** taxonomía de tickets | T-07 | Alto — y es la que más trabajo de negocio requiere |
-| **D-007** duración de IA apagada | T-07 | Alto — respuesta corta |
+| ~~**D-007** duración de IA apagada~~ | **Cerrada 28/08/2026** — apagada hasta cierre del asesor, sin expiración | — |
 | ~~**D-017** conversación↔ticket~~ | cerrada 2026-08-27 | — |
 | **D-010** campos del usuario | T-08, T-11 | Alto — necesita coordinación con Bruce |
 | **D-011** contrato HERALD | T-23 | Alto — depende del equipo de HERALD |
@@ -280,7 +283,7 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 | **D-014** retención | Nada de código; define el TTL antes de crear tablas en AWS | Alto para infraestructura |
 
 **Lo que más trabajo libera ahora:** D-004 + D-006 + D-020 (con "no por ahora" basta) destraban
-T-24 y con él la primera respuesta real del bot; D-007 + D-008 destraban T-07 (handoff).
+T-24 y con él la primera respuesta real del bot; D-008 destraba T-07 (handoff; D-007 ya cerró).
 
 ---
 

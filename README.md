@@ -112,6 +112,7 @@ python -m scripts.local_setup     # crea las 5 tablas, las 2 colas y el bucket
 python -m scripts.seed_data       # carga los datos de prueba
 
 uvicorn backend.api.main:app --reload --port 8000
+python -m scripts.run_ai_worker                      # en otra terminal: el bot responde (pide GEMINI_API_KEY en .env)
 ```
 
 - API y documentación interactiva: **<http://localhost:8000/docs>** (Swagger UI, con botón
@@ -120,7 +121,10 @@ uvicorn backend.api.main:app --reload --port 8000
 - **Widget** (en otra terminal): `cd widget; python -m http.server 8080` →
   <http://localhost:8080/test.html>, que simula la página de VMC en modo anónimo o autenticado.
   Detalle en [widget/README.md](widget/README.md).
-- App del asesor (más adelante): `cd frontend; npm run dev` → <http://localhost:3000>
+- App del asesor: `cd frontend; npm run dev` → <http://localhost:3000> (hoy con datos de prueba).
+  La API `/advisor/*` ya funciona en local: pon `ADVISOR_DEV_AUTH=1` y `ADVISOR_DEV_JWT_SECRET=algo`
+  en `.env`, emite un token con `python -m scripts.advisor_token --sub sub-ana-001 --name "Ana"`
+  y úsalo como `Authorization: Bearer …` (en AWS ese papel lo hace el authorizer de Cognito).
 - **Conocimiento del bot** (solo cuando cambie el Centro de Ayuda):
   `python -m scripts.helpcenter_fetch` y luego `python -m scripts.helpcenter_upload --verify`.
   Necesita `PINECONE_API_KEY`; no usa Gemini (Pinecone genera los embeddings).
