@@ -14,7 +14,7 @@ Este documento consolida:
 |---|---|
 | Última actualización | **27/08/2026** |
 | Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx`; **✅ Hecho** = implementado y validado con tests en el repo |
-| Decisiones abiertas | 10 (`D-007`…`D-016`) + `D-018` provisional — §6. Cerradas: D-001, D-002, D-003, D-017, D-019, D-021, D-022, D-023 (27/08) y **D-004, D-005, D-006, D-020** (28/08) |
+| Decisiones abiertas | 9 (`D-008`…`D-016`) + `D-018` provisional — §6. Cerradas: D-001, D-002, D-003, D-017, D-019, D-021, D-022, D-023 (27/08) y **D-004, D-005, D-006, D-007, D-020** (28/08) |
 | Pendiente sobre el modelo | 6 ajustes detectados en la revisión; 1–4 y 6 ya implementados, el 5 (GSI *sparse*) por decidir — ver §1.11 |
 
 | Fecha | Cambio |
@@ -22,6 +22,7 @@ Este documento consolida:
 | 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
 | 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
 | 27/08/2026 | F1 implementada: se cierran D-001/D-002/D-003 (y D-017/D-019 por derivación), se marcan ✅ los RF/RNF/RB cubiertos, se añade el ajuste 6 (`status` en Messages) y se señala que RF-003/AC-003/RB-002 quedan sin efecto por D-002 |
+| 28/08/2026 | Se cierra **D-007** (opción simple: la IA no se re-enciende sola; apagada hasta que un asesor tome y cierre — sin expiración). Ya estaba implementado así; se retira el 'provisional' de RF-025 y RB-007 |
 | 28/08/2026 | **Pipeline IA completo** (`workers/ai_worker.py` + `scripts/run_ai_worker.py`): se cierran **D-006** (triviales fijos sin llamada IA) y **D-020** (debounce de 6 s vía DelaySeconds de SQS); RF-015..022 y RF-025..027 pasan a ✅ (Gemini también orquesta por TD-008). AC-001/002/004 cubiertos por tests. Slack (RF-028) sigue esperando D-016 |
 | 28/08/2026 | Se cierran **D-004** (ventana de contexto: últimos 20 mensajes de la última hora, sin resumen) y **D-005** (guardrails: 2000 caracteres, 10 mensajes/min → 429, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo). RF-009, RF-013 y RF-014 pasan a ✅ |
 | 27/08/2026 | Mensajería del asesor (`/advisor/*`): RF-012, RF-029, RF-032, RF-034, RF-035, RF-038 ✅; RF-006, RF-031, RF-033 parciales. Se cierran D-021 (alta de asesores), D-022 (quién responde) y D-023 (cierre mínimo sin ticket, provisional). AC-005 y AC-006 cubiertos por tests |
@@ -407,7 +408,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RF-022 | Criterios de handoff | El sistema deberá poder derivar ante solicitud explícita de persona, baja confianza/no respuesta de RAG, repetición de consulta, frustración detectada u otras reglas definidas | ✅ Hecho 28/08/2026 (handoff mínimo) — deriva por solicitud explícita (regla o modelo), datos personales y FAQ sin evidencia; la frustración orienta al clasificador. Sin ticket ni Slack todavía (F5 / D-016) |
 | RF-023 | Ticket solo cuando existe atención humana | Una conversación automática puede existir sin ticket. El ticket representa trabajo que requiere intervención de asesor | Acordado |
 | RF-024 | Recolección previa de datos requeridos por tipo de ticket | Antes de crear ciertos tickets, el bot podrá solicitar datos mínimos del caso. La taxonomía y campos se definen en D-008 | Parcial |
-| RF-025 | Desactivación de IA al entrar en `PENDIENTE_ASESOR` | Una vez iniciado el handoff, la IA no seguirá respondiendo como bot mientras el caso espera asesor, salvo la política que se cierre en D-007 | ✅ Hecho 28/08/2026 — al entrar en `PENDING_ADVISOR` el bot se apaga y no vuelve a responder; queda apagado hasta que el asesor cierra (opción recomendada de D-007, **provisional** hasta confirmarla) |
+| RF-025 | Desactivación de IA al entrar en `PENDIENTE_ASESOR` | Una vez iniciado el handoff, la IA no seguirá respondiendo como bot mientras el caso espera asesor, salvo la política que se cierre en D-007 | ✅ Hecho 28/08/2026 — al entrar en `PENDING_ADVISOR` el bot se apaga y no vuelve a responder; queda apagado hasta que un asesor tome y cierre el caso (D-007 cerrada: sin expiración) |
 | RF-026 | Mensajes del usuario durante espera se conservan | Todos los mensajes posteriores al handoff deberán almacenarse aunque la IA se encuentre deshabilitada | ✅ Hecho 28/08/2026 — con el bot apagado los mensajes se persisten igual (el guardado es de la API; el worker solo calla) |
 | RF-027 | Mensaje fijo de espera, máximo una vez por período pendiente | Si el usuario insiste mientras espera, podrá enviarse una única respuesta automática/determinística informando que la solicitud está en espera. No se repetirá ante cada mensaje | ✅ Hecho 28/08/2026 — aviso fijo una sola vez por período pendiente (`wait_message_sent`, ganado con update condicional); se reinicia al cerrar el caso (AC-004) |
 | RF-028 | Notificación inmediata por Slack | Al generarse un handoff/ticket deberá enviarse una notificación a Slack sin esperar a que un asesor tome la conversación | Acordado |
@@ -489,7 +490,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RB-004 | Un usuario autenticado se asocia a una identidad validada por VMC — ✅ 27/08/2026 |
 | RB-005 | Una conversación no implica necesariamente un ticket |
 | RB-006 | Un ticket representa una necesidad de atención humana |
-| RB-007 | Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007 — ✅ 28/08/2026 (apagada hasta cierre del asesor, D-007 provisional) |
+| RB-007 | Durante `PENDIENTE_ASESOR` la IA queda deshabilitada según política D-007 — ✅ 28/08/2026 (D-007 cerrada: apagada hasta que el asesor cierra, sin expiración) |
 | RB-008 | Un handoff genera notificación de Slack inmediatamente |
 | RB-009 | La IA no debe responder FAQ fuera de las fuentes autorizadas cuando no existe evidencia suficiente — ✅ 28/08/2026 (RF-018 end-to-end en el worker) |
 | RB-010 | Subastín no modifica datos de VMC |
@@ -506,8 +507,8 @@ Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 **Cerradas el 27/08/2026 (Aaron):** D-001, D-002, D-003 y, por derivación, D-017 y D-019; D-018
 queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D-022 y D-023.
 **Cerradas el 28/08/2026 (Aaron):** D-004 (sin resumen; ventana de 20 mensajes / 1 hora), D-005
-(guardrails cuantitativos), D-006 (triviales fijos sin llamada IA) y D-020 (debounce de 6 s vía
-DelaySeconds de SQS). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+(guardrails cuantitativos), D-006 (triviales fijos sin llamada IA), D-007 (IA apagada hasta que
+el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de SQS). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
 
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|
@@ -517,7 +518,7 @@ DelaySeconds de SQS). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume
 | D-004 | Resumen de conversación para IA | **✅ Cerrada 28/08/2026 (Aaron):** **no hay resumen**. La memoria del bot son los últimos 20 mensajes **de la última hora** (`AI_CONTEXT_MESSAGES` / `AI_CONTEXT_WINDOW_MINUTES`). Pasada la ventana el mensaje se atiende solo. Motivo: con D-003 la conversación no se cierra nunca, así que sin corte temporal el contexto crecería indefinidamente; `summary`/`summary_updated_at` quedan en el modelo sin uso | Media |
 | D-005 | Guardrails cuantitativos | **✅ Cerrada 28/08/2026 (Aaron):** 2000 caracteres por mensaje; **10 mensajes/min** por conversación (= por usuario con D-002) → 429 con `Retry-After`; imágenes 5 MB, 3 por mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo** de mensajes por conversación: con D-003 es permanente y un tope duro la dejaría inservible de por vida; el crecimiento lo rige la retención (D-014). Todos los valores son variables de entorno (RNF-007) | Alta |
 | D-006 | Optimización de saludos/spam/repetición | **✅ Cerrada 28/08/2026 (Aaron):** saludo o agradecimiento SUELTOS → respuesta fija sin llamada IA; mensaje idéntico repetido en <10 min → aviso fijo UNA vez (a la siguiente, silencio; el mensaje se guarda igual). El volumen lo frena el rate limit de D-005. Código: `agent/trivial.py` + worker | Media |
-| D-007 | Duración del modo IA OFF durante handoff | Definir si permanece apagada hasta que un asesor cierre el caso —recomendado— o si existe expiración/reevaluación, por ejemplo 8 h. **Implementado provisionalmente con la opción recomendada** (28/08/2026): apagada hasta que el asesor cierra (D-023 la devuelve al bot); si se decide expiración, falta solo ese temporizador | Alta |
+| D-007 | Duración del modo IA OFF durante handoff | **✅ Cerrada 28/08/2026 (Aaron), opción simple:** la IA **no se re-enciende sola**. Queda apagada hasta que un asesor tome el caso y lo cierre (el cierre — D-023 — la devuelve a `BOT_ATTENDING`). Sin expiración, sin reevaluación, sin temporizador: si nadie lo atiende, el caso sigue esperando en la bandeja | Alta |
 | D-008 | Taxonomía de problemas y tickets | Definir tipos de problema, qué genera ticket, campos obligatorios por tipo, área responsable, prioridad y criterios de cierre | Alta |
 | D-009 | Tags de negocio | Definir si existirán en MVP, catálogo inicial y si los asigna IA, asesor o ambos con edición manual | Media |
 | D-010 | Campos de usuario visibles y utilizables | Definir exactamente qué campos llegan desde VMC/JWT/API y cuáles puede ver el asesor o usar el bot: nombre, email, empresa, DNI, vehículos, etc. | Alta |

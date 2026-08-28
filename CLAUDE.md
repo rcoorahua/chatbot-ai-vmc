@@ -119,7 +119,8 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   crea otra ni se "reabre". Lo que se cierra son los **tickets**, que quedan en el hilo como notas
   de sistema (mensaje SYSTEM `TICKET_CLOSED` → "Ticket cerrado"), igual que las notas de Intercom.
   Cierra también **D-017**: N tickets por conversación (máx. 5 activos) y cerrar un ticket **no**
-  cierra la conversación. Sigue abierto el autocierre de un ticket sin respuesta (lo absorbe D-007).
+  cierra la conversación. El autocierre de un ticket sin respuesta quedó descartado por D-007
+  (cerrada 28/08: nada se cierra ni se re-enciende solo).
 - **D-018 (provisional, derivada de RF-004)**: sesión anónima = la pestaña del navegador
   (`sessionStorage`) con token de 24 h (`ANONYMOUS_SESSION_TTL_HOURS`). Confirmar con Silvana + Julio.
 - **D-021 Alta de asesores**: auto-alta `ACTIVE` al primer login con JWT válido de Cognito
@@ -137,6 +138,9 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   conversación → 429 con `Retry-After` (el rechazado no se persiste); imágenes 5 MB, 3 por
   mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo**: con D-003 la conversación es
   permanente, así que un tope duro la dejaría inservible de por vida.
+- **D-007 IA OFF en handoff (2026-08-28)**: opción simple — la IA **no se re-enciende sola**.
+  Queda apagada hasta que un asesor tome y cierre el caso (D-023 la devuelve al bot). Sin
+  expiración ni temporizador; si nadie atiende, el caso espera en la bandeja.
 - **D-006 Triviales (2026-08-28)**: saludo/gracias sueltos y mensaje repetido (<10 min) reciben
   respuesta fija sin llamada IA (`agent/trivial.py`); el aviso de repetición sale UNA vez y
   luego silencio. El spam por volumen lo frena el rate limit de D-005.
@@ -150,7 +154,6 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-007 | Duración IA OFF durante handoff | Alta | Implementada la opción recomendada como **provisional** (apagada hasta cierre del asesor); solo falta el temporizador si deciden expiración |
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
 | D-009 | Tags de negocio | Media | Tickets |
 | D-010 | Campos de usuario VMC visibles/usables | Alta | F5, vista asesor |
@@ -161,7 +164,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-006, D-017, D-019, D-020 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-017, D-019, D-020 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
@@ -191,7 +194,7 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
-  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-007/D-008) y D-010.
+  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
   **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:

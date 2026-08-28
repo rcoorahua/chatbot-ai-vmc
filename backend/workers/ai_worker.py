@@ -6,8 +6,8 @@ Flujo por job (cada paso con su decision al lado):
     y mensaje; un job huerfano se descarta sin reintento.
  2. bot apagado (PENDING_ADVISOR / IN_ATTENTION): el mensaje ya quedo guardado (RF-026);
     si espera asesor, el aviso fijo sale UNA vez por periodo (RF-027 / AC-004). La IA no
-    responde (RF-025) y sigue apagada hasta que el asesor cierre (D-007 provisional: opcion
-    recomendada del spec).
+    responde (RF-025) y sigue apagada hasta que un asesor tome y cierre el caso (D-007,
+    cerrada 2026-08-28: sin expiracion — no se re-enciende sola).
  3. debounce (D-020, cerrada 2026-08-28): el job viajo con DelaySeconds; si el usuario escribio
     algo mas nuevo, este job se salta y el job del ultimo mensaje responde el bloque completo
     de frases seguidas en UNA llamada.
