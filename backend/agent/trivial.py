@@ -38,12 +38,30 @@ _THANKS = frozenset(
     )
 )
 
+# Preguntas sobre la naturaleza del asistente (transparencia). Fijas porque el RAG no tiene
+# evidencia sobre Subastin y sin esto "eres un bot?" derivaria a un asesor por falta de
+# evidencia (RF-018), que es justo lo contrario de una respuesta transparente.
+_IDENTITY = frozenset(
+    normalize(phrase)
+    for phrase in (
+        "eres un bot", "eres un robot", "eres una ia", "eres una inteligencia artificial",
+        "eres una maquina", "eres humano", "eres una persona", "eres real", "eres persona",
+        "hablo con un bot", "hablo con un robot", "hablo con una persona", "hablo con un humano",
+        "estoy hablando con un bot", "estoy hablando con una persona",
+        "estoy hablando con un robot", "con quien hablo", "quien eres", "quien me habla",
+        "que eres", "eres chatgpt", "eres gemini", "eres una ia o una persona",
+        "eres un bot o una persona", "eres persona o bot", "eres bot", "eres robot",
+        "me responde un bot", "me esta respondiendo un bot", "eres de verdad",
+    )
+)
+
 # Un mensaje trivial es corto por definicion: si alguien escribio un parrafo, hay contenido.
 _MAX_TRIVIAL_CHARS = 40
 
 
 def match_trivial(message: str) -> str | None:
-    """`"greeting"`, `"thanks"` o `None`. Solo si TODO el mensaje es el saludo/cierre."""
+    """`"greeting"`, `"thanks"`, `"identity"` o `None`. Solo si TODO el mensaje es el
+    saludo/cierre/pregunta de identidad."""
     text = normalize(message or "")
     if not text or len(text) > _MAX_TRIVIAL_CHARS:
         return None
@@ -52,6 +70,8 @@ def match_trivial(message: str) -> str | None:
         return "greeting"
     if stripped in _THANKS:
         return "thanks"
+    if stripped in _IDENTITY or stripped.removeprefix("hola ").strip() in _IDENTITY:
+        return "identity"
     return None
 
 

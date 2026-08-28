@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from backend.agent import prompts
+from backend.agent import guardrails, prompts
 from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
 from backend.core.llm import LLMError, ModelTier, empty_usage, get_client
@@ -96,7 +96,11 @@ def _classify_with_model(
     response = get_client().generate(
         tier=ModelTier.FAST,
         system=system_prompt,
-        messages=[{"role": "user", "content": message[:_MAX_MESSAGE_CHARS]}],
+        # Sin angulos: un "</reglas>" escrito por el usuario no debe parecer el cierre de un
+        # bloque del prompt (guardrails.neutralize_tags).
+        messages=[
+            {"role": "user", "content": guardrails.neutralize_tags(message[:_MAX_MESSAGE_CHARS])}
+        ],
         max_output_tokens=_MAX_OUTPUT_TOKENS,
         # Sin aleatoriedad: la misma consulta debe enrutar igual siempre, o el golden set mide
         # ruido en vez de comportamiento.
@@ -121,7 +125,11 @@ def _build_system_prompt(last_assistant_message: str | None, frustration_hint: b
     if last_assistant_message and last_assistant_message.strip():
         parts.append(
             prompts.CLASSIFIER_CONTEXT_TEMPLATE.format(
-                last_assistant_message=last_assistant_message.strip()[:_MAX_CONTEXT_CHARS],
+                # Va DENTRO del system prompt: se neutralizan los angulos para que ningun texto
+                # (ni siquiera uno del propio bot) pueda cerrar la etiqueta que lo envuelve.
+                last_assistant_message=guardrails.neutralize_tags(
+                    last_assistant_message.strip()[:_MAX_CONTEXT_CHARS]
+                ),
                 faq=Intent.FAQ,
             )
         )
