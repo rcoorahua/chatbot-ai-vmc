@@ -19,7 +19,7 @@ Los tests de este modulo corren contra dynamodb-local real: un GSI mal usado fal
 
 from typing import Any
 
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from backend.conversations.models import (
@@ -253,8 +253,14 @@ def list_messages(
     return messages[:limit]
 
 
-def list_recent_messages(conversation_id: str, *, limit: int = 20) -> list[Message]:
+def list_recent_messages(
+    conversation_id: str, *, limit: int = 20, since: str | None = None
+) -> list[Message]:
     """Los ultimos N mensajes en orden natural: la ventana de contexto de la IA (RF-013).
+
+    `since` es el corte temporal de D-004 (un ISO-8601 del mismo formato que la SK): solo entra
+    lo posterior. Va en la KeyConditionExpression, no como filtro, porque un filtro se aplica
+    DESPUES del Limit y devolveria menos mensajes de los pedidos.
 
     Se consulta descendente con Limit y se reinvierte. La cota superior de la SK importa aun
     mas aqui: en orden descendente los marcadores `CMID#` saldrian PRIMERO y se comerian el
@@ -262,11 +268,27 @@ def list_recent_messages(conversation_id: str, *, limit: int = 20) -> list[Messa
     """
     response = _messages().query(
         KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        & Key("message_key").between(_FIRST_MESSAGE_KEY, _LAST_MESSAGE_KEY),
+        & Key("message_key").between(since or _FIRST_MESSAGE_KEY, _LAST_MESSAGE_KEY),
         ScanIndexForward=False,
         Limit=limit,
     )
     return [Message.from_item(item) for item in reversed(response["Items"])]
+
+
+def count_messages_since(conversation_id: str, *, since: str, sender_type: str) -> int:
+    """Cuantos mensajes de ese remitente hay desde `since`. Base del rate limit (RF-014).
+
+    Cuenta contra la tabla en vez de un contador aparte: la ventana es de un minuto, asi que
+    son pocos items, y no hay que mantener ningun estado que pueda quedar desincronizado.
+    `Select=COUNT` no trae los items, solo el numero.
+    """
+    response = _messages().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+        & Key("message_key").between(since, _LAST_MESSAGE_KEY),
+        FilterExpression=Attr("sender_type").eq(sender_type),
+        Select="COUNT",
+    )
+    return int(response.get("Count", 0))
 
 
 def list_messages_before(

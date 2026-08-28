@@ -330,7 +330,11 @@ def test_el_largo_maximo_aplica_tambien_al_asesor(client, limpiar, monkeypatch):
 # ───────────────────────────── AC-A6: hilo y no leidos ─────────────────────────────
 
 
-def test_el_hilo_entrega_los_ultimos_20_y_pagina_hacia_atras(client, limpiar):
+def test_el_hilo_entrega_los_ultimos_20_y_pagina_hacia_atras(client, limpiar, monkeypatch):
+    # Sin rate limit: aqui se prueba la paginacion, y 25 mensajes seguidos superan de sobra el
+    # tope por minuto de D-005 (que tiene sus propias pruebas en tests/test_guardrails.py).
+    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
+    reset_settings()
     _, headers = _asesor_nuevo(client, limpiar)
     sesion = _conversacion_de_usuario(client, limpiar)
     conv_id = sesion["conversation"]["conversation_id"]

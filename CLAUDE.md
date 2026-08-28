@@ -129,6 +129,13 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-023 Cierre mínimo sin ticket (provisional hasta F5)**: `POST /advisor/…/close` deja la nota
   `TICKET_CLOSED`, devuelve la conversación a `BOT_ATTENDING` con bot encendido y sin asesor. No
   crea fila en Tickets; cuando exista el módulo, el cierre pasa a cerrar el ticket.
+- **D-004 Contexto para IA (2026-08-28)**: **no hay resumen**. La memoria del bot son los últimos
+  **20 mensajes de la última hora** (`service.context_window`). Pasada la ventana, el mensaje se
+  atiende solo. `summary`/`summary_updated_at` quedan en el modelo sin uso.
+- **D-005 Guardrails (2026-08-28)**: 2000 caracteres por mensaje; **10 mensajes/min** por
+  conversación → 429 con `Retry-After` (el rechazado no se persiste); imágenes 5 MB, 3 por
+  mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo**: con D-003 la conversación es
+  permanente, así que un tope duro la dejaría inservible de por vida.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -136,8 +143,6 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-004 | Estrategia de resumen para IA | Media | pipeline IA |
-| D-005 | Guardrails cuantitativos (límites, rate limit) | Alta | Valores **provisionales** en `core/config.py` (`MAX_MESSAGE_CHARS=2000`); sin rate limit aún |
 | D-006 | Saludos/spam/repetición sin llamada IA | Media | F2 |
 | D-007 | Duración IA OFF durante handoff | Alta | F5 |
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
@@ -151,7 +156,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 | D-020 | Debounce/agregación de mensajes antes de IA | Media | F2 |
 
-D-001, D-002, D-003, D-017 y D-019 **cerradas** (arriba); D-018 provisional.
+D-001…D-005, D-017, D-019 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 

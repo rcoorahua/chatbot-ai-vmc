@@ -26,7 +26,7 @@ from backend.conversations.models import (
     message_key_for,
 )
 from backend.core.auth import VmcIdentity
-from backend.core.clock import utc_now_iso
+from backend.core.clock import minutes_ago_iso, utc_now_iso
 from backend.core.config import get_settings
 
 # Namespace fijo para derivar el id de la conversacion del usuario autenticado. Cambiarlo
@@ -43,6 +43,15 @@ class MessageTooLong(ValueError):
     def __init__(self, limit: int) -> None:
         super().__init__(f"el mensaje supera el maximo de {limit} caracteres")
         self.limit = limit
+
+
+class RateLimited(RuntimeError):
+    """Demasiados mensajes en la ventana (RF-014 / D-005). Se responde 429."""
+
+    def __init__(self, limit: int, retry_after: int) -> None:
+        super().__init__(f"maximo {limit} mensajes por minuto")
+        self.limit = limit
+        self.retry_after = retry_after
 
 
 def conversation_id_for_user(user_id: str) -> str:
@@ -120,12 +129,13 @@ def post_user_message(
 ) -> tuple[Message, bool]:
     """Persiste el mensaje del usuario. `(mensaje, True)` si es nuevo; `(original, False)` si
     es un reintento con el mismo `client_message_id` (RF-038)."""
+    settings = get_settings()
     text = content.strip()
     if not text:
         raise EmptyMessage("el mensaje esta vacio")
-    limit = get_settings().max_message_chars
-    if len(text) > limit:
-        raise MessageTooLong(limit)
+    if len(text) > settings.max_message_chars:
+        raise MessageTooLong(settings.max_message_chars)
+    _check_rate_limit(conversation.conversation_id)
 
     now = utc_now_iso()
     message_id = str(uuid.uuid4())
@@ -148,11 +158,45 @@ def post_user_message(
     )
 
 
+def _check_rate_limit(conversation_id: str) -> None:
+    """RF-014 / D-005: tope de mensajes por minuto y por conversacion (= por usuario, D-002).
+
+    Frena la rafaga sin castigar al que escribe rapido en frases partidas. Se cuenta solo lo
+    que manda el usuario: las respuestas del bot y del asesor no consumen su cuota.
+    """
+    limit = get_settings().max_messages_per_minute
+    if limit <= 0:  # 0 o negativo = sin limite (util en pruebas y en un incidente)
+        return
+    recientes = repository.count_messages_since(
+        conversation_id, since=minutes_ago_iso(1), sender_type=str(SenderType.USER)
+    )
+    if recientes >= limit:
+        raise RateLimited(limit, retry_after=60)
+
+
 def list_messages(
     conversation_id: str, *, after: str | None = None, limit: int | None = None
 ) -> list[Message]:
     page = limit or get_settings().messages_page_size
     return repository.list_messages(conversation_id, after=after, limit=page)
+
+
+def context_window(conversation_id: str) -> list[Message]:
+    """La memoria del bot (RF-013 / D-004, cerrada 2026-08-28): los ultimos N mensajes de la
+    ultima hora, en orden cronologico.
+
+    NO hay resumen acumulado: los campos `summary`/`summary_updated_at` de Conversations
+    quedan sin uso a proposito. Con D-003 la conversacion del autenticado no se cierra nunca,
+    asi que sin corte temporal el bot arrastraria contexto de semanas atras — caro y confuso.
+    Si el usuario vuelve pasada la hora, la lista sale vacia (o solo con su mensaje nuevo) y la
+    IA responde a la pregunta actual, que es lo que espera quien retoma despues de un rato.
+    """
+    settings = get_settings()
+    return repository.list_recent_messages(
+        conversation_id,
+        limit=settings.ai_context_messages,
+        since=minutes_ago_iso(settings.ai_context_window_minutes),
+    )
 
 
 # ───────────────────────────── Lado del asesor (RF-012, RF-029..035) ─────────────────────────────
