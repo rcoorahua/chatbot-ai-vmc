@@ -256,6 +256,9 @@ def _answer_faq(
         latency_ms=result.latency_ms,
         rag_used=bool(fragments),
         rag_results_count=len(fragments),
+        rag_fragments=[
+            {"topic": f.topic, "score": f.score, "source_url": f.source_url} for f in fragments
+        ],
         handoff_triggered=not result.has_evidence and not anonymous,
     )
     if result.has_evidence:

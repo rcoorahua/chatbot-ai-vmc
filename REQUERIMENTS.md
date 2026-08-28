@@ -252,6 +252,7 @@ Registra cada ejecución de IA. Es necesaria para separar el costo de Haiku —l
 | `error_code` | String | No | Código o tipo de fallo | Ayuda a agrupar errores sin depender solo de logs técnicos |
 | `rag_used` | Boolean | Sí | Indica uso de Pinecone/RAG | Separa respuestas RAG de otras rutas |
 | `rag_results_count` | Number | No | Cantidad de chunks | Permite analizar recuperación y fallbacks |
+| `rag_fragments` | List\<Map\> | No | `{topic, score, source_url}` por fragmento recuperado | Auditar la calidad del retrieval sin volver a consultar Pinecone (2026-08-28, consola `GET /dev/…/ai-usage`). Nunca el texto del fragmento |
 | `handoff_triggered` | Boolean | Sí | Si terminó en asesor | Sirve para medir tasa de automatización/handoff |
 | `billing_month` | String YYYY-MM | Sí | Mes contable | Simplifica consultas de costo mensual mediante GSI |
 | `created_at` | String ISO-8601 | Sí | Timestamp | Auditoría y orden temporal |

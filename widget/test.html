@@ -82,6 +82,13 @@
   .tag.free { background: rgba(0,174,177,.15); color: #00696c; }
   .tag.guard { background: rgba(132,96,229,.18); color: var(--vault-700); }
   .tag.handoff { background: #ffd6cf; color: #7a1c12; }
+  /* Fragmentos que trajo el RAG, dentro de la celda de cada ejecucion. */
+  .rag-cell { white-space: normal; max-width: 260px; }
+  .rag-frag { display: flex; align-items: baseline; gap: 6px; padding: 1px 0; }
+  .rag-frag + .rag-frag { border-top: 1px dashed var(--line); margin-top: 2px; }
+  .rag-topic { color: var(--vault-700); flex: 1; min-width: 0; }
+  .rag-score { color: var(--ink-faint); flex: none; font-size: 11px; }
+  .rag-empty { color: var(--ink-faint); }
   .console-bar { display: flex; align-items: center; gap: 14px; margin-top: 10px; font-size: 13px; }
   .console-bar label { display: inline; margin: 0; }
   .legend { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
@@ -157,7 +164,8 @@
         <thead>
           <tr>
             <th>Hora</th><th>Msg</th><th>Etapa</th><th>Intent</th><th>Decidió</th><th>Modelo</th>
-            <th class="num">Tokens in/out</th><th class="num">Costo US$</th><th class="num">ms</th><th>RAG</th><th>Handoff</th>
+            <th class="num">Tokens in/out</th><th class="num">Costo US$</th><th class="num">ms</th>
+            <th>RAG (tema · score)</th><th>Handoff</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -166,6 +174,9 @@
     <div class="legend">
       Fondo amarillo = pagó tokens · morado = guardrail (sin IA) · rojo = derivó a asesor.
       "Decidió" es la capa o la regla exacta (p. ej. <code>legal_threat</code>, <code>guardrail:prompt_injection:…</code>).
+      La columna RAG muestra cada artículo del Centro de Ayuda que se recuperó para esa
+      pregunta, con su score de similitud (por debajo de <code>RAG_MIN_SCORE</code> ni siquiera
+      llega aquí): útil para ver si el bot está citando lo correcto o solo lo más parecido.
     </div>
     <div class="console-bar">
       <label><input type="checkbox" id="console-auto" checked> Auto-actualizar cada 3 s</label>
@@ -292,6 +303,31 @@
     return node("span", "tag free", source);
   }
 
+  /** Que trajo el RAG para esta ejecucion: un tema + score por fragmento recuperado, o el
+   *  motivo por el que no hay ninguno. Nunca el texto del fragmento (el backend no lo manda). */
+  function ragCell(execution) {
+    const td = node("td", "rag-cell");
+    const fragments = execution.rag_fragments || [];
+    if (fragments.length) {
+      for (const fragment of fragments) {
+        const row = node("div", "rag-frag");
+        row.appendChild(node("span", "rag-topic", fragment.topic));
+        row.appendChild(node("span", "rag-score", fragment.score.toFixed(3)));
+        td.appendChild(row);
+      }
+      return td;
+    }
+    if (execution.rag_used) {
+      // Fila de antes de esta version de la consola: se sabe que hubo RAG, no el detalle.
+      const count = execution.rag_results_count;
+      td.appendChild(node("span", "rag-empty", (count ?? "sí") + " frag. (sin detalle)"));
+    } else if (execution.execution_type === "RESPONSE" && execution.intent === "FAQ") {
+      // FAQ que no llamo a Pinecone: la unica razon es que no hubo evidencia (RF-018).
+      td.appendChild(node("span", "rag-empty", "sin evidencia"));
+    }
+    return td;
+  }
+
   function renderConsole(data) {
     const conv = data.conversation;
     replaceChildren(document.getElementById("conv-state"), [
@@ -334,7 +370,7 @@
         node("td", "num", tokens),
         node("td", "num", e.provider && e.provider !== "NONE" ? money(e.estimated_cost_usd) : "0"),
         node("td", "num", e.latency_ms || ""),
-        node("td", null, e.rag_used ? (e.rag_results_count ?? "sí") + " frag." : ""),
+        ragCell(e),
         node("td", null, e.handoff_triggered ? "sí" : ""),
       ];
       for (const cell of cells) tr.appendChild(cell);

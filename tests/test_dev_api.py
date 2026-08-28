@@ -6,6 +6,7 @@ Criterios:
   AC-O2  otra conversacion = 403; sin token = 401 (mismo contrato que /chat)
   AC-O3  con DEV_OBSERVABILITY=0 (prod) la ruta responde 404: no existe hacia afuera
   AC-O4  cada ejecucion registrada emite un evento `ai.execution` en el log, sin contenido
+  AC-O5  una ejecucion con RAG expone tema/score/fuente por fragmento recuperado
 """
 
 import logging
@@ -77,6 +78,16 @@ def _registrar(conversation_id: str, *, pagada: bool) -> None:
         latency_ms=1450 if pagada else 0,
         rag_used=pagada,
         rag_results_count=3 if pagada else None,
+        rag_fragments=[
+            {
+                "topic": "¿Cuánto es la comisión?",
+                "score": 0.87123,
+                "source_url": "https://centro-de-ayuda-vmc.vercel.app/comision",
+            },
+            {"topic": "Fee por el uso de pasarela", "score": 0.844, "source_url": ""},
+        ]
+        if pagada
+        else None,
     )
 
 
@@ -99,6 +110,17 @@ def test_la_sesion_ve_sus_ejecuciones_con_totales(client, limpiar, caplog):
     pagada = data["executions"][0]
     assert pagada["model"] == "gemini-3.7-flash" and pagada["input_tokens"] == 900
     assert pagada["estimated_cost_usd"] == pytest.approx(0.001125)
+
+    # AC-O5: la consola necesita saber QUE trajo el RAG, no solo cuantos fragmentos.
+    assert [f["topic"] for f in pagada["rag_fragments"]] == [
+        "¿Cuánto es la comisión?",
+        "Fee por el uso de pasarela",
+    ]
+    assert pagada["rag_fragments"][0]["score"] == pytest.approx(0.8712)
+    assert pagada["rag_fragments"][0]["source_url"].startswith("https://")
+    assert pagada["rag_fragments"][1]["source_url"] == ""
+    sin_rag = data["executions"][1]
+    assert sin_rag["rag_fragments"] == [], "la clasificacion no toca RAG"
     assert data["totals"] == {
         "executions": 2,
         "ai_calls": 1,

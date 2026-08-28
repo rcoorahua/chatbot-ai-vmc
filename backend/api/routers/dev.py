@@ -28,6 +28,15 @@ def _enabled() -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
 
 
+class RagFragmentOut(BaseModel):
+    """Un fragmento que el RAG trajo para la pregunta. Nunca el texto del fragmento (regla del
+    endpoint: solo metricas) — solo lo que sirve para juzgar si la recuperacion fue relevante."""
+
+    topic: str
+    score: float
+    source_url: str = ""
+
+
 class ExecutionOut(BaseModel):
     execution_id: str
     execution_type: str
@@ -44,6 +53,7 @@ class ExecutionOut(BaseModel):
     latency_ms: int = 0
     rag_used: bool = False
     rag_results_count: int | None = None
+    rag_fragments: list[RagFragmentOut] = []
     handoff_triggered: bool = False
     created_at: str
 
