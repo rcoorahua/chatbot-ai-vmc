@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # OJO: hay que calibrarlo con datos reales. `python -m scripts.helpcenter_upload --verify`
     # imprime los scores de una consulta de prueba; el valor por defecto asume el rango tipico
     # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
-    rag_min_score: float = 0.75
+    rag_min_score: float = 0.84
 
     # ── Pipeline IA (D-006 y D-020 cerradas 2026-08-28) ─────────────────────────────────────
     # D-020: cada mensaje encola su job con este retraso (DelaySeconds de SQS). Al procesarlo,
