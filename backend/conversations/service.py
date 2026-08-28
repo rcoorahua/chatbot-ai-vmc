@@ -347,6 +347,59 @@ def post_advisor_message(
     return repository.save_message_idempotent(message, count_as_unread=False)
 
 
+# ───────────────────────────── Lado del bot (RF-020..027, worker IA) ─────────────────────────────
+
+
+def post_bot_message(
+    conversation_id: str, text: str, *, metadata: dict | None = None
+) -> Message:
+    """Respuesta del bot en el hilo. Nace DELIVERED (persistir es entregar; el widget la
+    recoge en el sondeo) y no cuenta como no leida: los no leidos son del asesor (RF-035)."""
+    now = utc_now_iso()
+    message_id = str(uuid.uuid4())
+    message = Message(
+        conversation_id=conversation_id,
+        message_key=message_key_for(now, message_id),
+        message_id=message_id,
+        sender_type=SenderType.BOT,
+        message_type=MessageType.TEXT,
+        status=MessageStatus.DELIVERED,
+        content=text,
+        metadata=metadata,
+        created_at=now,
+    )
+    repository.put_message(message, count_as_unread=False)
+    return message
+
+
+def start_handoff(conversation: Conversation, *, reason: str) -> bool:
+    """Deriva a asesor (RF-022): PENDING_ADVISOR, bot apagado (RF-025) y nota SYSTEM
+    `HANDOFF_REQUESTED` en el hilo. Devuelve False si ya estaba derivada o asignada.
+
+    La IA queda apagada hasta que un asesor cierre el caso (D-023 la devuelve al bot) — es la
+    opcion recomendada de D-007, PROVISIONAL hasta que Silvana+Julio la confirmen.
+    Solo autenticados: el anonimo no deriva (D-002); eso lo decide el worker antes de llamar.
+    """
+    note = _system_note(
+        conversation.conversation_id, SystemEvent.HANDOFF_REQUESTED, {"reason": reason}
+    )
+    return repository.start_handoff(
+        conversation.conversation_id, reason=reason, at=note.created_at, note=note
+    )
+
+
+def send_wait_message_once(conversation: Conversation, text: str) -> bool:
+    """RF-027 / AC-004: si el usuario insiste mientras espera asesor, el aviso fijo sale UNA
+    sola vez por periodo pendiente. El flag se gana con un update condicional, asi que dos
+    jobs concurrentes no lo duplican. Devuelve True si este llamador lo envio."""
+    if conversation.wait_message_sent:
+        return False
+    if not repository.mark_wait_message_sent(conversation.conversation_id):
+        return False
+    post_bot_message(conversation.conversation_id, text)
+    return True
+
+
 def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
     """Cierre minimo del caso (RF-031 sin ticket, provisional hasta F5)."""
     if conversation.assigned_advisor_id != advisor_id:

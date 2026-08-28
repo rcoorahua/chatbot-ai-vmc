@@ -27,6 +27,7 @@ cd widget; python -m http.server 8080                # widget: http://localhost:
 python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/helpcenter/*.md + chunks.json
 python -m scripts.helpcenter_upload --verify         # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE)
 python -m scripts.advisor_token --sub sub-ana-001 --name "Ana Torres"   # Bearer para /advisor en local (ADVISOR_DEV_AUTH=1)
+python -m scripts.run_ai_worker                      # el bot responde en local (worker contra la cola de localstack; pide GEMINI_API_KEY)
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
@@ -136,6 +137,12 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   conversación → 429 con `Retry-After` (el rechazado no se persiste); imágenes 5 MB, 3 por
   mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo**: con D-003 la conversación es
   permanente, así que un tope duro la dejaría inservible de por vida.
+- **D-006 Triviales (2026-08-28)**: saludo/gracias sueltos y mensaje repetido (<10 min) reciben
+  respuesta fija sin llamada IA (`agent/trivial.py`); el aviso de repetición sale UNA vez y
+  luego silencio. El spam por volumen lo frena el rate limit de D-005.
+- **D-020 Debounce (2026-08-28)**: 6 s (`AI_DEBOUNCE_SECONDS`) como `DelaySeconds` de SQS; el
+  worker salta el job si hay un mensaje más nuevo y el job del último responde la ráfaga en UNA
+  llamada IA. Sin estado extra.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -143,8 +150,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-006 | Saludos/spam/repetición sin llamada IA | Media | F2 |
-| D-007 | Duración IA OFF durante handoff | Alta | F5 |
+| D-007 | Duración IA OFF durante handoff | Alta | Implementada la opción recomendada como **provisional** (apagada hasta cierre del asesor); solo falta el temporizador si deciden expiración |
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
 | D-009 | Tags de negocio | Media | Tickets |
 | D-010 | Campos de usuario VMC visibles/usables | Alta | F5, vista asesor |
@@ -154,9 +160,8 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-014 | Retención (¿6 meses?) conversaciones/imágenes | Alta | TTL, S3 lifecycle |
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
-| D-020 | Debounce/agregación de mensajes antes de IA | Media | F2 |
 
-D-001…D-005, D-017, D-019 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
+D-001…D-006, D-017, D-019, D-020 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
@@ -187,10 +192,12 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
   `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-007/D-008) y D-010.
-  `agent/` tiene clasificador, redactor y **recuperación en Pinecone** listos, más la ingesta
-  del Centro de Ayuda (`scripts/helpcenter_*`), pero **sin pipeline** (`workers/ai_worker.py`
-  bloqueado por D-004/D-006/D-020): el bot aún no responde. El resto son stubs con docstrings; se
-  implementan fase por fase (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
+  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
+  (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
+  mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
+  `scripts/run_ai_worker.py`). Falta calibrar `RAG_MIN_SCORE`, la notificación Slack (D-016) y
+  el ticket al derivar (D-008). El resto son stubs con docstrings; se implementan fase por fase
+  (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
 - Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
   entorno local de dev — mantener ambos en sync al agregar una dependencia.
