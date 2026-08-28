@@ -134,7 +134,7 @@ frontend (RNF-005).
 
 **T-07 · Handoff y tickets**
 Requerimientos: RF-022..RF-028 · Depende de: T-05, T-03, T-30
-**Bloqueado por: D-007** (cuánto dura la IA apagada), **D-008** (taxonomía), D-016 (formato
+**Bloqueado por: D-008** (taxonomía), D-016 (formato
 Slack). D-017 y D-019 quedaron cerradas el 2026-08-27: N tickets por conversación (máx. 5
 activos), cerrar un ticket no cierra la conversación, y el anónimo no deriva (RF-003 sin efecto).
 Archivos: `backend/tickets/*`
@@ -271,7 +271,7 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 | ~~**D-002** máx. conversaciones~~ | cerrada 2026-08-27 | — |
 | ~~**D-018** sesión anónima~~ | provisional desde 2026-08-27 (confirmar) | — |
 | **D-008** taxonomía de tickets | T-07 | Alto — y es la que más trabajo de negocio requiere |
-| **D-007** duración de IA apagada | T-07 | Alto — respuesta corta |
+| ~~**D-007** duración de IA apagada~~ | **Cerrada 28/08/2026** — apagada hasta cierre del asesor, sin expiración | — |
 | ~~**D-017** conversación↔ticket~~ | cerrada 2026-08-27 | — |
 | **D-010** campos del usuario | T-08, T-11 | Alto — necesita coordinación con Bruce |
 | **D-011** contrato HERALD | T-23 | Alto — depende del equipo de HERALD |
@@ -283,7 +283,7 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 | **D-014** retención | Nada de código; define el TTL antes de crear tablas en AWS | Alto para infraestructura |
 
 **Lo que más trabajo libera ahora:** D-004 + D-006 + D-020 (con "no por ahora" basta) destraban
-T-24 y con él la primera respuesta real del bot; D-007 + D-008 destraban T-07 (handoff).
+T-24 y con él la primera respuesta real del bot; D-008 destraba T-07 (handoff; D-007 ya cerró).
 
 ---
 
