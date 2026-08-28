@@ -19,6 +19,13 @@ class StageConfig:
     # Origenes desde los que el widget puede llamar a la API (CORS). El widget vive en la pagina
     # de VMC; en stage se abre mientras no haya un dominio de pruebas de VMC.
     cors_allowed_origins: str
+    # Observabilidad (RNF-006): stage detallado, prod sobrio. `log_content` escribe una vista
+    # previa del texto de los mensajes en los logs (nunca en prod: RF-052). `dev_observability`
+    # enciende /dev/* (consola de widget/test.html), que solo muestra metricas de la propia
+    # conversacion. Mismos nombres que core/config.py.
+    log_level: str
+    log_content: bool
+    dev_observability: bool
 
 
 _CONFIGS = {
@@ -31,6 +38,9 @@ _CONFIGS = {
         log_retention_days=14,
         retain_data=False,
         cors_allowed_origins="*",
+        log_level="DEBUG",
+        log_content=True,
+        dev_observability=True,
     ),
     "prod": StageConfig(
         stage="prod",
@@ -41,6 +51,9 @@ _CONFIGS = {
         log_retention_days=90,  # retencion de LOGS; la retencion de DATOS es D-014
         retain_data=True,
         cors_allowed_origins="https://www.vmcsubastas.com,https://vmcsubastas.com",
+        log_level="INFO",
+        log_content=False,
+        dev_observability=False,
     ),
 }
 

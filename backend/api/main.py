@@ -9,9 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from backend.api import dev_auth
-from backend.api.routers import advisor, chat, dashboard
+from backend.api.routers import advisor, chat, dashboard, dev
 from backend.core.config import get_settings
+from backend.core.observability import configure_logging
 
+configure_logging()
 app = FastAPI(title="Subastin API")
 
 # El widget corre en el dominio de VMC y llama a la API en otro: sin CORS el navegador bloquea
@@ -32,6 +34,9 @@ if dev_auth.should_install():
 app.include_router(chat.router)
 app.include_router(advisor.router)
 app.include_router(dashboard.router)
+# Observabilidad de dev/stage (consola de widget/test.html). En prod responde 404: el gate esta
+# por request (`DEV_OBSERVABILITY`), asi que apagarlo no exige redesplegar.
+app.include_router(dev.router)
 
 
 @app.get("/health")
