@@ -5,45 +5,87 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Subastín — página de prueba del widget</title>
 <style>
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f2e; background: #f6f6f9; }
-  header { background: #3b2a8c; color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
+  /* Paleta del design system (frontend/src/app/globals.css): vault + orange de Concorde. */
+  :root {
+    --vault-400: #ae8eff; --vault-500: #8460e5; --vault-600: #5a35c2;
+    --vault-700: #3b1782; --vault-900: #22005c;
+    --orange-400: #fbc47d; --orange-600: #ed8936;
+    --ink: #191c1c; --ink-soft: #55556a; --line: #ececf3; --surface-soft: #f7f7fb;
+    --ease: cubic-bezier(.25, .8, .25, 1);
+  }
+  body { margin: 0; font-family: "Plus Jakarta Sans", -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--surface-soft); }
+  header { background-image: linear-gradient(120deg, var(--vault-700) 0%, var(--vault-900) 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
   header strong { font-size: 18px; }
   main { max-width: 980px; margin: 28px auto; padding: 0 20px; }
-  .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 10px rgba(24,16,64,.08); margin-bottom: 18px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 20px 24px; box-shadow: 0 2px 10px rgba(32,0,104,.08); margin-bottom: 18px; }
   h2 { margin: 0 0 12px; font-size: 17px; }
-  label { display: block; font-size: 13px; color: #555; margin: 10px 0 4px; }
-  input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid #d9d9e3; border-radius: 8px; font: inherit; }
+  label { display: block; font-size: 13px; color: var(--ink-soft); margin: 10px 0 4px; }
+  /* Borde en gradiente como el Input de Concorde; con foco vira a naranja. */
+  input[type=text] {
+    width: 100%; padding: 9px 12px; border: 1.5px solid transparent; border-radius: 12px; font: inherit; outline: none;
+    background-image: linear-gradient(#fff, #fff), linear-gradient(338deg, var(--vault-500) 0%, #fff8f1 100%);
+    background-origin: border-box; background-clip: padding-box, border-box;
+    transition: background-image .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  input[type=text]:focus {
+    background-image: linear-gradient(#fff, #fff), linear-gradient(148deg, var(--orange-600) 0%, var(--vault-500) 100%);
+    box-shadow: rgba(237,137,54,.16) 0 2px 8px;
+  }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .mode { display: flex; gap: 18px; margin: 6px 0 4px; }
-  button.primary { background: #ff6a4d; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 16px; }
-  button.ghost { background: #fff; color: #3b2a8c; border: 1px solid #c9c3e8; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
-  .warn { background: #fff1f0; color: #8a1c12; border: 1px solid #f5c2bd; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
-  pre { background: #1f1f2e; color: #e8e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; }
-  .muted { color: #6a6a7e; font-size: 13px; }
+  /* Boton primario de Concorde: naranja que vira a vault, con elevacion al pasar el cursor. */
+  button.primary {
+    position: relative; overflow: hidden; color: #fff; border: 0; border-radius: 9999px;
+    padding: 11px 26px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 16px;
+    background-image: linear-gradient(160deg, var(--orange-600) 0%, var(--orange-600) 40%, var(--vault-500) 100%);
+    box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(237,137,54,.3) 0 2px 8px;
+    transition: transform .2s var(--ease), box-shadow .25s var(--ease);
+  }
+  button.primary::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background-image: linear-gradient(220deg, var(--orange-400) 0%, var(--vault-400) 100%);
+    opacity: 0; transition: opacity .3s var(--ease);
+  }
+  /* La etiqueta va en un span propio: el ::before del degradado se pinta sobre el texto suelto
+     de un boton, asi que el texto necesita su propia capa para quedar encima. */
+  button.primary > span { position: relative; z-index: 1; }
+  button.primary:hover { transform: translateY(-2px); box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(132,96,229,.42) 0 8px 22px; }
+  button.primary:hover::before { opacity: 1; }
+  button.primary:active { transform: translateY(0) scale(.98); }
+  button.ghost { background: #fff; color: var(--vault-600); border: 1px solid rgba(132,96,229,.35); border-radius: 9999px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer; transition: background-color .18s var(--ease), transform .18s var(--ease); }
+  button.ghost:hover { background: rgba(132,96,229,.08); }
+  button.ghost:active { transform: scale(.97); }
+  .warn { background: #fff1f0; color: #8a1c12; border: 1px solid #f5c2bd; border-radius: 12px; padding: 10px 12px; font-size: 13px; }
+  pre { background: var(--vault-900); color: #e8e4f6; padding: 12px; border-radius: 12px; font-size: 12px; overflow: auto; }
+  .muted { color: var(--ink-soft); font-size: 13px; }
   #status { font-size: 13px; margin-top: 8px; }
+  :focus-visible { outline: 2px solid var(--vault-500); outline-offset: 2px; }
 
   /* Consola de observabilidad */
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
-  .chip { background: #f0eefa; color: #3b2a8c; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .chip.on { background: #e6f7ee; color: #146c3a; }
+  .chip { background: rgba(132,96,229,.1); color: var(--vault-700); border-radius: 9999px; padding: 4px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .chip.on { background: rgba(0,174,177,.12); color: #00696c; }
   .chip.off { background: #fff1f0; color: #8a1c12; }
-  .chip.money { background: #fff7e6; color: #7a4b00; }
-  .table-wrap { overflow-x: auto; margin-top: 10px; }
+  .chip.money { background: rgba(237,137,54,.14); color: #7a4b00; }
+  .table-wrap { overflow-x: auto; margin-top: 10px; border-radius: 12px; border: 1px solid var(--line); }
   table { border-collapse: collapse; width: 100%; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ececf3; white-space: nowrap; vertical-align: top; }
-  th { background: #f6f6f9; color: #55556a; font-weight: 600; position: sticky; top: 0; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+  th { background: var(--surface-soft); color: var(--ink-soft); font-weight: 600; position: sticky; top: 0; }
+  tbody tr { transition: background-color .15s var(--ease); }
+  tbody tr:hover td { background: rgba(132,96,229,.06); }
   td.num { text-align: right; }
-  tr.paid td { background: #fffdf5; }
+  tr.paid td { background: rgba(237,137,54,.06); }
   tr.handoff td { background: #fff4f2; }
-  tr.guardrail td { background: #f3f0ff; }
-  .tag { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 11px; background: #ececf3; color: #333; }
-  .tag.model { background: #ffe9b3; color: #5c3a00; }
-  .tag.free { background: #dff5e7; color: #14532d; }
-  .tag.guard { background: #e2dcff; color: #2f1f7a; }
+  tr.guardrail td { background: rgba(132,96,229,.09); }
+  .tag { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11px; background: var(--line); color: #333; }
+  .tag.model { background: rgba(237,137,54,.18); color: #7a4b00; }
+  .tag.free { background: rgba(0,174,177,.15); color: #00696c; }
+  .tag.guard { background: rgba(132,96,229,.18); color: var(--vault-700); }
   .tag.handoff { background: #ffd6cf; color: #7a1c12; }
   .console-bar { display: flex; align-items: center; gap: 14px; margin-top: 10px; font-size: 13px; }
   .console-bar label { display: inline; margin: 0; }
-  .legend { font-size: 12px; color: #6a6a7e; margin-top: 8px; }
+  .legend { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: .001ms !important; animation-duration: .001ms !important; } }
 </style>
 </head>
 <body>
@@ -97,7 +139,7 @@
     </div>
     <label for="api">URL de la API</label>
     <input type="text" id="api" name="api" value="http://localhost:8000">
-    <button class="primary" type="submit">Aplicar y cargar el widget</button>
+    <button class="primary" type="submit"><span>Aplicar y cargar el widget</span></button>
     <div id="status" class="muted"></div>
   </form>
 
