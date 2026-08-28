@@ -14,7 +14,7 @@ Este documento consolida:
 |---|---|
 | Última actualización | **27/08/2026** |
 | Estado | Vigente. Los RF marcados *Acordado* son implementables; los *Parcial* esperan su decisión `D-xxx`; **✅ Hecho** = implementado y validado con tests en el repo |
-| Decisiones abiertas | 14 (`D-004`…`D-016`, `D-020`) + `D-018` provisional — §6. Cerradas el 27/08/2026: D-001, D-002, D-003, D-017, D-019 y las operativas del lado asesor D-021, D-022, D-023 (esta última provisional hasta F5) |
+| Decisiones abiertas | 12 (`D-006`…`D-016`, `D-020`) + `D-018` provisional — §6. Cerradas: D-001, D-002, D-003, D-017, D-019, D-021, D-022, D-023 (27/08) y **D-004, D-005** (28/08) |
 | Pendiente sobre el modelo | 6 ajustes detectados en la revisión; 1–4 y 6 ya implementados, el 5 (GSI *sparse*) por decidir — ver §1.11 |
 
 | Fecha | Cambio |
@@ -22,6 +22,7 @@ Este documento consolida:
 | 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
 | 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
 | 27/08/2026 | F1 implementada: se cierran D-001/D-002/D-003 (y D-017/D-019 por derivación), se marcan ✅ los RF/RNF/RB cubiertos, se añade el ajuste 6 (`status` en Messages) y se señala que RF-003/AC-003/RB-002 quedan sin efecto por D-002 |
+| 28/08/2026 | Se cierran **D-004** (ventana de contexto: últimos 20 mensajes de la última hora, sin resumen) y **D-005** (guardrails: 2000 caracteres, 10 mensajes/min → 429, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo). RF-009, RF-013 y RF-014 pasan a ✅ |
 | 27/08/2026 | Mensajería del asesor (`/advisor/*`): RF-012, RF-029, RF-032, RF-034, RF-035, RF-038 ✅; RF-006, RF-031, RF-033 parciales. Se cierran D-021 (alta de asesores), D-022 (quién responde) y D-023 (cierre mínimo sin ticket, provisional). AC-005 y AC-006 cubiertos por tests |
 
 **Documentos relacionados:** [PLAN.md](PLAN.md) traduce esto a arquitectura ·
@@ -379,12 +380,12 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
 | RF-008 | Persistencia de conversaciones y mensajes | Cada mensaje persistido deberá almacenar al menos `conversation_id`, sender, timestamp, tipo de contenido y estado técnico | ✅ Hecho 27/08/2026 (`conversations/repository.py`) |
-| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | Acordado (enum en el modelo; transiciones en F5) |
+| RF-009 | Estados de conversación simplificados | La conversación usará: `BOT_ATENDIENDO`, `PENDIENTE_ASESOR`, `EN_ATENCION` y `CERRADA` | ✅ Hecho 27/08/2026 — enum `ConversationStatus` (`BOT_ATTENDING`, `PENDING_ADVISOR`, `IN_ATTENTION`, `CLOSED`, en inglés por T7) y las transiciones que hoy existen: tomar (`→ IN_ATTENTION`) y cerrar (`→ BOT_ATTENDING`). El handoff (`→ PENDING_ADVISOR`) llega con F5 |
 | RF-010 | Máximo configurable de conversaciones activas | Para anónimos el máximo es 1. Para autenticados el valor del MVP queda definido por D-002 | ✅ Hecho 27/08/2026 — D-002: 1 para todos |
 | RF-011 | La conversación cerrada no desaparece instantáneamente | El usuario verá que la conversación finalizó y tendrá una acción para iniciar una nueva. Reapertura/historial dependen de D-003 | Acordado — redefinido por D-003: lo que cierra es el **ticket**, la conversación permanece y muestra la nota "Ticket cerrado" (widget ✅; cierre en F5) |
 | RF-012 | Historial completo disponible para el asesor | El asesor deberá poder consultar la conversación actual y conversaciones anteriores disponibles del usuario autenticado | ✅ Hecho 27/08/2026 — `GET /advisor/conversations/{id}/messages` con paginación hacia atrás (`before`); una sola conversación por usuario (D-003), así que el historial es el hilo completo |
-| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | Acordado (`list_recent_messages` ✅; uso en F2) |
-| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | Parcial ✅ — largo de mensaje configurable; rate limit y el resto esperan D-005 |
+| RF-013 | Contexto acotado para IA | Las llamadas de IA utilizarán como máximo una ventana reciente de aproximadamente 20 mensajes; no se enviará el historial completo. La estrategia de resumen queda en D-004 | ✅ Hecho 28/08/2026 — D-004 cerrada: `conversations.service.context_window` devuelve los últimos 20 mensajes de la última hora. Sin resumen; el uso en el pipeline llega con F2 |
+| RF-014 | Límites configurables contra abuso | El sistema deberá soportar límites de cantidad de mensajes, longitud, frecuencia, imágenes y tamaño de conversación. Los valores se cierran en D-005 | ✅ Hecho 28/08/2026 — D-005 cerrada: largo de mensaje (2000), rate limit (10/min → 429) y límites de imagen configurados. La aplicación de los de imagen es F6 |
 
 ## 3.3 IA, clasificación y FAQ/RAG
 
@@ -396,7 +397,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | Parcial ✅ — umbral en `rag.search` + redactor sin fragmentos; el umbral está **sin calibrar** |
 | RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | Parcial ✅ — cada fragmento llega al redactor con su `source_url`; falta verificar que el modelo la cite |
 | RF-020 | Gemini como capa de escritura | Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana | Acordado |
-| RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | Parcial |
+| RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | Parcial — D-006 sigue abierta. El rate limit de D-005 ya frena la ráfaga, pero no evita la llamada IA de un saludo suelto |
 
 ## 3.4 Derivación humana y tickets
 
@@ -472,7 +473,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 | RNF-004 | Idempotencia | Sin duplicados por retries/webhooks | Aplicar claves idempotentes y deduplicación — ✅ 27/08/2026 (`client_message_id` + marcador transaccional) |
 | RNF-005 | Seguridad de identidad | No confiar en identidad enviada libremente por frontend | Mecanismo VMC ↔ Subastín cerrado en D-001 — ✅ 27/08/2026 |
 | RNF-006 | Observabilidad | Logs, métricas y alertas | CloudWatch u observabilidad equivalente |
-| RNF-007 | Protección de costo/abuso | Límites configurables | Valores concretos en D-005/D-006 |
+| RNF-007 | Protección de costo/abuso | Límites configurables | ✅ Valores de D-005 en `core/config.py` y en `common_env` del stack (ajustables sin desplegar código). D-006 (triviales) sigue abierta |
 | RNF-008 | Optimización multimodal | No enviar imágenes originales innecesariamente a IA | Resize/compresión según D-015 |
 
 ---
@@ -502,15 +503,17 @@ Todas las decisiones de esta sección tienen como responsables de cierre a **Sil
 Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 
 **Cerradas el 27/08/2026 (Aaron):** D-001, D-002, D-003 y, por derivación, D-017 y D-019; D-018
-queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D-022 y D-023. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D-022 y D-023.
+**Cerradas el 28/08/2026 (Aaron):** D-004 (sin resumen; ventana de 20 mensajes / 1 hora) y D-005
+(guardrails cuantitativos). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
 
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|
 | D-001 | Mecanismo de identidad VMC ↔ Subastín | **✅ Cerrada 27/08/2026:** JWT HS256 firmado por el **servidor** de VMC con un secreto compartido, dejado en la página como `window.subastinSettings.userJwt`; Subastín lo verifica y emite su propio token de sesión (esquema de *identity verification* de Intercom). Las cookies de VMC son HttpOnly y no se leen. Identidad visible del asistente: "Subastín" | Alta |
 | D-002 | Máximo de conversaciones activas para usuario autenticado | **✅ Cerrada 27/08/2026:** 1 conversación activa (autenticado y anónimo). Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: sin handoff ni ticket, porque no hay forma de identificarlo para continuar un ticket días después | Alta |
 | D-003 | Cierre, reapertura e historial visible | **✅ Cerrada 27/08/2026:** una sola conversación permanente por usuario autenticado; el historial son los tickets, que al cerrarse dejan la nota "Ticket cerrado" en el hilo (como Intercom). Sin autocierre de conversación; el ticket sin respuesta se decide en D-007 | Alta |
-| D-004 | Resumen de conversación para IA | Definir si siempre se genera resumen, cada cuántos mensajes, tamaño objetivo, cuándo se actualiza y si se usa junto a los últimos 20 mensajes | Media |
-| D-005 | Guardrails cuantitativos | Definir máximo de mensajes por conversación —ej. 1,000—, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso | Alta |
+| D-004 | Resumen de conversación para IA | **✅ Cerrada 28/08/2026 (Aaron):** **no hay resumen**. La memoria del bot son los últimos 20 mensajes **de la última hora** (`AI_CONTEXT_MESSAGES` / `AI_CONTEXT_WINDOW_MINUTES`). Pasada la ventana el mensaje se atiende solo. Motivo: con D-003 la conversación no se cierra nunca, así que sin corte temporal el contexto crecería indefinidamente; `summary`/`summary_updated_at` quedan en el modelo sin uso | Media |
+| D-005 | Guardrails cuantitativos | **✅ Cerrada 28/08/2026 (Aaron):** 2000 caracteres por mensaje; **10 mensajes/min** por conversación (= por usuario con D-002) → 429 con `Retry-After`; imágenes 5 MB, 3 por mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo** de mensajes por conversación: con D-003 es permanente y un tope duro la dejaría inservible de por vida; el crecimiento lo rige la retención (D-014). Todos los valores son variables de entorno (RNF-007) | Alta |
 | D-006 | Optimización de saludos/spam/repetición | Definir qué mensajes no ameritan llamada completa a IA y cuándo se usa respuesta determinística, cooldown o bloqueo temporal | Media |
 | D-007 | Duración del modo IA OFF durante handoff | Definir si permanece apagada hasta que un asesor cierre el caso —recomendado— o si existe expiración/reevaluación, por ejemplo 8 h | Alta |
 | D-008 | Taxonomía de problemas y tickets | Definir tipos de problema, qué genera ticket, campos obligatorios por tipo, área responsable, prioridad y criterios de cierre | Alta |

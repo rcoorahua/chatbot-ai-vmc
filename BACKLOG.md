@@ -116,12 +116,12 @@ resuelve un asesor a partir de los claims del JWT y registra `last_login_at`. Ro
 pero el campo `role` queda listo para crecer.
 Criterio: dado un `cognito_sub`, el servicio devuelve el asesor y marca su último acceso.
 
-**T-05 · Lógica de conversación** — ✅ hecho 2026-08-27 en lo que D-002/D-003/D-018 cubren
+**T-05 · Lógica de conversación** — ✅ hecho 2026-08-28
 Requerimientos: RF-009, RF-010, RF-011, RF-013, RF-014 · Depende de: T-02
 Cerradas: D-002 (1 conversación), D-003 (conversación permanente; se cierran tickets), D-018
-(provisional). **Pendiente:** rate limit y límites por conversación (D-005 — hoy solo el largo del
-mensaje, configurable) y el resumen (D-004). Las transiciones de estado y el cierre de tickets
-llegan con T-07 (F5).
+(provisional), **D-004** (ventana de 20 mensajes de la última hora, sin resumen) y **D-005**
+(2000 caracteres, 10 mensajes/min → 429, límites de imagen). **Pendiente:** aplicar los límites
+de imagen (F6) y el handoff, que trae la transición a `PENDING_ADVISOR` (T-07).
 Archivos: `backend/conversations/service.py`
 
 **T-06 · Endpoints del chat público** — ✅ hecho 2026-08-27 (`tests/test_chat_api.py`)
@@ -267,7 +267,7 @@ para decidir en qué orden atacarlas con Silvana y Julio.
 | Decisión | Desbloquea | Impacto |
 |---|---|---|
 | ~~**D-001** identidad VMC~~ | cerrada 2026-08-27 | — |
-| **D-005** guardrails | T-40 y el rate limit de T-05 (el largo de mensaje ya es configurable) | Alto |
+| ~~**D-005** guardrails~~ | **Cerrada 28/08/2026** — límites en `core/config.py` y en el stack | — |
 | ~~**D-002** máx. conversaciones~~ | cerrada 2026-08-27 | — |
 | ~~**D-018** sesión anónima~~ | provisional desde 2026-08-27 (confirmar) | — |
 | **D-008** taxonomía de tickets | T-07 | Alto — y es la que más trabajo de negocio requiere |

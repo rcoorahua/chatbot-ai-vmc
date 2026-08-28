@@ -608,7 +608,7 @@ const NODES = [
 {id:"D-001",g:"D",f:1,t:"Mecanismo de identidad VMC ↔ Subastín",d:"CERRADA 27/08/2026 (Aaron) — Script embebido con JWT de identidad: el SERVIDOR de VMC firma un JWT HS256 con un secreto compartido y lo deja en la página (window.subastinSettings.userJwt); Subastín lo verifica y emite su propio token de sesión. Es el esquema de identity verification de Intercom. Las cookies de VMC (subastop_jwt) son HttpOnly, así que ningún script puede leerlas: por eso no se leen. Se descartaron iframe y servidor-servidor. Contrato para VMC en widget/README.md."},
 {id:"D-002",g:"D",f:1,t:"Máximo de conversaciones activas para usuario autenticado",d:"CERRADA 27/08/2026 (Aaron) — 1 conversación activa, tanto autenticado como anónimo. Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: no deriva a asesor ni genera ticket, porque sin identidad no hay forma de continuar el caso días después. Se descartó el máximo de 3."},
 {id:"D-003",g:"D",f:1,t:"Cierre, reapertura e historial visible",d:"CERRADA 27/08/2026 (Aaron) — Una sola conversación permanente por usuario: no se cierra, no se reabre y no se crea otra. Lo que se cierra son los TICKETS, y el historial son esos tickets dentro del mismo hilo: al cerrarse aparece la nota de sistema 'Ticket cerrado', igual que las notas del messenger de Intercom. Sin autocierre por inactividad. El plazo de un ticket sin respuesta se decide en D-007."},
-{id:"D-005",g:"D",f:1,t:"Guardrails cuantitativos",d:"Prioridad Alta. Hay que cerrar: Definir máximo de mensajes por conversación -ej. 1,000-, tamaño de mensaje, rate limit, cantidad/tamaño de imágenes, límites por usuario/IP y política frente a abuso Responsables: Silvana y Julio."},
+{id:"D-005",g:"D",f:1,t:"Guardrails cuantitativos",d:"CERRADA 28/08/2026 (Aaron) — 2000 caracteres por mensaje. 10 mensajes por minuto y por conversacion (= por usuario con D-002): pasarse devuelve 429 con Retry-After y el mensaje NO se persiste. Imagenes: 5 MB cada una, 3 por mensaje, 20 por hora, JPG/PNG/WebP. SIN tope acumulativo de mensajes por conversacion: con D-003 es permanente, asi que un tope duro la dejaria inservible de por vida; el crecimiento lo rige la retencion (D-014). Todo son variables de entorno (RNF-007)."},
 {id:"D-018",g:"D",f:1,t:"Sesión anónima activa",d:"PROVISIONAL 27/08/2026 (derivada de RF-004, falta confirmar) — La sesión anónima es la pestaña del navegador: sobrevive a navegar entre páginas y a recargar (sessionStorage), y muere al cerrarla. El token dura 24 h, configurable en ANONYMOUS_SESSION_TTL_HOURS. Responsables: Silvana y Julio."},
 
 /* ---------- F2 · IA — Haiku clasifica, Gemini redacta ---------- */
@@ -618,7 +618,7 @@ const NODES = [
 {id:"RF-021",g:"RF",f:2,t:"Tratamiento eficiente de mensajes triviales o repetitivos",d:"El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006"},
 {id:"RNF-001",g:"RNF",f:2,t:"Latencia de respuesta automática",d:"Objetivo: ≤ 10 s en condiciones normales. No implica esperar 10 s; es un máximo objetivo"},
 {id:"RNF-007",g:"RNF",f:2,t:"Protección de costo/abuso",d:"Objetivo: Límites configurables. Valores concretos en D-005/D-006"},
-{id:"D-004",g:"D",f:2,t:"Resumen de conversación para IA",d:"Prioridad Media. Hay que cerrar: Definir si siempre se genera resumen, cada cuántos mensajes, tamaño objetivo, cuándo se actualiza y si se usa junto a los últimos 20 mensajes Responsables: Silvana y Julio."},
+{id:"D-004",g:"D",f:2,t:"Resumen de conversación para IA",d:"CERRADA 28/08/2026 (Aaron) — NO hay resumen. La memoria del bot son los ultimos 20 mensajes de la ULTIMA HORA (AI_CONTEXT_MESSAGES / AI_CONTEXT_WINDOW_MINUTES). Si el usuario vuelve pasada la ventana, la IA atiende solo su mensaje nuevo. Motivo: con D-003 la conversacion del autenticado no se cierra nunca, asi que sin corte temporal el contexto creceria sin limite — caro y confuso. Los campos summary y summary_updated_at quedan en el modelo sin uso."},
 {id:"D-006",g:"D",f:2,t:"Optimización de saludos/spam/repetición",d:"Prioridad Media. Hay que cerrar: Definir qué mensajes no ameritan llamada completa a IA y cuándo se usa respuesta determinística, cooldown o bloqueo temporal Responsables: Silvana y Julio."},
 {id:"D-020",g:"D",f:2,t:"Debounce/agregación de mensajes consecutivos",d:"Prioridad Media. Hay que cerrar: Definir ventana corta para agrupar mensajes antes de llamar a IA y evitar múltiples llamadas por frases partidas Responsables: Silvana y Julio."},
 
@@ -1065,7 +1065,11 @@ const EMPAQUETADO = [
 {id:"RF-008",kanban:"hecho",nota:"27/08: conversations/repository.py — cada mensaje guarda conversation_id, sender_type, created_at, message_type y status (estado tecnico)."},
 {id:"RF-010",kanban:"hecho",nota:"27/08: D-002 cerrada — 1 conversacion activa para todos; id determinista por usuario autenticado."},
 {id:"RF-011",kanban:"curso",nota:"Redefinida por D-003: lo que se cierra es el ticket, la conversacion permanece y muestra 'Ticket cerrado'. El widget ya lo dibuja; el cierre real llega con F5."},
-{id:"RF-014",kanban:"curso",nota:"Largo maximo de mensaje configurable (MAX_MESSAGE_CHARS, provisional hasta D-005). Falta rate limit y limites por conversacion."},
+{id:"RF-009",kanban:"hecho",nota:"27/08: enum ConversationStatus (BOT_ATTENDING, PENDING_ADVISOR, IN_ATTENTION, CLOSED — en ingles por T7) y las transiciones que existen hoy: tomar (a IN_ATTENTION) y cerrar (vuelve a BOT_ATTENDING). El paso a PENDING_ADVISOR lo trae el handoff (F5)."},
+{id:"RF-013",kanban:"hecho",nota:"28/08: D-004 cerrada. conversations.service.context_window devuelve los ultimos 20 mensajes de la ultima hora, en orden cronologico y sin marcadores. Sin resumen acumulado. El uso dentro del pipeline llega con F2."},
+{id:"RF-014",kanban:"hecho",nota:"28/08: D-005 cerrada. Largo de mensaje 2000, rate limit 10/min por conversacion (429 + Retry-After, el mensaje rechazado no se persiste) y limites de imagen configurados (5 MB / 3 por mensaje / 20 por hora). Los de imagen se aplican en F6. Todos son variables de entorno, tambien en el stack."},
+{id:"D-004",kanban:"hecho",nota:"Cerrada 28/08 (Aaron): sin resumen; ventana de 20 mensajes de la ultima hora."},
+{id:"D-005",kanban:"hecho",nota:"Cerrada 28/08 (Aaron): 2000 caracteres, 10 mensajes/min, imagenes 5MB/3 por mensaje/20 por hora, sin tope acumulativo."},
 {id:"RF-036",kanban:"hecho",nota:"27/08: widget y API del asesor (created_at en cada mensaje). Pendiente solo el render en la app."},
 {id:"RF-037",kanban:"curso",nota:"Hecho en el widget: el mensaje fallido queda local con 'Reintentar'. Pendiente en la app del asesor."},
 {id:"RF-038",kanban:"hecho",nota:"27/08: backend, widget y API del asesor comparten el marcador CMID#: el reintento devuelve el original con duplicate:true (AC-006). Pendiente el reintento local en la app."},
@@ -1097,7 +1101,7 @@ const EMPAQUETADO = [
 {id:"D-023",kanban:"curso",nota:"Cerrada 27/08 (Aaron) de forma provisional: cierre minimo sin ticket hasta que exista el modulo tickets (F5)."},
 {id:"D-019",kanban:"hecho",nota:"Cerrada por D-002: el anonimo no deriva a asesor, asi que no existe el ticket anonimo. RF-003/AC-003/RB-002 quedan sin efecto — revisar el spec."},
 ];
-const SELLO_COPIA = "2026-08-27";
+const SELLO_COPIA = "2026-08-28";
 let avisadoCopia = false;
 function avisarSoloLectura(){
   if(avisadoCopia) return;

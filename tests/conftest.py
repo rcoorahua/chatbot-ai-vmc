@@ -27,6 +27,23 @@ def secretos_de_prueba():
     """
     os.environ.setdefault("VMC_IDENTITY_SECRET", "test-vmc-identity-secret")
     os.environ.setdefault("SESSION_SIGNING_KEY", "test-session-signing-key")
+    # Las pruebas no deben depender del `~/.aws/config` de cada maquina: un perfil `[default]`
+    # mal formado (p. ej. `services = http://localhost:4566`, donde va el NOMBRE de una seccion
+    # `[services ...]`, no una URL) hace fallar la creacion de cualquier client boto3 nuevo, y
+    # el error aparece en pruebas que no tienen nada que ver. Aqui los endpoints los fija
+    # `.env`/el entorno, asi que el perfil no aporta nada.
+    os.environ["AWS_CONFIG_FILE"] = os.devnull
+    os.environ["AWS_SHARED_CREDENTIALS_FILE"] = os.devnull
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "local")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "local")
+    # Los endpoints locales se fijan SIEMPRE, aunque `.env` los traiga vacios. Sin esto boto3
+    # resuelve el endpoint real de AWS y la suite escribiria en la cuenta del que la corra: un
+    # `.env` con las variables en blanco no puede convertirse en una escritura a produccion.
+    # Mismos defaults que `scripts/local_setup.py` (docker-compose).
+    if not os.environ.get("DYNAMODB_ENDPOINT_URL"):
+        os.environ["DYNAMODB_ENDPOINT_URL"] = "http://localhost:8001"
+    if not os.environ.get("SQS_ENDPOINT_URL"):
+        os.environ["SQS_ENDPOINT_URL"] = "http://localhost:4566"
     reset_settings()
     reset_clients()
 

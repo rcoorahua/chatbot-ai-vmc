@@ -438,7 +438,7 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 |---|---|---|
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
 | **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
-| **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage` | TD-002, D-020 (debounce), D-006 (triviales) |
+| **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage`. La ventana de contexto ya está lista (`service.context_window`, D-004) | TD-002, D-020 (debounce), D-006 (triviales) |
 | **F3** | RAG: **ingesta y recuperación hechas 2026-08-27** (`agent/rag.py`, `scripts/helpcenter_*`; 22 artículos, 133 chunks). Falta conectarlo al pipeline y calibrar `RAG_MIN_SCORE` con datos reales | el pipeline depende de F2 (D-004/D-006/D-020) |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
 | **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
@@ -457,9 +457,12 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   cierran tickets, visibles en el hilo) y, por derivación, D-017 y D-019. D-018 provisional.
   Lado asesor (mismo día): D-021 (auto-alta al primer login), D-022 (responde solo quien tomó
   la conversación; sin ticket), D-023 (cierre mínimo sin ticket, provisional hasta F5).
+- **De negocio cerradas (2026-08-28, Aaron):** D-004 (sin resumen: ventana de 20 mensajes de la
+  última hora) y D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
+  mensaje / 20 por hora, sin tope acumulativo).
   Detalle en [CLAUDE.md](CLAUDE.md).
-- **De negocio abiertas:** D-004…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
-  [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea: **D-005** (guardrails),
+- **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
+  [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-007** (IA OFF en handoff), **D-008** (taxonomía tickets), **D-010** (campos de usuario),
   **D-011** (contrato HERALD), **D-014** (retención).
 - **Técnicas abiertas (TD):** ver [CLAUDE.md](CLAUDE.md) — TD-001 (polling vs WebSocket), TD-002
