@@ -69,6 +69,7 @@ def record_execution(
     latency_ms: int,
     rag_used: bool = False,
     rag_results_count: int | None = None,
+    rag_fragments: list[dict[str, Any]] | None = None,
     handoff_triggered: bool = False,
     status: str = "SUCCESS",
 ) -> None:
@@ -103,6 +104,19 @@ def record_execution(
         item["intent"] = intent
     if rag_results_count is not None:
         item["rag_results_count"] = rag_results_count
+    if rag_fragments:
+        # Que trajo el RAG para esta respuesta (consola de dev, api/routers/dev.py): tema,
+        # score y fuente de cada fragmento recuperado. NUNCA el texto del fragmento — eso es
+        # contenido del Centro de Ayuda, no el mensaje del usuario, pero igual no hace falta
+        # para depurar el retrieval y agrandaria la fila sin necesidad.
+        item["rag_fragments"] = [
+            {
+                "topic": fragment["topic"],
+                "score": Decimal(str(round(fragment["score"], 4))),
+                "source_url": fragment["source_url"],
+            }
+            for fragment in rag_fragments
+        ]
     # Un evento por ejecucion, con las mismas claves que la fila (RNF-006): en CloudWatch Logs
     # Insights `filter event = "ai.execution" | stats sum(estimated_cost_usd) by source` da la
     # foto de costos sin tocar DynamoDB. Sin contenido de mensajes: solo ids y metricas.
