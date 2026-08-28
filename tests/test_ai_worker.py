@@ -272,6 +272,12 @@ def test_faq_con_evidencia_responde_con_el_redactor(limpiar, tablas, fake_llm, c
     respuesta = next(u for u in usos if u["execution_type"] == "RESPONSE")
     assert respuesta["rag_used"] is True and respuesta["rag_results_count"] == 1
     assert respuesta["provider"] == "GOOGLE" and respuesta["estimated_cost_usd"] > 0
+    # La consola de dev (widget/test.html) necesita QUE trajo el RAG, no solo cuantos.
+    # _usos lee la fila con boto3 crudo (sin from_dynamo), asi que el score llega como Decimal.
+    fragmento = respuesta["rag_fragments"][0]
+    assert fragmento["topic"] == "Comision"
+    assert float(fragmento["score"]) == pytest.approx(0.9)
+    assert fragmento["source_url"] == "https://centro-de-ayuda-vmc.vercel.app/comision"
 
 
 def test_faq_sin_evidencia_deriva_en_vez_de_inventar(limpiar, tablas, fake_llm, sin_rag):
