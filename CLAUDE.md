@@ -235,8 +235,9 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
   `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:
   `agent/guardrails.py` (entrada y salida), `tests/golden/intents.jsonl`, `scripts/eval_intents.py`.
-  Falta calibrar `RAG_MIN_SCORE`, correr la eval real y anotar el score base, la notificación
-  Slack (D-016) y el ticket al derivar (D-008). El resto (`tickets`, `catalog`,
+  `RAG_MIN_SCORE` calibrado en `0.84` (2026-08-28, ver "RAG" abajo). Falta correr la eval real
+  de intents y anotar el score base, la notificación Slack (D-016) y el ticket al derivar
+  (D-008). El resto (`tickets`, `catalog`,
   `images`, `notifications`, `routers/dashboard.py`, `workers/notify_worker.py`) son stubs con
   docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
   el usuario lo pida, no por adelantado.
@@ -290,8 +291,18 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   mano con otro modelo no da error, solo resultados malos. Por eso lo crea
   `scripts/helpcenter_upload.py`, no la consola web. Gemini **no** interviene en los embeddings.
 - `RAG_MIN_SCORE` es RF-018 hecho código: Pinecone siempre devuelve los `top_k` más cercanos,
-  también para una pregunta ajena al Centro de Ayuda. **Está sin calibrar** — el valor real se
-  mide con `python -m scripts.helpcenter_upload --verify`.
+  también para una pregunta ajena al Centro de Ayuda. **Calibrado 2026-08-28 en `0.84`**
+  (antes `0.75`, sin calibrar) contra el índice real: con `0.75`, preguntas totalmente ajenas a
+  VMC ("¿cuánto está el dólar hoy?" → `0.835`, "receta de pastel" → `0.807`) pasaban el umbral
+  y el redactor podía recibir evidencia que no venía al caso. El margen real es **angosto**
+  (10 preguntas on-topic: mínimo `0.844`; 10 off-topic: máximo `0.835` — solo `0.009` de
+  separación) por la compresión de similitud típica de `multilingual-e5-large` en textos
+  cortos: ningún umbral separa perfectamente, y `0.84` es el mejor punto dentro de esa
+  ventana con esta muestra, no un valor definitivo. Por eso la clasificación (ruteo a `OTHER`,
+  RF-016) sigue siendo la primera defensa contra preguntas fuera de dominio; `RAG_MIN_SCORE`
+  es el respaldo para cuando el clasificador falla o Gemini no responde (`classify()` cae a
+  `FAQ` ante un `LLMError`). Re-verificar con `python -m scripts.helpcenter_upload --verify`
+  si el corpus crece o si `RB-009` falla en producción.
 - Los ids de chunk son estables (`hc-<artículo>-<pregunta>-<huella>`): con ids posicionales, una
   pregunta nueva corre a todas las siguientes y el upsert sobrescribe cada vector con el texto de
   otro, sin fallar. El upsert es aditivo: para un refresco completo, `--replace`.
