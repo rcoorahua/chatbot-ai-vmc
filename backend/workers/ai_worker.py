@@ -29,7 +29,7 @@ el timeout de esta funcion.
 
 import logging
 
-from backend.agent import prompts, rag, trivial, usage, writer
+from backend.agent import guardrails, prompts, rag, trivial, usage, writer
 from backend.agent.classifier import ClassificationResult, classify
 from backend.agent.intents import Intent
 from backend.conversations import repository, service
@@ -49,6 +49,12 @@ from backend.core.jobs import AIJob
 logger = logging.getLogger(__name__)
 
 _GOOGLE = "GOOGLE"
+
+# Respuesta fija por tipo de guardrail de entrada (D-024). El texto vive en prompts.py.
+_GUARDRAIL_RESPONSES = {
+    guardrails.PROMPT_INJECTION: prompts.GUARDRAIL_INJECTION_RESPONSE,
+    guardrails.PRIVACY_REQUEST: prompts.GUARDRAIL_PRIVACY_RESPONSE,
+}
 
 
 def handler(event: dict, context) -> dict:
@@ -117,11 +123,25 @@ def _attend(conversation: Conversation, message: Message) -> None:
     if kind == "thanks":
         _reply_fixed(conversation, message, prompts.TRIVIAL_THANKS_RESPONSE, "trivial_thanks")
         return
+    if kind == "identity":
+        _reply_fixed(conversation, message, prompts.TRIVIAL_IDENTITY_RESPONSE, "trivial_identity")
+        return
     if _is_repeat(text, window, block_keys):
         if _already_warned_repeat(window):
             _record_free(conversation, message, source="trivial_repeat_silent")
         else:
             _reply_fixed(conversation, message, prompts.TRIVIAL_REPEAT_RESPONSE, "trivial_repeat")
+        return
+
+    # ── D-024 / RF-052: guardrails de entrada, sin llamada IA ──
+    # Van despues de la repeticion a proposito: quien insiste con el mismo intento recibe el
+    # aviso de repetido y luego silencio, en vez de una respuesta fija por cada intento.
+    verdict = guardrails.check_input(text)
+    if verdict is not None:
+        _reply_fixed(
+            conversation, message, _GUARDRAIL_RESPONSES[verdict.kind],
+            f"guardrail:{verdict.kind}:{verdict.rule}",
+        )
         return
 
     # ── RF-015/016: clasificar (reglas → tier FAST; Gemini orquesta por TD-008) ──
@@ -167,12 +187,19 @@ def _answer_faq(
         [fragment.as_context() for fragment in fragments],
         history=_history(window, block_keys),
     )
+    if result.guardrail:
+        # El modelo respondio pero se salio de la evidencia (cifra o enlace ajenos, fuga del
+        # prompt): se registra aparte de "sin evidencia" porque el arreglo es distinto (prompt
+        # o corpus, no umbral del RAG).
+        source = f"guardrail:{result.guardrail}"
+    else:
+        source = "model" if result.model else "fallback"
     usage.record_execution(
         conversation_id=conversation.conversation_id,
         message_id=message.message_id,
         execution_type=usage.RESPONSE,
         intent=str(Intent.FAQ),
-        source="model" if result.model else "fallback",
+        source=source,
         provider=_GOOGLE if result.model else usage.NO_PROVIDER,
         model=result.model,
         usage=result.usage,

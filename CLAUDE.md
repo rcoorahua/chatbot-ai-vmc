@@ -15,7 +15,10 @@ dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repa
 
 Entorno: `.venv` + `pip install -e ".[dev]"`. Python ≥ 3.12, Node 22 (frontend y `node --check`
 del widget). `.env` a partir de `.env.example`: el chat necesita `VMC_IDENTITY_SECRET` y
-`SESSION_SIGNING_KEY` (cualquier texto en dev).
+`SESSION_SIGNING_KEY` (cualquier texto en dev) y, para que el bot responda,
+`AI_JOBS_QUEUE_URL=http://localhost:4566/000000000000/subastin-dev-ai-jobs` — sin ella el
+mensaje se guarda como `QUEUE_FAILED` y nunca llega al worker. Una variable vacía en `.env` cae
+al default del campo (`core/config.py`), así que copiar la plantilla tal cual no rompe nada.
 
 ```powershell
 docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
@@ -25,17 +28,21 @@ uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
 cd widget; python -m http.server 8080                # widget: http://localhost:8080/test.html
 
 python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/helpcenter/*.md + chunks.json
-python -m scripts.helpcenter_upload --verify         # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE)
+python -m scripts.helpcenter_upload --verify "cuanto es la comision"   # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE); --replace = refresco completo
 python -m scripts.advisor_token --sub sub-ana-001 --name "Ana Torres"   # Bearer para /advisor en local (ADVISOR_DEV_AUTH=1)
 python -m scripts.run_ai_worker                      # el bot responde en local (worker contra la cola de localstack; pide GEMINI_API_KEY)
+python -m scripts.eval_intents                       # eval REAL del golden set contra Gemini (~1 centavo); obligatoria al tocar agent/prompts.py o heuristics.py
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
 python -m pytest -k "gsi1" -q                        # un patrón / una prueba
 python -m ruff check .            # lint (line-length 100, reglas E/F/I/UP/B)
+node --check widget/subastin.js   # sintaxis del widget (no tiene tests)
 
-cd infra; npx -y aws-cdk@2 synth -c stage=stage      # valida la infra sin desplegar
+cd infra; npx -y aws-cdk@2 synth -c stage=stage      # valida la infra sin desplegar (lo corre el CI)
+cd infra; npx -y aws-cdk@2 watch -c stage=stage      # hotswap del código Lambda (~3 s); cambios de infra = deploy
 cd frontend; npm run dev                             # Next.js 16 en :3000
+cd frontend; npm run lint; npm run build             # eslint + build de producción
 ```
 
 `local_setup` y `seed_data` hay que **re-ejecutarlos tras cada reinicio de contenedores**:
@@ -44,6 +51,19 @@ dynamodb-local corre `-inMemory` y pierde las tablas.
 Los tests corren contra **dynamodb-local real**, no mocks: si los contenedores no están arriba
 se saltan en local, pero **fallan duro en CI** (`conftest.py` distingue por la variable `CI`).
 De ahí que un GSI mal definido se detecte en `tests/test_dynamo_queries.py` y no en producción.
+
+Convenciones de la suite (`tests/conftest.py`): `conftest` fija SIEMPRE los endpoints locales y
+apunta `AWS_CONFIG_FILE` a `devnull` — un `.env` en blanco no puede convertir la suite en una
+escritura a AWS real; también fija secretos de identidad de prueba, así que no necesita `.env`.
+Los tests que **escriben** crean ids con el fixture `conversacion_temporal` (`conv_test_*`, se
+borran al terminar y se purgan al arrancar) y **nunca mutan el dataset de `seed_data`**, que es
+lo que consultan las pruebas de lectura. Los tests de IA sustituyen `LLMClient` por un doble
+(`tests/test_agent_llm.py`), no simulan el SDK: la suite corre sin claves ni red.
+
+CI (`.github/workflows/ci.yml`): lint + tests (dynamodb-local 2.5.2 y localstack 3.7 como
+`services`, mismos tags que `docker-compose.yml`) + `cdk synth`, sin credenciales AWS. El CD
+(`deploy.yml`) está **maquetado y apagado** (`if: false`) hasta tener cuenta AWS (PLAN.md §6);
+`infra/config.py` lleva `account=None` a propósito.
 
 Hook local obligatorio al clonar: `git config core.hooksPath .githooks` (bloquea push directo a
 `main`/`develop`; escape hatch `ALLOW_DIRECT_PUSH=1`).
@@ -147,6 +167,18 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-020 Debounce (2026-08-28)**: 6 s (`AI_DEBOUNCE_SECONDS`) como `DelaySeconds` de SQS; el
   worker salta el job si hay un mensaje más nuevo y el job del último responde la ráfaga en UNA
   llamada IA. Sin estado extra.
+- **D-024 Guardrails de seguridad (2026-08-28)**: intento de manipulación (jailbreak, pedir el
+  prompt, cambiar el rol, autoridad falsa, etiquetas del prompt) → respuesta fija amable, **sin
+  IA y sin derivar**; datos de OTROS usuarios (RF-052) → fija de privacidad, sin derivar. Capa
+  de salida: cifra o enlace que no esté en la evidencia, o fuga del prompt → se descarta la
+  respuesta y deriva como "sin evidencia". Todo en `agent/guardrails.py`; corre después de la
+  repetición (D-006) a propósito, para que insistir no gane una fija por intento.
+- **D-025 Tono (2026-08-28)**: español peruano cercano, natural; máximo **un emoji** por
+  mensaje (fijos y generados), nunca junto a cifras o enlaces; sin markdown ni guiones largos
+  como separador (`guardrails.tidy` limpia lo que se escape). Mensajes fijos en `agent/prompts.py`.
+- **D-026 Eval de prompts (2026-08-28)**: golden set en `tests/golden/intents.jsonl`; en CI solo
+  la parte determinista (`tests/test_golden_intents.py`). La eval real contra Gemini es manual:
+  `python -m scripts.eval_intents` (~1 centavo) y exige ≥ 95% para mergear un cambio de prompt.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -164,7 +196,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-007, D-017, D-019, D-020 y D-021…D-023 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-017, D-019, D-020, D-021…D-023 y D-024…D-026 **cerradas** (arriba); D-018 provisional.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
@@ -198,12 +230,19 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
-  `scripts/run_ai_worker.py`). Falta calibrar `RAG_MIN_SCORE`, la notificación Slack (D-016) y
-  el ticket al derivar (D-008). El resto son stubs con docstrings; se implementan fase por fase
-  (PLAN.md §8) cuando el usuario lo pida, no por adelantado.
+  `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:
+  `agent/guardrails.py` (entrada y salida), `tests/golden/intents.jsonl`, `scripts/eval_intents.py`.
+  Falta calibrar `RAG_MIN_SCORE`, correr la eval real y anotar el score base, la notificación
+  Slack (D-016) y el ticket al derivar (D-008). El resto (`tickets`, `catalog`,
+  `images`, `notifications`, `routers/dashboard.py`, `workers/notify_worker.py`) son stubs con
+  docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
+  el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
 - Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
   entorno local de dev — mantener ambos en sync al agregar una dependencia.
+- Locales y **no versionados** (`.gitignore`): `my-usage.md` (chuleta personal), `REFERENCIA/`
+  (proyecto v0 de referencia; su `.cursor/` no aplica a este repo), `data/helpcenter/*.md` y
+  `chunks.json` (se regeneran con `helpcenter_fetch`). No enlazarlos desde docs versionadas.
 
 **Invariantes que cruzan archivos (romperlos no lo detecta el linter):**
 
@@ -246,4 +285,6 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   otro, sin fallar. El upsert es aditivo: para un refresco completo, `--replace`.
 - `frontend/` usa **Next.js 16** (App Router, React 19, Tailwind v4): APIs y convenciones difieren
   del entrenamiento — consultar `frontend/node_modules/next/dist/docs/` antes de escribir código,
-  como pide `frontend/AGENTS.md`. Se despliega fuera de CDK (TD-003).
+  como pide `frontend/AGENTS.md`. Se despliega fuera de CDK (TD-003). Hoy las páginas de
+  `src/app/advisor/` leen `src/lib/mock-data.ts`: **no están conectadas** a la API `/advisor`
+  (que sí funciona en local con `ADVISOR_DEV_AUTH=1`); conectarlas es trabajo pendiente.

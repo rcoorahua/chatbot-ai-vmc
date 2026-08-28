@@ -104,8 +104,9 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "fraud_accusation",
         _phrases(
-            "son una estafa", "son estafadores", "me estafaron", "están robando",
-            "me robaron", "es un fraude", "publicidad engañosa",
+            "son una estafa", "son estafadores", "unos estafadores", "puros estafadores",
+            "me estafaron", "están robando", "me robaron", "es un fraude",
+            "publicidad engañosa",
         ),
     ),
     (

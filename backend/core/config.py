@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     advisor_thread_page_size: int = 20
     inbox_page_size: int = 50
 
+    # ── Proveedores de IA (TD-008) ───────────────────────────────────────────────────────────
+    # SOLO en dev llegan por `.env`; en stage/prod se resuelven desde Secrets Manager antes de
+    # construir Settings. `core/llm.py` las lee de aqui (no de `os.environ`): pydantic carga
+    # `.env` en Settings pero no lo exporta al proceso, asi que leer el entorno directo dejaba
+    # la key de `.env` invisible y el bot caia al fallback sin avisar.
+    gemini_api_key: str | None = None
+    anthropic_api_key: str | None = None
+
     # ── RAG en Pinecone (RF-017/018/019) ────────────────────────────────────────────────────
     # Mismos nombres de variable que usaba el proyecto de referencia, para que una credencial
     # ya existente sirva sin renombrar nada.
