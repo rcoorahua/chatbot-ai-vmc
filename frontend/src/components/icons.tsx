@@ -53,6 +53,14 @@ export function PaperclipIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
   );
 }
 
+export function ChevronRightIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
 export function ImageIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
   return (
     <svg {...base(props)}>

@@ -19,9 +19,10 @@ function senderLabelFor(message: Message, conversation: Conversation): string {
 }
 
 /**
- * Vista de conversación del asesor (RF-033/034/035/036/037/038). El panel contextual solo
- * muestra los campos que YA existen en Conversation (nombre/correo/empresa/id/resumen) — el
- * set definitivo de campos de usuario sigue bloqueado por D-010, así que no se inventan más.
+ * Vista de conversación del cockpit (RF-033/034/035/036/037/038). Vive dentro
+ * de inbox/layout.tsx: el rail de la cola ya está a la izquierda en desktop, así
+ * que aquí solo el hilo + contexto — el volver a "Bandeja" (ArrowLeftIcon) solo
+ * hace falta en mobile, donde el rail se esconde (RF-047).
  */
 export default function ConversationDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -36,10 +37,10 @@ export default function ConversationDetailPage() {
 
   if (!conversation) {
     return (
-      <div className="text-sm text-neutral-500">
+      <div className="flex flex-1 items-center justify-center rounded-2xl bg-white p-10 text-center text-sm text-neutral-500 shadow-sm">
         No se encontró la conversación {id}.{" "}
-        <Link href="/advisor/inbox" className="underline">
-          Volver a la bandeja
+        <Link href="/advisor/inbox" className="ml-1 underline">
+          Volver a la cola
         </Link>
       </div>
     );
@@ -55,22 +56,33 @@ export default function ConversationDetailPage() {
     (conversation.status === "IN_ATTENTION" || (conversation.status === "PENDING_ADVISOR" && takenByMe));
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
-      <section className="flex min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
-        <header className="flex items-center justify-between border-b border-black/5 px-5 py-4">
-          <div className="flex items-center gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
+        <header className="flex items-center justify-between gap-3 border-b border-black/5 px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/advisor/inbox"
-              className="flex items-center gap-1 rounded-lg text-sm text-neutral-500 transition hover:text-neutral-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)]"
+              className="flex items-center rounded-lg text-neutral-500 transition hover:text-neutral-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)] lg:hidden"
+              aria-label="Volver a la cola"
             >
-              <ArrowLeftIcon width={16} height={16} />
-              Bandeja
+              <ArrowLeftIcon width={18} height={18} />
             </Link>
             <AvatarZone size="sm" title={conversation.user_name ?? "Anónimo"} />
-            <p className="font-semibold text-[#191C1C]">{conversation.user_name ?? "Usuario anónimo"}</p>
-            <StatusBadge status={conversation.status} />
+            <p className="min-w-0 flex-1 truncate text-base font-semibold text-[#191C1C]">
+              {conversation.user_name ?? "Usuario anónimo"}
+            </p>
+            <span className="flex-shrink-0">
+              <StatusBadge status={conversation.status} />
+            </span>
           </div>
-          {canReply && <Button variant="outline">Cerrar caso</Button>}
+          {canReply && (
+            <button
+              type="button"
+              className="flex-shrink-0 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)]"
+            >
+              Cerrar caso
+            </button>
+          )}
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
@@ -151,29 +163,36 @@ export default function ConversationDetailPage() {
 
       <aside className="flex w-full flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:w-80">
         <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
-          <dl className="mt-2 space-y-1.5 text-sm">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
+          <dl className="mt-2.5 space-y-1.5 text-sm">
             <Field label="Nombre" value={conversation.user_name} />
             <Field label="Correo" value={conversation.user_email} />
             <Field label="Empresa" value={conversation.user_company} />
             <Field label="ID VMC" value={conversation.user_id} />
           </dl>
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-2.5 text-xs text-neutral-400">
             Campos soportados hoy por el modelo de datos. Set definitivo pendiente de D-010.
           </p>
         </div>
 
-        <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Resumen (IA)</h2>
-          <p className="mt-1 text-sm text-neutral-600">{conversation.summary ?? "Sin resumen todavía."}</p>
+        {/* Lo que la IA ya resolvió — tinte violeta (identidad de Subastín, el asistente),
+            para que se distinga a simple vista de los datos crudos del usuario de arriba. */}
+        <div className="rounded-2xl bg-[color:var(--vmc-color-vault-500)]/5 p-3.5">
+          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[color:var(--vmc-color-vault-700)]">
+            <span className="flex h-4 items-center rounded-full bg-[color:var(--vmc-color-vault-500)] px-1.5 text-[10px] font-bold text-white">
+              IA
+            </span>
+            Resumen
+          </h2>
+          <p className="mt-2 text-sm text-neutral-700">{conversation.summary ?? "Sin resumen todavía."}</p>
         </div>
 
         {conversation.handoff_reason && (
-          <div>
-            <h2 className="text-sm font-bold uppercase tracking-wide text-neutral-500">Derivación</h2>
-            <p className="mt-1 text-sm text-neutral-600">{conversation.handoff_reason}</p>
+          <div className="rounded-2xl bg-[color:var(--vmc-color-orange-600)]/5 p-3.5">
+            <h2 className="text-xs font-bold uppercase tracking-wide text-[#9A4A0F]">Derivación</h2>
+            <p className="mt-2 text-sm text-neutral-700">{conversation.handoff_reason}</p>
             {conversation.handoff_requested_at && (
-              <p className="mt-0.5 text-xs text-neutral-500">
+              <p className="mt-1.5 text-xs text-[#9A4A0F]/70">
                 Esperando hace {formatWaitTime(conversation.handoff_requested_at, MOCK_NOW_MS)}
               </p>
             )}

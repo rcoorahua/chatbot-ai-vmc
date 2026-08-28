@@ -22,7 +22,7 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
 
   return (
     <div className="flex min-h-screen flex-col overflow-x-hidden bg-[#f7f7fb]">
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-black/5 bg-white px-4 py-3 sm:px-6">
+      <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-black/5 bg-white px-4 py-3 sm:px-6">
         <div className="flex items-center gap-4 sm:gap-6">
           <p className="text-lg font-bold text-[color:var(--vmc-color-vault-700)]">Subastín</p>
           <nav className="flex items-center gap-1">
@@ -49,7 +49,7 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
         </div>
         <Button variant="sm-logged-in" icon={<UserIcon />} username={CURRENT_ADVISOR.display_name} />
       </header>
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6">{children}</main>
+      <main className="flex min-w-0 flex-1 flex-col p-4 sm:p-6">{children}</main>
     </div>
   );
 }

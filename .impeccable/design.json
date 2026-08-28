@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T15:16:23Z",
+  "title": "Design System: Subastín — Panel de Asesor",
+  "extensions": {
+    "colorMeta": {
+      "vault-violet": { "role": "primary", "displayName": "Vault Violet", "canonical": "#8460E5" },
+      "vault-violet-light": { "role": "primary", "displayName": "Vault Violet Light", "canonical": "#AE8EFF" },
+      "vault-violet-deep": { "role": "primary", "displayName": "Vault Violet Deep", "canonical": "#3B1782" },
+      "vault-violet-abyss": { "role": "primary", "displayName": "Vault Violet Abyss", "canonical": "#22005C" },
+      "signal-orange": { "role": "secondary", "displayName": "Signal Orange", "canonical": "#ED8936" },
+      "signal-orange-light": { "role": "secondary", "displayName": "Signal Orange Light", "canonical": "#FBC47D" },
+      "signal-orange-deep": { "role": "secondary", "displayName": "Signal Orange Deep", "canonical": "#D46E20" },
+      "confirm-teal": { "role": "tertiary", "displayName": "Confirm Teal", "canonical": "#00AEB1" },
+      "confirm-teal-deep": { "role": "tertiary", "displayName": "Confirm Teal Deep", "canonical": "#009095" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#191C1C" },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#F7F7FB" },
+      "surface-white": { "role": "neutral", "displayName": "Surface White", "canonical": "#FFFFFF" },
+      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "#99A1AF" },
+      "disabled-surface": { "role": "neutral", "displayName": "Disabled Surface", "canonical": "#E1E3E2" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Un título por pantalla — Dashboard operativo, título de login." },
+      "body": { "displayName": "Body", "purpose": "Peso por defecto: mensajes, filas, párrafos." },
+      "label": { "displayName": "Label", "purpose": "Mayúsculas trackeadas: encabezados de tabla, badges, stat cards." }
+    },
+    "shadows": [
+      { "name": "ambient-card", "value": "rgba(32,0,104,0.06) 0 1px 2px, rgba(32,0,104,0.10) 0 12px 32px", "purpose": "Reposo de cualquier card, panel o tabla — tinte violeta muy sutil, nunca negro plano." },
+      { "name": "button-glow-orange", "value": "rgba(237,137,54,0.3) 0 2px 6px, rgba(132,96,229,0.35) 0 8px 24px blur(14-18px)", "purpose": "Halo detrás del botón primario, se intensifica en hover." },
+      { "name": "focus-halo", "value": "0 0 0 2px #fff, 0 0 0 5px var(--accent)", "purpose": "Doble anillo blanco+color en foco por teclado, consistente en todos los controles." }
+    ],
+    "motion": [
+      { "name": "control-press", "value": "transform 0.2s cubic-bezier(0.25,0.8,0.25,1)", "purpose": "translateY(-2px) scale(1.02) en hover, scale(0.97) translateY(1px) en active — todos los botones." },
+      { "name": "glow-fade", "value": "opacity 0.3s, filter 0.3s", "purpose": "El halo de color aparece/crece en hover, desaparece en active." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Acción principal de una pantalla — gradiente naranja→violeta con halo y highlight interno.",
+      "html": "<button class=\"ds-btn-primary\">Continuar con Cognito</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; height:48px; padding:0 56px; border-radius:9999px; border:2px solid transparent; font-family:'Plus Jakarta Sans',sans-serif; font-size:16px; font-weight:600; color:#fff; text-shadow:rgba(0,0,0,0.25) 0 1px 3px; background-image:linear-gradient(135deg,#ED8936 0%,#ED8936 40%,#8460E5 100%),linear-gradient(135deg,#fff 0%,#FBC47D 25%,#AE8EFF 75%,#fff 100%); background-origin:padding-box,border-box; background-clip:padding-box,border-box; box-shadow:rgba(255,255,255,0.28) 0 1px 0 2px inset, rgba(237,137,54,0.3) 0 2px 6px; transition:transform 0.2s cubic-bezier(0.25,0.8,0.25,1); } .ds-btn-primary:hover { transform:translateY(-2px) scale(1.02); } .ds-btn-primary:focus-visible { outline:none; box-shadow:0 0 0 2px #fff, 0 0 0 5px #8460E5; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Acción secundaria fuerte — gradiente violeta claro→oscuro (ej. Tomar conversación).",
+      "html": "<button class=\"ds-btn-secondary\">Tomar conversación</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; height:40px; padding:0 24px; border-radius:9999px; border:2px solid transparent; font-family:'Plus Jakarta Sans',sans-serif; font-size:14px; font-weight:600; color:#fff; background-image:linear-gradient(160deg,#8460E5 0%,#3B1782 100%); box-shadow:rgba(132,96,229,0.3) 0 2px 8px; transition:transform 0.2s; } .ds-btn-secondary:hover { transform:translateY(-1px) scale(1.02); }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "status-pending-advisor",
+      "description": "Pill de estado con punto sólido — 4 variantes fijas (naranja/teal/violeta claro/gris), nunca una quinta.",
+      "html": "<span class=\"ds-status ds-status--pending\"><span class=\"ds-status__dot\"></span>Pendiente asesor</span>",
+      "css": ".ds-status { display:inline-flex; align-items:center; gap:6px; border-radius:9999px; padding:4px 10px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; } .ds-status--pending { background:#FDF0E4; color:#9A4A0F; } .ds-status__dot { width:6px; height:6px; border-radius:9999px; background:#ED8936; }"
+    },
+    {
+      "name": "Compact Filter Chip",
+      "kind": "chip",
+      "refersTo": "none",
+      "description": "Patrón nuevo del cockpit: N opciones fijas en un grid de N columnas iguales — garantiza una sola fila sin envolver ni pedir scroll, para contenedores más angostos que el TabSelector completo (que impone 83px mínimos por pestaña).",
+      "html": "<div class=\"ds-filters\" role=\"tablist\"><button class=\"ds-filter ds-filter--active\">Todas</button><button class=\"ds-filter\">Pendientes</button><button class=\"ds-filter\">En atención</button><button class=\"ds-filter\">Cerradas</button></div>",
+      "css": ".ds-filters { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; } .ds-filter { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border-radius:9999px; padding:6px; font-size:11px; font-weight:600; text-align:center; color:#3B1782; background:transparent; border:none; } .ds-filter:hover { background:rgba(132,96,229,0.1); } .ds-filter--active { color:#fff; background-image:linear-gradient(135deg,#8460E5,#3B1782); box-shadow:0 1px 2px rgba(0,0,0,0.08); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Contenedor de contenido base — blanco, 16px de radio, sombra ambiental con tinte violeta.",
+      "html": "<div class=\"ds-card\">Contenido</div>",
+      "css": ".ds-card { background:#fff; border-radius:16px; padding:20px; box-shadow:rgba(32,0,104,0.06) 0 1px 2px, rgba(32,0,104,0.10) 0 12px 32px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Campo de texto con borde gradiente en reposo, foco naranja→violeta con glow.",
+      "html": "<div class=\"ds-input\"><input type=\"text\" placeholder=\"Escribe una respuesta…\" /></div>",
+      "css": ".ds-input { display:flex; align-items:center; height:48px; padding:0 16px; border-radius:16px; border:1px solid transparent; background-image:linear-gradient(#fff,#fff),linear-gradient(338deg,#8460E5 0%,#FFF8F1 100%); background-origin:border-box; background-clip:padding-box,border-box; } .ds-input:focus-within { border-width:2px; background-image:linear-gradient(#fff,#fff),linear-gradient(148deg,#ED8936 0%,#8460E5 100%); box-shadow:rgba(237,137,54,0.15) 0 2px 6px; } .ds-input input { border:none; outline:none; background:transparent; font-family:'Plus Jakarta Sans',sans-serif; font-size:16px; color:#191C1C; width:100%; }"
+    },
+    {
+      "name": "Avatar",
+      "kind": "custom",
+      "refersTo": "none",
+      "description": "Círculo con gradiente naranja diagonal + silueta blanca — placeholder universal de usuario.",
+      "html": "<div class=\"ds-avatar\"></div>",
+      "css": ".ds-avatar { width:32px; height:32px; border-radius:9999px; background-image:linear-gradient(135deg,#FF9639 0%,#EF852E 50%,#BE3D00 100%); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Tower",
+    "overview": "El panel es el centro de control donde un asesor humano toma el relevo cuando la IA no puede resolver sola. El violeta profundo (\"vault\") es el panel nocturno siempre encendido; el naranja y el teal son las luces de estado que dicen, sin necesidad de leer texto, qué necesita atención ahora y qué ya está bajo control. Los botones no son rectángulos planos: llevan un brillo interno y un halo de color a su alrededor, como un interruptor iluminado de consola — el sistema se siente encendido, no solo dibujado.\n\nSe rechaza explícitamente el look de dashboard SaaS genérico: nada de azul corporativo, nada de tarjetas idénticas sin jerarquía, nada de sombra negra plana. Cada superficie de contenido es sobria, y toda la personalidad vive en los controles — botones, badges, focus rings — no en decoración de fondo.",
+    "keyCharacteristics": [
+      "Violeta = identidad y acción primaria. Nunca dice \"esto es urgente\" — eso es trabajo del naranja.",
+      "Tres colores de estado (naranja / teal / violeta claro) + un neutro, nunca un cuarto color de estado inventado.",
+      "Todo control es completamente redondeado; todo contenedor de contenido usa 16px u 8px — nunca full.",
+      "La sombra por defecto es plana y neutra; el color en la sombra aparece solo cuando algo es interactivo."
+    ],
+    "rules": [
+      { "name": "The Signal Color Rule", "body": "Naranja = necesita al asesor ahora. Teal = ya está resuelto o en buenas manos. Violeta = identidad y acción, nunca estado.", "section": "colors" },
+      { "name": "The One Face Rule", "body": "Plus Jakarta Sans lleva cada voz del producto — título, cuerpo y etiqueta. Ningún componente nuevo introduce una segunda familia tipográfica.", "section": "typography" },
+      { "name": "The Glow-Is-Signal Rule", "body": "Una sombra de color solo existe sobre un control interactivo, teñida de su propio acento. Un card o panel nunca lleva sombra de color.", "section": "elevation" },
+      { "name": "The Pill Rule", "body": "Todo lo que es un control es completamente redondeado. Todo lo que contiene contenido usa 16px, salvo la tabla que usa 8px por ser más densa.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do usar los tres acentos solo con su rol fijo — naranja urgencia, teal resuelto, violeta identidad.",
+      "Do usar la sombra ambiental con tinte violeta en cualquier card o panel nuevo, nunca una sombra negra genérica.",
+      "Do mantener Plus Jakarta Sans como única familia; cambiar solo peso/tamaño para jerarquía.",
+      "Do usar radio completo en controles y 16px/8px en contenedores — nunca un radio intermedio.",
+      "Do envolver en vez de recortar cuando un grupo de controles no cabe en su contenedor."
+    ],
+    "donts": [
+      "Don't introducir un azul corporativo genérico ni un quinto color de estado.",
+      "Don't usar emoji o glifos unicode como ícono — hay un set propio en components/icons.tsx.",
+      "Don't poner sombra de color en un card o panel — el color de sombra es exclusivo de controles interactivos.",
+      "Don't usar TabSelector en un contenedor más angosto que ~360px con 3+ opciones; usar Compact Filter Chips.",
+      "Don't decorar con gradientes fuera de botones y avatar — el resto del sistema es plano por diseño."
+    ]
+  }
+}
