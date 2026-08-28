@@ -133,6 +133,40 @@ class Settings(BaseSettings):
     # va el dominio de VMC donde vive el widget.
     cors_allowed_origins: str = "*"
 
+    # ── Observabilidad (RNF-006; politica de Aaron 2026-08-28) ──────────────────────────────
+    # dev y stage detallados, prod sobrio. `None` = "decidir por stage" (ver las propiedades
+    # `effective_*`): asi un `.env` copiado de la plantilla no fija nada y prod no hereda el
+    # nivel de dev por accidente. En AWS los inyecta el stack por stage.
+    log_level: str | None = None  # DEBUG | INFO | WARNING | ERROR
+    log_content: bool | None = None  # vista previa del texto de los mensajes en los logs
+    log_format: str | None = None  # json | text
+    # Rutas /dev/* (consola de widget/test.html). Solo metricas de la conversacion propia.
+    dev_observability: bool | None = None
+
+    @property
+    def effective_log_level(self) -> str:
+        if self.log_level:
+            return self.log_level.upper()
+        return "INFO" if self.stage == "prod" else "DEBUG"
+
+    @property
+    def effective_log_content(self) -> bool:
+        return self.log_content if self.log_content is not None else self.stage != "prod"
+
+    @property
+    def effective_log_format(self) -> str:
+        if self.log_format:
+            return self.log_format.lower()
+        import os
+
+        return "json" if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") else "text"
+
+    @property
+    def dev_observability_enabled(self) -> bool:
+        if self.dev_observability is not None:
+            return self.dev_observability
+        return self.stage != "prod"
+
     @field_validator("*", mode="before")
     @classmethod
     def _empty_keeps_default(cls, value: object, info) -> object:

@@ -29,9 +29,30 @@ RESPONSE = "RESPONSE"
 # Proveedor de los caminos que no llamaron a ningun modelo (reglas, triviales, fallbacks).
 NO_PROVIDER = "NONE"
 
+logger = logging.getLogger(__name__)
+
+# Campos de la fila que NO van al log: la SK y el mes de facturacion son detalle de almacenamiento.
+_NOT_LOGGED = frozenset({"execution_key", "billing_month"})
+
 
 def _table():
     return dynamodb_resource().Table(get_settings().table_ai_usage)
+
+
+def list_executions(conversation_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Ejecuciones de una conversacion, de la mas reciente a la mas antigua (consola de dev en
+    `api/routers/dev.py` y auditoria). Devuelve dicts planos con numeros nativos: boto3 entrega
+    Decimal y los modelos de salida quieren int/float."""
+    from boto3.dynamodb.conditions import Key
+
+    from backend.core.dynamo_model import from_dynamo
+
+    response = _table().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [from_dynamo(item) for item in response.get("Items", [])]
 
 
 def record_execution(
@@ -82,9 +103,19 @@ def record_execution(
         item["intent"] = intent
     if rag_results_count is not None:
         item["rag_results_count"] = rag_results_count
+    # Un evento por ejecucion, con las mismas claves que la fila (RNF-006): en CloudWatch Logs
+    # Insights `filter event = "ai.execution" | stats sum(estimated_cost_usd) by source` da la
+    # foto de costos sin tocar DynamoDB. Sin contenido de mensajes: solo ids y metricas.
+    logger.info(
+        "ai.execution",
+        extra={
+            **{key: value for key, value in item.items() if key not in _NOT_LOGGED},
+            "estimated_cost_usd": float(estimated_cost_usd),
+        },
+    )
     try:
         _table().put_item(Item=item)
     except Exception:  # noqa: BLE001 — ver docstring: la respuesta ya salio, esto no la anula
-        logging.getLogger(__name__).exception(
+        logger.exception(
             "No se pudo registrar en AIUsage", extra={"conversation_id": conversation_id}
         )
