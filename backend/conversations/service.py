@@ -376,8 +376,9 @@ def start_handoff(conversation: Conversation, *, reason: str) -> bool:
     """Deriva a asesor (RF-022): PENDING_ADVISOR, bot apagado (RF-025) y nota SYSTEM
     `HANDOFF_REQUESTED` en el hilo. Devuelve False si ya estaba derivada o asignada.
 
-    La IA queda apagada hasta que un asesor cierre el caso (D-023 la devuelve al bot) — es la
-    opcion recomendada de D-007, PROVISIONAL hasta que Silvana+Julio la confirmen.
+    La IA queda apagada hasta que un asesor TOME y CIERRE el caso (D-023 la devuelve al bot).
+    Es D-007, cerrada el 2026-08-28 (Aaron): no se re-enciende sola, sin expiracion ni
+    temporizador — si nadie lo atiende, sigue esperando.
     Solo autenticados: el anonimo no deriva (D-002); eso lo decide el worker antes de llamar.
     """
     note = _system_note(

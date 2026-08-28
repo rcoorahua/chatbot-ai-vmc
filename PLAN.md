@@ -442,7 +442,7 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 | **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con `gemini-3.7-flash`, handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
 | **F3** | RAG: ingesta y recuperación hechas 2026-08-27; **conectado al pipeline 2026-08-28**. Falta solo calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) | — |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
-| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
+| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
 | **F7** | Dashboard + hardening: métricas, retención/TTL, auditoría QA, escenarios AC-001..009 end-to-end | D-013, D-014 |
 
@@ -461,12 +461,12 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
 - **De negocio cerradas (2026-08-28, Aaron):** D-004 (sin resumen: ventana de 20 mensajes de la
   última hora), D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
   mensaje / 20 por hora, sin tope acumulativo), D-006 (triviales fijos sin llamada IA) y D-020
-  (debounce de 6 s vía DelaySeconds de SQS). D-007 queda abierta pero implementada con su opción
-  recomendada (IA apagada hasta cierre del asesor).
+  (debounce de 6 s vía DelaySeconds de SQS) y D-007 (cerrada el mismo día, opción simple: la IA
+  no se re-enciende sola; apagada hasta que un asesor tome y cierre el caso, sin expiración).
   Detalle en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
-  **D-007** (IA OFF en handoff), **D-008** (taxonomía tickets), **D-010** (campos de usuario),
+  **D-008** (taxonomía tickets), **D-010** (campos de usuario),
   **D-011** (contrato HERALD), **D-014** (retención).
 - **Técnicas abiertas (TD):** ver [CLAUDE.md](CLAUDE.md) — TD-001 (polling vs WebSocket), TD-002
   (Haiku directo vs Bedrock), TD-003 (Vercel vs Amplify), TD-004 (cuentas separadas), TD-005
