@@ -22,6 +22,7 @@ Este documento consolida:
 | 21/08/2026 | Versión inicial: modelo de datos v1.0 y especificación v0.1 tras el discovery |
 | 26/08/2026 | Se añade el control de versiones y §1.11 con los ajustes al modelo detectados al validarlo contra DynamoDB |
 | 27/08/2026 | F1 implementada: se cierran D-001/D-002/D-003 (y D-017/D-019 por derivación), se marcan ✅ los RF/RNF/RB cubiertos, se añade el ajuste 6 (`status` en Messages) y se señala que RF-003/AC-003/RB-002 quedan sin efecto por D-002 |
+| 28/08/2026 | **Seguridad y tono del bot.** Se cierran **D-024** (guardrails: manipulación → fijo amable sin IA; datos de terceros → fijo de privacidad; verificación de la respuesta contra la evidencia), **D-025** (tono: un emoji máximo, sin markdown ni guiones largos) y **D-026** (golden set versionado + eval real manual con piso 95%). RF-052 pasa a ✅; se añaden AC-010 y AC-011 con tests. Se corrige que `GEMINI_API_KEY` de `.env` no llegaba al cliente de Gemini |
 | 28/08/2026 | Se cierra **D-007** (opción simple: la IA no se re-enciende sola; apagada hasta que un asesor tome y cierre — sin expiración). Ya estaba implementado así; se retira el 'provisional' de RF-025 y RB-007 |
 | 28/08/2026 | **Pipeline IA completo** (`workers/ai_worker.py` + `scripts/run_ai_worker.py`): se cierran **D-006** (triviales fijos sin llamada IA) y **D-020** (debounce de 6 s vía DelaySeconds de SQS); RF-015..022 y RF-025..027 pasan a ✅ (Gemini también orquesta por TD-008). AC-001/002/004 cubiertos por tests. Slack (RF-028) sigue esperando D-016 |
 | 28/08/2026 | Se cierran **D-004** (ventana de contexto: últimos 20 mensajes de la última hora, sin resumen) y **D-005** (guardrails: 2000 caracteres, 10 mensajes/min → 429, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo). RF-009, RF-013 y RF-014 pasan a ✅ |
@@ -393,10 +394,10 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 
 | ID | Requerimiento funcional | Criterio / comportamiento esperado | Estado |
 |---|---|---|---|
-| RF-015 | Haiku como capa de lectura y orquestación | Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general | ✅ Hecho 28/08/2026 — reglas deterministas primero (`agent/heuristics.py`, costo cero) y el resto al tier FAST. **Por TD-008 hoy Gemini (`gemini-3.1-flash-lite`) también orquesta**; Haiku sigue siendo el plan B del tier si el golden set muestra que el routing no alcanza |
-| RF-016 | Intenciones mínimas del MVP | El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor | ✅ Hecho 28/08/2026 — `FAQ / CATALOG / ADVISOR / OTHER` (T7); datos personales → `ADVISOR` (regla + prompt). CATALOG responde fijo con enlace mientras D-011 siga abierta |
+| RF-015 | Haiku como capa de lectura y orquestación | Los mensajes elegibles deberán ser clasificados para decidir ruta de respuesta sin usar Gemini como clasificador general | ✅ Hecho 28/08/2026 — reglas deterministas primero (`agent/heuristics.py`, costo cero) y el resto al tier FAST. **Por TD-008 hoy Gemini (`gemini-3.1-flash-lite`) también orquesta**; Haiku sigue siendo el plan B del tier si el golden set muestra que el routing no alcanza. **Golden set** en `tests/golden/intents.jsonl` (D-026): la parte determinista corre en CI; la eval real contra Gemini es `python -m scripts.eval_intents` (piso 95%) |
+| RF-016 | Intenciones mínimas del MVP | El sistema deberá distinguir al menos `FAQ`, `CATALOGO`, `ASESOR` y `OTRO`. Las consultas de información personal no habilitadas se derivarán a asesor | ✅ Hecho 28/08/2026 — `FAQ / CATALOG / ADVISOR / OTHER` (T7); datos de SU cuenta → `ADVISOR` (regla + prompt); datos de OTROS usuarios → respuesta fija de privacidad sin derivar (D-024). CATALOG responde fijo con enlace mientras D-011 siga abierta |
 | RF-017 | FAQ basada en conocimiento VMC recuperado | Las respuestas FAQ se generarán a partir de documentos/contenido recuperado desde Pinecone y del system prompt autorizado | ✅ Hecho 28/08/2026 — pipeline conectado: el worker recupera de Pinecone y redacta solo con esa evidencia. Falta calibrar `RAG_MIN_SCORE` con scores reales |
-| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | ✅ Hecho 28/08/2026 — doble corte: `rag.search` descarta bajo el umbral y el redactor no genera sin evidencia; sin evidencia el autenticado deriva (AC-002) y el anónimo recibe invitación a iniciar sesión |
+| RF-018 | Prohibición de inventar cuando no existe evidencia suficiente | Si la recuperación no entrega información suficiente, la respuesta no deberá completarse con conocimiento general; se deberá iniciar handoff | ✅ Hecho 28/08/2026 — triple corte: `rag.search` descarta bajo el umbral, el redactor no genera sin evidencia y el **guardrail de salida** (D-024) descarta una respuesta generada con cifras o enlaces que no estén en la evidencia; en los tres casos el autenticado deriva (AC-002) y el anónimo recibe invitación a iniciar sesión |
 | RF-019 | Fuentes/enlaces cuando estén disponibles | La respuesta automática deberá incluir el enlace al centro de ayuda o fuente recuperada cuando exista | ✅ Hecho 28/08/2026 — cada fragmento viaja con su `(Fuente: url)` y el prompt del redactor pide incluir el enlace cuando exista |
 | RF-020 | Gemini como capa de escritura | Gemini recibirá el mensaje, contexto reciente y fragmentos recuperados para redactar la respuesta automática. No procesa los casos que ya pasan directamente a atención humana | ✅ Hecho 28/08/2026 — `gemini-3.7-flash` redacta con el mensaje, la ventana de contexto (D-004) y los fragmentos; los casos que derivan directo no pasan por él |
 | RF-021 | Tratamiento eficiente de mensajes triviales o repetitivos | El sistema deberá poder evitar consumo innecesario frente a saludos repetidos, spam o abuso. La regla exacta se define en D-006 | ✅ Hecho 28/08/2026 — D-006 cerrada: saludo/gracias sueltos y mensaje repetido se responden fijo sin llamada IA (el aviso de repetición sale una vez); la ráfaga la agrupa D-020 y el volumen lo frena el rate limit de D-005 |
@@ -460,7 +461,7 @@ Subastín será la plataforma propia de atención para reemplazar Intercom en el
 |---|---|---|---|
 | RF-050 | Auditoría de acciones críticas | Se registrará como mínimo: handoff, creación/cierre de ticket, toma de conversación, cambios de estado, mensajes enviados por asesor, cierre y eventos administrativos futuros relevantes | Acordado |
 | RF-051 | Solo lectura sobre información de VMC | Subastín no podrá modificar correo, teléfono, estados, subastas, vehículos u otros datos de VMC desde el chatbot | Acordado |
-| RF-052 | Restricción de datos sensibles para el bot | El bot no deberá exponer información financiera detallada, documentos, datos internos ni información de otros usuarios. Cualquier dato personal futuro deberá estar explícitamente autorizado | Acordado |
+| RF-052 | Restricción de datos sensibles para el bot | El bot no deberá exponer información financiera detallada, documentos, datos internos ni información de otros usuarios. Cualquier dato personal futuro deberá estar explícitamente autorizado | ✅ Hecho 28/08/2026 — tres capas (D-024): guardrail de entrada (`agent/guardrails.py`: datos de terceros → fijo de privacidad; manipulación → fijo amable, ambos sin IA), bloque `<datos_prohibidos>` y `<seguridad>` en el prompt del redactor, y guardrail de salida (fuga del prompt, cifras o enlaces fuera de la evidencia → deriva). AC-010/AC-011 con tests. El bot nunca ve datos de cuenta: los de SU cuenta derivan a asesor |
 | RF-053 | Retención configurable | Conversaciones e imágenes deberán soportar una política de retención; se propone 6 meses, pendiente de D-014 | Parcial |
 
 ---
@@ -508,10 +509,15 @@ Hasta su cierre no deben convertirse en supuestos técnicos ocultos.
 queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D-022 y D-023.
 **Cerradas el 28/08/2026 (Aaron):** D-004 (sin resumen; ventana de 20 mensajes / 1 hora), D-005
 (guardrails cuantitativos), D-006 (triviales fijos sin llamada IA), D-007 (IA apagada hasta que
-el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de SQS). El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de SQS). El mismo día
+se cierran **D-024** (guardrails de seguridad), **D-025** (tono y formato) y **D-026** (evaluación
+de prompts), nuevas. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
 
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|
+| D-024 | Guardrails de seguridad del bot | **✅ Cerrada 28/08/2026 (Aaron):** intento de manipulación (jailbreak, pedir el prompt, cambiar el rol, autoridad falsa, etiquetas del prompt) → respuesta fija amable, **sin IA y sin derivar**; pedido de datos de OTROS usuarios (RF-052) → respuesta fija de privacidad, sin derivar. Capa de salida: una respuesta generada con cifra o enlace que no esté en la evidencia, o que reproduzca el prompt, se descarta y el caso deriva como si no hubiera evidencia. Código: `agent/guardrails.py`, prompts, worker | Alta |
+| D-025 | Tono y formato del bot | **✅ Cerrada 28/08/2026 (Aaron):** español peruano cercano, tuteo, mensajes naturales (no "texto de máquina"); como máximo **un emoji** por mensaje, tanto en los fijos como en los que redacta Gemini, nunca junto a cifras o enlaces; sin markdown ni guiones largos como separador (el widget muestra texto plano). El redactor limpia lo que se escape (`guardrails.tidy`) | Media |
+| D-026 | Evaluación de prompts (golden set) | **✅ Cerrada 28/08/2026 (Aaron):** golden set versionado en `tests/golden/intents.jsonl` (70+ casos en cuatro capas: triviales, guardrails, reglas, modelo). En CI corre **solo la parte determinista** (sin red, gratis). La eval real contra Gemini es manual: `python -m scripts.eval_intents` (~1 centavo por corrida) y exige ≥ 95% de acierto del modelo para mergear un cambio de `agent/prompts.py` o `heuristics.py` | Media |
 | D-001 | Mecanismo de identidad VMC ↔ Subastín | **✅ Cerrada 27/08/2026:** JWT HS256 firmado por el **servidor** de VMC con un secreto compartido, dejado en la página como `window.subastinSettings.userJwt`; Subastín lo verifica y emite su propio token de sesión (esquema de *identity verification* de Intercom). Las cookies de VMC son HttpOnly y no se leen. Identidad visible del asistente: "Subastín" | Alta |
 | D-002 | Máximo de conversaciones activas para usuario autenticado | **✅ Cerrada 27/08/2026:** 1 conversación activa (autenticado y anónimo). Máximo 5 tickets activos por usuario. El anónimo solo recibe FAQ: sin handoff ni ticket, porque no hay forma de identificarlo para continuar un ticket días después | Alta |
 | D-003 | Cierre, reapertura e historial visible | **✅ Cerrada 27/08/2026:** una sola conversación permanente por usuario autenticado; el historial son los tickets, que al cerrarse dejan la nota "Ticket cerrado" en el hilo (como Intercom). Sin autocierre de conversación; el ticket sin respuesta se decide en D-007 | Alta |
@@ -637,6 +643,25 @@ el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de
 > **Redefinido por D-003 (27/08/2026):** la conversación no se cierra. Al cerrarse un ticket el
 > hilo muestra la nota "Ticket cerrado" y el usuario sigue escribiendo en la misma conversación.
 > El widget ya dibuja la nota; el cierre llega con F5.
+
+## AC-010 · Intento de manipulación del bot
+
+**Dado** un usuario que intenta anular las reglas del asistente, extraer su prompt, cambiarle el rol o hacerse pasar por administrador,  
+**cuando** envía el mensaje,  
+**entonces** el bot responde con un mensaje fijo amable que lo redirige a temas de VMC, sin llamar a ningún modelo, sin derivar y sin confirmar ni negar el intento; la decisión queda registrada en `AIUsage` (RF-052, RNF-005, D-024).
+
+> ✅ **Cubierto 28/08/2026** por `tests/test_agent_guardrails.py` (patrones y falsos positivos) y
+> `tests/test_ai_worker.py` (flujo completo: respuesta fija, bot encendido, cero llamadas IA).
+> Segunda capa: el bloque `<seguridad>` del prompt del redactor y el guardrail de salida que
+> descarta una respuesta que reproduzca el prompt.
+
+## AC-011 · Datos de otros usuarios
+
+**Dado** un usuario que pide datos de un tercero (teléfono del vendedor, quién ganó una subasta, cuánto ofertó otro postor, listas de usuarios),  
+**cuando** envía el mensaje,  
+**entonces** el bot responde con un mensaje fijo de privacidad que redirige a lo que sí puede hacer, sin IA y sin derivar (RF-052, D-024). Los datos de SU propia cuenta siguen derivando a asesor (RF-016).
+
+> ✅ **Cubierto 28/08/2026** por `tests/test_agent_guardrails.py` y `tests/test_ai_worker.py`.
 
 ---
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backend.agent import prompts
+from backend.agent import guardrails, prompts
 from backend.core.config import get_settings
 from backend.core.llm import LLMError, ModelTier, empty_usage, get_client
 
@@ -44,6 +44,10 @@ class WriterResult:
     model: str | None = None
     usage: dict[str, int] | None = None
     latency_ms: int = 0
+    # Nombre de la violacion cuando el guardrail de salida rechazo lo generado (D-024). Va
+    # aparte de `has_evidence` para que AIUsage distinga "no habia evidencia" de "habia, pero
+    # el modelo se salio de ella": son problemas distintos con arreglos distintos.
+    guardrail: str | None = None
 
 
 def write_answer(
@@ -56,7 +60,14 @@ def write_answer(
     `context_fragments` son los textos ya recuperados (chunks de Pinecone, resultado de HERALD).
     Una lista vacia no es un caso de error: es la señal de que no hay con que responder.
     """
-    fragments = [fragment.strip() for fragment in (context_fragments or []) if fragment.strip()]
+    fragments = [
+        # Los angulos se neutralizan porque el fragmento va DENTRO del system prompt: un
+        # "</contexto>" en el corpus (o en un enlace) cerraria el bloque y lo que siguiera
+        # pasaria por instruccion.
+        guardrails.neutralize_tags(fragment.strip())
+        for fragment in (context_fragments or [])
+        if fragment.strip()
+    ]
     if not fragments:
         return WriterResult(
             text=prompts.WRITER_NO_EVIDENCE_FALLBACK,
@@ -87,7 +98,7 @@ def write_answer(
             usage=empty_usage(),
         )
 
-    text = response.text.strip()
+    text = guardrails.tidy(response.text)
     if not text:
         # Respuesta vacia (corte por tope de tokens o filtro del proveedor): no hay nada que
         # mostrar, y el fallback es preferible a un mensaje en blanco.
@@ -97,6 +108,20 @@ def write_answer(
             model=response.model,
             usage=response.usage,
             latency_ms=response.latency_ms,
+        )
+
+    # Guardrail de salida (D-024): lo que el prompt pide, aqui se verifica. Una cifra o un
+    # enlace que no esten en la evidencia, o una fuga del prompt, no llegan al usuario: se
+    # tratan como falta de evidencia y el worker deriva (RF-018).
+    verdict = guardrails.check_output(text, fragments, message)
+    if not verdict.ok:
+        return WriterResult(
+            text=prompts.WRITER_NO_EVIDENCE_FALLBACK,
+            has_evidence=False,
+            model=response.model,
+            usage=response.usage,
+            latency_ms=response.latency_ms,
+            guardrail=verdict.violation,
         )
 
     return WriterResult(
@@ -130,6 +155,8 @@ def _build_messages(message: str, history: list[dict[str, str]] | None) -> list[
     messages: list[dict[str, str]] = []
     for turn in (history or [])[-_MAX_HISTORY_MESSAGES:]:
         if turn.get("role") in ("user", "assistant") and turn.get("content"):
-            messages.append({"role": turn["role"], "content": turn["content"]})
-    messages.append({"role": "user", "content": message})
+            messages.append(
+                {"role": turn["role"], "content": guardrails.neutralize_tags(turn["content"])}
+            )
+    messages.append({"role": "user", "content": guardrails.neutralize_tags(message)})
     return messages

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from backend.core.config import get_settings
+
 
 class ModelTier(StrEnum):
     """Rol de la llamada, no el modelo que la atiende.
@@ -280,7 +282,11 @@ def get_client() -> LLMClient:
     """
     global _client
     if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        # Settings lee `.env` (dev) o las variables que inyecta el entorno (AWS). Antes se leia
+        # solo `os.environ`, y pydantic NO exporta `.env` al proceso: la key en `.env` nunca
+        # llegaba aqui y el bot caia al fallback en silencio. `os.environ` queda como respaldo
+        # para quien exporta la variable a mano.
+        api_key = get_settings().gemini_api_key or os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise LLMError(
                 "Falta GEMINI_API_KEY (en AWS se lee de Secrets Manager, no del entorno en claro)",

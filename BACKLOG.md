@@ -168,6 +168,10 @@ TD-002 dejó de bloquear: el tier FAST lo atiende Gemini; Haiku es el plan B
 Archivos: `backend/agent/classifier.py`, `backend/agent/prompts.py`
 Criterio: un conjunto de mensajes de ejemplo se clasifica correctamente en FAQ, CATALOG, ADVISOR
 u OTHER, con al menos 95% de acierto (skill `prompt-governance`).
+**Golden set y guardrails (2026-08-28, D-024/D-025/D-026):** `tests/golden/intents.jsonl` (70+
+casos), `backend/agent/guardrails.py` (entrada: manipulación y datos de terceros; salida:
+cifras/enlaces fuera de la evidencia, fuga del prompt) y `scripts/eval_intents.py` (eval real
+manual, piso 95%). Pendiente: correr la eval real con `GEMINI_API_KEY` y anotar el score base.
 
 **T-21 · Redactor de respuestas** — ✅ hecho 2026-08-27 (D-004 cerrada el 28: ventana sin resumen)
 Requerimientos: RF-019, RF-020 · Depende de: T-20

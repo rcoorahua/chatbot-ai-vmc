@@ -463,6 +463,10 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   mensaje / 20 por hora, sin tope acumulativo), D-006 (triviales fijos sin llamada IA) y D-020
   (debounce de 6 s vía DelaySeconds de SQS) y D-007 (cerrada el mismo día, opción simple: la IA
   no se re-enciende sola; apagada hasta que un asesor tome y cierre el caso, sin expiración).
+  Seguridad y tono del bot, mismo día: D-024 (guardrails: manipulación → fijo amable sin IA;
+  datos de terceros → fijo de privacidad; verificación de la respuesta contra la evidencia en
+  `agent/guardrails.py`), D-025 (un emoji máximo, sin markdown ni guiones largos) y D-026
+  (golden set en `tests/golden/`, eval real manual con `scripts/eval_intents.py`, piso 95%).
   Detalle en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
