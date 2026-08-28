@@ -319,6 +319,10 @@ def test_el_job_llega_a_la_cola_y_el_worker_puede_leerlo(monkeypatch):
 
     monkeypatch.setenv("AI_JOBS_QUEUE_URL", queue_url)
     monkeypatch.setenv("SQS_ENDPOINT_URL", endpoint)
+    # Sin debounce: aqui se valida el payload que viaja por SQS, no la espera de D-020 (el
+    # DelaySeconds tiene su propio test en test_ai_worker). Con el retraso real, el receive de
+    # abajo no veria el mensaje dentro de sus 2 segundos.
+    monkeypatch.setenv("AI_DEBOUNCE_SECONDS", "0")
     reset_settings()
     from backend.core.aws import reset_clients
 

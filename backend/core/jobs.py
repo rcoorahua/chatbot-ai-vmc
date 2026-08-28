@@ -24,8 +24,17 @@ class QueueNotConfigured(RuntimeError):
 
 def enqueue_ai_job(job: AIJob) -> None:
     """Encola y vuelve. Cualquier fallo sube al llamador: el mensaje ya es durable y es el
-    llamador quien decide como marcarlo (MessageStatus.QUEUE_FAILED)."""
-    queue_url = get_settings().ai_jobs_queue_url
-    if not queue_url:
+    llamador quien decide como marcarlo (MessageStatus.QUEUE_FAILED).
+
+    `DelaySeconds` es el debounce de D-020 (patron de SQS message timers): el job no se hace
+    visible hasta pasados N segundos, y al procesarlo el worker responde solo si su mensaje
+    sigue siendo el ultimo del usuario — asi una rafaga de frases partidas paga UNA llamada IA.
+    """
+    settings = get_settings()
+    if not settings.ai_jobs_queue_url:
         raise QueueNotConfigured("Falta AI_JOBS_QUEUE_URL")
-    sqs_client().send_message(QueueUrl=queue_url, MessageBody=job.model_dump_json())
+    sqs_client().send_message(
+        QueueUrl=settings.ai_jobs_queue_url,
+        MessageBody=job.model_dump_json(),
+        DelaySeconds=max(0, min(settings.ai_debounce_seconds, 900)),  # tope de SQS: 15 min
+    )

@@ -224,6 +224,9 @@ class SubastinStack(Stack):
             # explicitos aunque coincidan con los defaults de core/config.py para poder ajustarlos
             # en la consola de Lambda durante un incidente, sin desplegar codigo.
             # Valores de D-004 y D-005, cerradas el 2026-08-28.
+            "AI_DEBOUNCE_SECONDS": "6",
+            "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
+            "AI_ANSWER_MAX_TOKENS": "600",
             "AI_CONTEXT_MESSAGES": "20",
             "AI_CONTEXT_WINDOW_MINUTES": "60",
             "MAX_MESSAGE_CHARS": "2000",

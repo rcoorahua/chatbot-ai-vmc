@@ -191,6 +191,51 @@ def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> 
     return _transact_note(update, note)
 
 
+def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
+    """Handoff minimo (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el bot
+    atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma transaccion.
+    `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
+    Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
+        "handoff_requested_at = :requested_at, handoff_reason = :reason"
+    )
+    update["ConditionExpression"] = (
+        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+        "AND #status = :bot_attending"
+    )
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {
+            ":pending": "PENDING_ADVISOR",
+            ":bot_attending": "BOT_ATTENDING",
+            ":off": False,
+            ":requested_at": at,
+            ":reason": reason,
+        }
+    )
+    return _transact_note(update, note)
+
+
+def mark_wait_message_sent(conversation_id: str) -> bool:
+    """Gana el derecho a enviar el mensaje de espera (RF-027): pasa el flag de False a True de
+    forma condicional, asi dos workers concurrentes no lo envian dos veces. Devuelve True solo
+    para el que gano."""
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression="SET wait_message_sent = :sent",
+            ConditionExpression="wait_message_sent = :not_sent",
+            ExpressionAttributeValues={":sent": True, ":not_sent": False},
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return False
+        raise
+    return True
+
+
 def _transact_note(conversation_update: dict[str, Any], note: Message) -> bool:
     """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada."""
     client = dynamodb_resource().meta.client

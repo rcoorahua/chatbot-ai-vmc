@@ -112,6 +112,7 @@ python -m scripts.local_setup     # crea las 5 tablas, las 2 colas y el bucket
 python -m scripts.seed_data       # carga los datos de prueba
 
 uvicorn backend.api.main:app --reload --port 8000
+python -m scripts.run_ai_worker                      # en otra terminal: el bot responde (pide GEMINI_API_KEY en .env)
 ```
 
 - API y documentación interactiva: **<http://localhost:8000/docs>** (Swagger UI, con botón

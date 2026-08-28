@@ -30,9 +30,9 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
 
-El siguiente bloque grande (T-24, el worker de IA que hace que el bot responda) espera solo a
-D-004, D-006 y D-020 — tres optimizaciones que pueden cerrarse con "no por ahora". Con eso, las
-piezas que ya existen (clasificador, RAG, redactor) quedan conectadas y el bot contesta.
+**T-24 hecho (2026-08-28):** D-004/D-006/D-020 se cerraron y el worker quedó conectado — el bot
+responde (en local: `python -m scripts.run_ai_worker`). También T-04 (AIUsage). El siguiente
+bloque grande es F5: tickets (D-008) y Slack (D-016).
 
 ---
 
@@ -162,16 +162,15 @@ y la consulta de costo mensual por el índice de facturación. El costo se calcu
 vigente al momento, como configuración con fecha — nunca un número suelto en el código.
 Criterio: registrar dos ejecuciones y obtener el total del mes agregado por proveedor.
 
-**T-20 · Clasificador de intención**
+**T-20 · Clasificador de intención** — ✅ hecho 2026-08-27 (vía TD-008: Gemini también orquesta)
 Requerimientos: RF-015, RF-016 · Depende de: T-04
-**Bloqueado por: TD-002** (¿Haiku por la API de Anthropic o por Bedrock?) — se desbloquea
-preguntándole al equipo de AWS si Bedrock está habilitado
+TD-002 dejó de bloquear: el tier FAST lo atiende Gemini; Haiku es el plan B
 Archivos: `backend/agent/classifier.py`, `backend/agent/prompts.py`
 Criterio: un conjunto de mensajes de ejemplo se clasifica correctamente en FAQ, CATALOG, ADVISOR
 u OTHER, con al menos 95% de acierto (skill `prompt-governance`).
 
-**T-21 · Redactor de respuestas**
-Requerimientos: RF-019, RF-020 · Depende de: T-20 · Bloqueado por: D-004 (resumen)
+**T-21 · Redactor de respuestas** — ✅ hecho 2026-08-27 (D-004 cerrada el 28: ventana sin resumen)
+Requerimientos: RF-019, RF-020 · Depende de: T-20
 Archivos: `backend/agent/writer.py`
 
 **T-22 · Recuperación en Pinecone** — ✅ hecho 2026-08-27 (`tests/test_agent_rag.py`,
@@ -181,20 +180,21 @@ Archivos: `backend/agent/rag.py`, `scripts/helpcenter_fetch.py`, `scripts/helpce
 Ingesta definida (lo que estaba bloqueado): **entra el Centro de Ayuda público de VMC**, un chunk
 por pregunta; lo cura quien revisa los `.md` que deja el fetch; se re-indexa corriendo los dos
 scripts (`--replace` para un refresco completo). Detalle en `data/helpcenter/README.md`.
-**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) y
-conectar la recuperación al pipeline (T-24).
+**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`).
+La conexión al pipeline (T-24) quedó hecha el 2026-08-28.
 
 **T-23 · Catálogo HERALD**
 Requerimientos: RF-044..RF-046 · Depende de: T-20
 **Bloqueado por: D-011** (contrato de la API), D-012 (qué hacer si se cae)
 Archivos: `backend/catalog/*`
 
-**T-24 · Worker de IA**
-Requerimientos: orquesta RF-015..RF-021 · Depende de: T-20, T-21, T-22
-Bloqueado por: D-006 (mensajes triviales), D-020 (agrupar mensajes seguidos)
-Archivos: `backend/workers/ai_worker.py`
-Qué incluye: la composición del pipeline completo. Es el único sitio donde el dominio y las
-integraciones se juntan (regla de capas en `backend/__init__.py`).
+**T-24 · Worker de IA** — ✅ hecho 2026-08-28 (`tests/test_ai_worker.py`, 19 casos)
+Requerimientos: orquesta RF-015..RF-022, RF-025..RF-027 · Cerradas: D-006, D-020
+Archivos: `backend/workers/ai_worker.py`, `backend/agent/trivial.py`, `backend/agent/usage.py`,
+`scripts/run_ai_worker.py`
+Qué incluyó: debounce por DelaySeconds + triviales + clasificación + RAG/redacción + handoff
+mínimo + AIUsage. Es el único sitio donde dominio e integraciones se juntan (regla de capas).
+**Pendiente:** Slack al derivar (T-30/D-016) y ticket al derivar (T-07/D-008).
 
 ### Integraciones
 
