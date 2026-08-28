@@ -44,3 +44,25 @@ body {
   outline: 2px solid var(--vmc-color-vault-500);
   outline-offset: 2px;
 }
+
+/* Peligro/atención — mismo tratamiento magenta que ../CentroDeAyudaVMC/src/styles/global.css
+   (.alert-card): fill vault→magenta izq→der sin tramo claro (texto legible en toda la franja)
+   + stroke degradado + text-shadow. Reservado para avisos de peligro/atención, no reemplaza
+   el rojo de validación de formularios (Input error, ligado al spec de Figma). */
+.alert-card {
+  border: 2px solid transparent;
+  background-image:
+    linear-gradient(90deg, var(--vmc-color-vault-500) 0%, #cc00ff 55%, #ff0066 100%),
+    linear-gradient(135deg, #ffffff 0%, #f2ccff 25%, #cc00ff 75%, #ffffff 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(74, 0, 51, 0.55);
+}
+/* El foco global (outline vault-500) se funde con el propio fill del card sobre este
+   degradado — un control interactivo adentro (p. ej. "Reintentar") necesita su propio
+   anillo blanco, igual que ya hacen los botones de Concorde sobre fondos de color. */
+.alert-card :focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}

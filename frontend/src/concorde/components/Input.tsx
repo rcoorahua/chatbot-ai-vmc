@@ -7,7 +7,8 @@
  * Campo de texto 234×48, radio 16, relleno blanco. 3 variantes (por el borde):
  *   · default → borde gradiente 1px  #8460E5 → #FFF8F1
  *   · focus   → borde gradiente 2px  #ED8936 → #8460E5  + glow naranja
- *   · error   → borde rojo 1px #EF4444 + mensaje de ayuda rojo debajo
+ *   · error   → borde magenta 1px #8E0B82 (peligro/atención de marca VMC, ver globals.css
+ *     .alert-card) + mensaje de ayuda magenta debajo
  *
  * Al enfocar (real) un input "default" toma automáticamente el borde de focus.
  */
@@ -28,7 +29,7 @@ export interface InputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "onChange"> {
   /** Apariencia del borde (default "default"). El foco real activa "focus" solo. */
   variant?: InputVariant;
-  /** Mensaje rojo bajo el campo — se muestra con variant="error" */
+  /** Mensaje magenta bajo el campo — se muestra con variant="error" */
   errorMessage?: string;
   /** Recibe el string del input (no el evento). */
   onChange?: (value: string) => void;
@@ -81,10 +82,12 @@ const INPUT_STYLES = `
   box-shadow: rgba(237,137,54,0.15) 0px 2px 6px;
 }
 
-/* Error — borde rojo sólido + sin glow (gana sobre focus por orden/especificidad) */
+/* Error — borde magenta sólido + sin glow (gana sobre focus por orden/especificidad).
+   #8E0B82: versión oscura de la magenta de peligro/atención (globals.css .alert-card,
+   #cc00ff) con contraste suficiente para texto/borde sobre blanco (8.3:1). */
 .pinput--error,
 .pinput--error:focus-within {
-  border: 1px solid #EF4444;
+  border: 1px solid #8E0B82;
   padding: 0 16px;
   background-image: none;
   background-color: #ffffff;
@@ -94,7 +97,7 @@ const INPUT_STYLES = `
   margin: 6px 0 0 4px;
   font-size: 13px;
   line-height: 18px;
-  color: #EF4444;
+  color: #8E0B82;
 }
 
 .pinput--disabled { opacity: 0.6; }
