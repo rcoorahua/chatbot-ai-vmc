@@ -184,7 +184,8 @@ Archivos: `backend/agent/rag.py`, `scripts/helpcenter_fetch.py`, `scripts/helpce
 Ingesta definida (lo que estaba bloqueado): **entra el Centro de Ayuda público de VMC**, un chunk
 por pregunta; lo cura quien revisa los `.md` que deja el fetch; se re-indexa corriendo los dos
 scripts (`--replace` para un refresco completo). Detalle en `data/helpcenter/README.md`.
-**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`).
+**Calibrado 28/08/2026:** `RAG_MIN_SCORE=0.84` (antes `0.75`, sin calibrar) contra el índice
+real — margen angosto entre preguntas on-topic y off-topic, detalle en CLAUDE.md "RAG".
 La conexión al pipeline (T-24) quedó hecha el 2026-08-28.
 
 **T-23 · Catálogo HERALD**
