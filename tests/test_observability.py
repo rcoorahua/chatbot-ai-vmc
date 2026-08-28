@@ -20,8 +20,12 @@ from backend.core.config import get_settings, reset_settings
 
 @pytest.fixture
 def entorno(monkeypatch):
+    # Se fijan VACIAS, no se borran: borrarlas del proceso no basta porque pydantic tambien lee
+    # el `.env` del desarrollador, y ahi estas variables suelen estar puestas (dev detallado).
+    # Vacia equivale a "sin fijar" por el validador `_empty_keeps_default` de core/config.py,
+    # que es justo el caso que este test cubre: decidir por STAGE.
     for variable in ("LOG_LEVEL", "LOG_CONTENT", "LOG_FORMAT", "DEV_OBSERVABILITY"):
-        monkeypatch.delenv(variable, raising=False)
+        monkeypatch.setenv(variable, "")
 
     def fijar(stage: str, **extra: str):
         monkeypatch.setenv("STAGE", stage)

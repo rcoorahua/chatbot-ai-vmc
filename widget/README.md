@@ -3,6 +3,31 @@
 Chat embebible que reemplaza al messenger de Intercom en VMC. Un solo archivo sin build
 (`subastin.js`), pensado para servirse desde un CDN o desde el host del frontend (TD-003).
 
+## Diseño
+
+Sigue el design system **Concorde/VMC**, el mismo de la app del asesor: los tokens son copia de
+`frontend/src/app/globals.css` (vault `#8460e5`/`#3b1782`/`#22005c` como color primario, orange
+`#ed8936` como acento, teal para lo positivo) y los patrones vienen de
+`frontend/src/concorde/components/`: bordes en gradiente (doble `background-image` con
+`background-clip: padding-box, border-box`), píldoras de radio completo, sombras tintadas de
+vault y una sola curva de animación (`cubic-bezier(.25,.8,.25,1)`).
+
+Los tokens se declaran **dentro** del widget y no se heredan de la página: `:host { all: initial }`
+corta la herencia a propósito para que el CSS de VMC no lo deforme. Si VMC cambia su paleta, hay
+que tocar los dos sitios — es el precio de que el widget no dependa del anfitrión.
+
+Animaciones (todas se desactivan con `prefers-reduced-motion: reduce`):
+
+| Dónde | Qué hace |
+|---|---|
+| Botón flotante | Elevación y halo vault/naranja al pasar el cursor; el icono rota al abrir |
+| Panel | Entra escalando desde la esquina inferior derecha (`visibility` diferida para no robar el foco al cerrar) |
+| Pantallas | Entran deslizándose **solo al cambiar de vista**, no en cada render |
+| Burbujas | Deslizan al aparecer **solo la primera vez** (`firstRenderOf`): sin eso, cada mensaje nuevo re-animaría todo el hilo |
+| Escribiendo | Tres puntos mientras se espera respuesta; se retira al llegar el mensaje, a los 45 s, o si el caso ya está con un asesor (D-007) |
+| Contador | Rebota solo cuando cambia el número |
+| Compositor | Crece con el texto; el borde vira de vault a naranja al enfocar |
+
 ## Probarlo en local
 
 ```powershell
