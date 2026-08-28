@@ -15,19 +15,6 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_OPTIONAL_TEXT_FIELDS = (
-    "dynamodb_endpoint_url",
-    "sqs_endpoint_url",
-    "s3_endpoint_url",
-    "images_bucket",
-    "ai_jobs_queue_url",
-    "notifications_queue_url",
-    "vmc_identity_secret",
-    "session_signing_key",
-    "pinecone_api_key",
-    "advisor_dev_jwt_secret",
-)
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -94,22 +81,61 @@ class Settings(BaseSettings):
     # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
     rag_min_score: float = 0.75
 
-    # ── Limites (RF-014). PROVISIONALES hasta cerrar D-005 ──────────────────────────────────
+    # ── Ventana de contexto para la IA (RF-013, D-004 cerrada 2026-08-28) ───────────────────
+    # La memoria del bot son los ultimos N mensajes DE LA ULTIMA HORA. No hay resumen: la
+    # conversacion del autenticado es permanente (D-003), asi que sin corte temporal el bot
+    # arrastraria para siempre un hilo de hace semanas — caro y confuso. Si el usuario vuelve
+    # despues de la ventana, su mensaje se atiende solo, que es lo que espera quien retoma.
+    ai_context_messages: int = 20
+    ai_context_window_minutes: int = 60
+
+    # ── Limites contra abuso (RF-014 / RNF-007, D-005 cerrada 2026-08-28) ───────────────────
     # Un mensaje sin tope se convertiria en un item DynamoDB de 400 KB y en un prompt caro.
     max_message_chars: int = 2000
     messages_page_size: int = 50
+    # Rate limit por conversacion (que con D-002 es por usuario): ritmo humano incluso
+    # escribiendo rapido y en frases partidas. Pasarse devuelve 429, no pierde el mensaje.
+    max_messages_per_minute: int = 10
+    # SIN tope acumulativo de mensajes por conversacion, a proposito: con D-003 la conversacion
+    # del autenticado no se cierra nunca, asi que un tope duro la dejaria inservible de por vida
+    # y habria que intervenir a mano. El crecimiento lo controlan el rate limit y la retencion
+    # (D-014), no un contador que solo sube.
+
+    # ── Imagenes (RF-040..042, valores de D-005; se aplican en F6) ──────────────────────────
+    # Mismo criterio que arriba: todos los topes se renuevan (por imagen, por mensaje, por
+    # hora). Ninguno es acumulativo, asi que el usuario nunca se queda sin poder enviar fotos.
+    max_image_bytes: int = 5 * 1024 * 1024
+    max_images_per_message: int = 3
+    max_images_per_hour: int = 20
+    allowed_image_types: str = "image/jpeg,image/png,image/webp"
 
     # Origenes que pueden llamar a la API desde el navegador. "*" solo en dev: en stage/prod
     # va el dominio de VMC donde vive el widget.
     cors_allowed_origins: str = "*"
 
-    @field_validator(*_OPTIONAL_TEXT_FIELDS, mode="before")
+    @field_validator("*", mode="before")
     @classmethod
-    def _empty_means_unset(cls, value: object) -> object:
-        """`.env.example` deja variables vacias (`SQS_ENDPOINT_URL=`); vacio es "no configurado"."""
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
+    def _empty_keeps_default(cls, value: object, info) -> object:
+        """Una variable vacia en `.env` cae al default del campo, no a cadena vacia.
+
+        `.env.example` deja casi todo vacio (`AWS_REGION=`, `TABLE_MESSAGES=`, …) y hay `.env`
+        reales copiados tal cual. Sin esto, `aws_region=""` hace que boto3 arme endpoints
+        invalidos (`dynamodb..amazonaws.com`) y un nombre de tabla vacio rompe cada consulta:
+        errores que aparecen lejos de la causa, al usar el client y no al leer la configuracion.
+
+        Los opcionales (`SQS_ENDPOINT_URL`, secretos, …) tienen default None, asi que quedan en
+        None: "vacio" y "no configurado" son lo mismo. Los flags booleanos caen a su default en
+        vez de romper con un error de parseo. Un campo sin default se deja como esta y pydantic
+        reporta que falta, que es lo correcto.
+        """
+        if not isinstance(value, str) or value.strip():
+            return value
+        field = cls.model_fields.get(info.field_name)
+        return field.default if field is not None and not field.is_required() else value
+
+    @property
+    def image_types(self) -> list[str]:
+        return [item.strip() for item in self.allowed_image_types.split(",") if item.strip()]
 
     @property
     def allowed_origins(self) -> list[str]:

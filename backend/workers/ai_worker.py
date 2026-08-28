@@ -9,8 +9,9 @@ Por cada job (ESQUELETO — no implementar sin revisar CLAUDE.md):
                incluir fuente/enlace si existe (RF-019)
     CATALOGO → API HERALD (RF-044; contrato D-011, fallback D-012)
     ASESOR   → iniciar handoff (RF-022)
- 5. redactar respuesta (`agent.writer`, RF-020) con la ventana de ~20 mensajes que entrega
-    `conversations.repository.list_recent_messages` (RF-013; resumen D-004)
+ 5. redactar respuesta (`agent.writer`, RF-020) con `conversations.service.context_window`:
+    los ultimos 20 mensajes de la ultima hora (RF-013 / D-004 cerrada 2026-08-28). NO hay
+    resumen acumulado; si la ventana sale vacia, se responde solo al mensaje nuevo
  6. persistir respuesta en Messages + actualizar Conversations
  7. registrar ejecucion en AIUsage (tokens, costo, latencia, rag_used, handoff_triggered)
  8. si handoff: crear ticket segun D-008/D-019 y encolar notificacion Slack (RF-028)
