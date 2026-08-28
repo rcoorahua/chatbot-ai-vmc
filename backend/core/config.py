@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
     rag_min_score: float = 0.75
 
+    # ── Pipeline IA (D-006 y D-020 cerradas 2026-08-28) ─────────────────────────────────────
+    # D-020: cada mensaje encola su job con este retraso (DelaySeconds de SQS). Al procesarlo,
+    # si el usuario ya escribio algo mas nuevo, el job se salta y responde el job del ultimo
+    # mensaje con el bloque completo: una llamada IA por rafaga, sin estado extra. 0 lo apaga.
+    ai_debounce_seconds: int = 6
+    # D-006: un mensaje identico repetido dentro de esta ventana no vuelve a pagar llamada IA;
+    # recibe una respuesta fija (una vez) que ofrece un asesor.
+    trivial_repeat_window_minutes: int = 10
+    # Tope de salida del redactor (RF-020). Caben 3-4 frases con margen; la brevedad la pide el
+    # prompt, el tope la garantiza. Configurable por RNF-007 (antes era literal en writer.py).
+    ai_answer_max_tokens: int = 600
+
     # ── Ventana de contexto para la IA (RF-013, D-004 cerrada 2026-08-28) ───────────────────
     # La memoria del bot son los ultimos N mensajes DE LA ULTIMA HORA. No hay resumen: la
     # conversacion del autenticado es permanente (D-003), asi que sin corte temporal el bot

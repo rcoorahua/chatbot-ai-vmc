@@ -423,10 +423,11 @@ chatbot-ai-vmc/
 └── README.md                   # overview + quickstart dev
 ```
 
-Implementado (2026-08-27): `core`, `conversations`, `advisors`, `api/routers/chat.py`,
-`api/routers/advisor.py` (+ `api/dev_auth.py` para el authorizer en local), `agent` (clasificador
-y redactor, sin pipeline) y `widget/`. `tickets`, `catalog`, `notifications`, `images`, `workers`
-y el router `dashboard` siguen como stubs con TODOs; se definen al arrancar sus fases.
+Implementado (2026-08-28): `core`, `conversations`, `advisors`, `api/routers/chat.py`,
+`api/routers/advisor.py` (+ `api/dev_auth.py`), `agent` completo (clasificador, redactor, RAG,
+triviales, AIUsage), `workers/ai_worker.py` (el bot responde; local con
+`scripts/run_ai_worker.py`) y `widget/`. `tickets`, `catalog`, `notifications`, `images`,
+`workers/notify_worker` y el router `dashboard` siguen como stubs; se definen al arrancar sus fases.
 
 ---
 
@@ -438,8 +439,8 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 |---|---|---|
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
 | **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
-| **F2** | Pipeline IA mínimo: SQS + `worker-ai` con Haiku (clasificación) + Gemini (redacción), sin RAG; registro `AIUsage`. La ventana de contexto ya está lista (`service.context_window`, D-004) | TD-002, D-020 (debounce), D-006 (triviales) |
-| **F3** | RAG: **ingesta y recuperación hechas 2026-08-27** (`agent/rag.py`, `scripts/helpcenter_*`; 22 artículos, 133 chunks). Falta conectarlo al pipeline y calibrar `RAG_MIN_SCORE` con datos reales | el pipeline depende de F2 (D-004/D-006/D-020) |
+| **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con `gemini-3.7-flash`, handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
+| **F3** | RAG: ingesta y recuperación hechas 2026-08-27; **conectado al pipeline 2026-08-28**. Falta solo calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) | — |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
 | **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | D-007, **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
@@ -458,8 +459,10 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   Lado asesor (mismo día): D-021 (auto-alta al primer login), D-022 (responde solo quien tomó
   la conversación; sin ticket), D-023 (cierre mínimo sin ticket, provisional hasta F5).
 - **De negocio cerradas (2026-08-28, Aaron):** D-004 (sin resumen: ventana de 20 mensajes de la
-  última hora) y D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
-  mensaje / 20 por hora, sin tope acumulativo).
+  última hora), D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
+  mensaje / 20 por hora, sin tope acumulativo), D-006 (triviales fijos sin llamada IA) y D-020
+  (debounce de 6 s vía DelaySeconds de SQS). D-007 queda abierta pero implementada con su opción
+  recomendada (IA apagada hasta cierre del asesor).
   Detalle en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
