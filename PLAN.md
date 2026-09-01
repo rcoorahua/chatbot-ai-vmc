@@ -190,6 +190,13 @@ de sistema en el hilo ("Ticket cerrado"), que es como D-003 hace visible el hist
 | `Tickets` | `ticket_id` | — | GSI1 `conversation_id`/`created_at` · GSI2 `assigned_advisor_id`/`updated_at` · GSI3 `status`/`created_at` |
 | `Advisors` | `advisor_id` | — | GSI `cognito_sub` (lookup desde el JWT) |
 | `AIUsage` | `conversation_id` | `created_at#execution_id` | GSI `billing_month`/`created_at` (costos mensuales) |
+| `RateLimits` ⚠️ **pendiente** | `IP#<hash>` / `USER#<id>` / `SESSION#<id>` | `YYYY-MM-DD` | — (solo lectura por clave completa) |
+
+⚠️ **`RateLimits` está decidida (D-027, 31/08/2026) pero NO creada.** Es el tope diario de
+ejecuciones de IA: contador con `ADD` atómico y **TTL a 48 h**, para que DynamoDB limpie solo y
+no haga falta ningún proceso de purga. No lleva GSI porque siempre se lee por clave completa
+(actor + día). Ver T-09 en BACKLOG.md; al crearla hay que tocar **infra y `local_setup.py`**,
+que son espejo.
 
 ### Revisión del modelo contra el spec — veredicto
 
@@ -439,7 +446,7 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 |---|---|---|
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
 | **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
-| **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con `gemini-3.7-flash`, handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
+| **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con el tier ANSWER de `core/llm.py` (2026-09-01: `gemini-3.6-flash`, respaldo `3.5-flash`), handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
 | **F3** | RAG: ingesta y recuperación hechas 2026-08-27; **conectado al pipeline 2026-08-28**. `RAG_MIN_SCORE` calibrado el mismo día en `0.84` (CLAUDE.md "RAG") | — |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
 | **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
@@ -459,8 +466,9 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   Lado asesor (mismo día): D-021 (auto-alta al primer login), D-022 (responde solo quien tomó
   la conversación; sin ticket), D-023 (cierre mínimo sin ticket, provisional hasta F5).
 - **De negocio cerradas (2026-08-28, Aaron):** D-004 (sin resumen: ventana de 20 mensajes de la
-  última hora), D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
-  mensaje / 20 por hora, sin tope acumulativo), D-006 (triviales fijos sin llamada IA) y D-020
+  última hora), D-005 (guardrails: 500 caracteres por mensaje —revisado el 31/08, antes 2000—,
+  10 mensajes/min, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo), D-006
+  (triviales fijos sin llamada IA) y D-020
   (debounce de 6 s vía DelaySeconds de SQS) y D-007 (cerrada el mismo día, opción simple: la IA
   no se re-enciende sola; apagada hasta que un asesor tome y cierre el caso, sin expiración).
   Seguridad y tono del bot, mismo día: D-024 (guardrails: manipulación → fijo amable sin IA;

@@ -25,10 +25,15 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 
 | Ticket | Qué es | Track |
 |---|---|---|
+| **T-09** | **Tope diario de IA (D-027) — 🔴 lo más urgente** | Dominio/IA |
 | T-03 | Módulo de asesores completo | Dominio |
 | T-04 | Repositorio de consumo de IA (`AIUsage`) | IA |
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
+
+**T-09 es el que más urge (31/08/2026).** D-027 quedó cerrada pero sin código: hoy el único
+freno para un anónimo es el de 10 mensajes/minuto, que permite 14 400 llamadas de IA al día
+desde una pestaña. Es el agujero de costo más grande abierto y no depende de nada.
 
 **T-24 hecho (2026-08-28):** D-004/D-006/D-020 se cerraron y el worker quedó conectado — el bot
 responde (en local: `python -m scripts.run_ai_worker`). También T-04 (AIUsage). El siguiente
@@ -215,6 +220,41 @@ verifique el envío, no el texto.
 Requerimientos: RF-040..RF-043 · Depende de: T-02
 **Bloqueado por: D-015** (tamaños, compresión y modelo multimodal), D-005 (límite de peso)
 Archivos: `backend/images/*`
+
+**T-09 · Tope diario de ejecuciones de IA** — 🔴 **prioritario: decidido y sin implementar**
+Requerimientos: RF-014, RNF-007, RNF-005 · Depende de: T-01, T-04 · Bloqueado por: nada
+(**D-027 ya está cerrada**, 31/08/2026 — este ticket se puede empezar hoy)
+Archivos: `infra/stacks/subastin_stack.py` **y** `scripts/local_setup.py` (tabla nueva, hay que
+tocar los dos: el esquema está duplicado a propósito), `backend/core/config.py`,
+`backend/conversations/service.py` o `backend/agent/usage.py`, `backend/api/routers/chat.py`,
+`.env.example`, tests.
+
+Por qué es prioritario: hoy el único freno para un anónimo es el de 10 mensajes/minuto de
+D-005 — que deja pasar **14 400 llamadas de IA al día** desde una sola pestaña con un script.
+Cada una cuesta dinero real de Gemini. Es el agujero de costo más grande que queda abierto.
+
+Qué incluye:
+- Tabla `RateLimits`: PK `IP#<hash>` / `USER#<id>` / `SESSION#<id>`, SK la fecha (`YYYY-MM-DD`),
+  contador con `ADD` atómico y **TTL a 48 h** (que DynamoDB lo borre solo, sin proceso aparte).
+- La IP sale de `requestContext.http.sourceIp` del evento de API Gateway HTTP API, que Mangum
+  deja en `request.scope["aws.event"]` — el mismo camino que ya usa `core/auth.py` para los
+  claims de Cognito. **No hace falta ninguna librería.** En local, `request.client.host`.
+- Se guarda **hasheada** (HMAC con un secreto): la IP es dato personal y para contar da igual.
+- Se cuenta la **ejecución de IA**, no el mensaje: los triviales y los guardrails no gastan
+  cuota porque no llaman al modelo. `agent/usage.py` ya distingue esos casos.
+- Topes de D-027: anónimo 10/día (IP y sesión, se agota la primera), autenticado 50/día por
+  `user_id`, sin tope mientras atiende un asesor. `0 = ilimitado` y así queda en dev.
+- Al agotarse: mensaje fijo del bot explicándolo (no un 500 ni silencio), y si el usuario es
+  anónimo, invitarlo a iniciar sesión — que es justo lo que sube su cuota a 50.
+
+Criterio de aceptación: un test agota la cuota de un anónimo y verifica que el mensaje 11 se
+persiste pero **no** dispara llamada a IA; otro verifica que con `0` no hay tope; otro que un
+mensaje trivial no consume cuota.
+
+**Ojo al implementarlo:** CGNAT. Claro y Movistar sacan miles de móviles por la misma IP
+pública, y una oficina entera también. El tope por IP va a golpear a usuarios legítimos que
+comparten salida — por eso D-027 cuenta *también* por sesión y por eso el autenticado va por
+`user_id` y nunca por IP.
 
 ### Frontend
 
