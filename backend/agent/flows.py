@@ -110,10 +110,27 @@ _PARTICIPATION_PATTERN = re.compile(
 _LIVE_PATTERN = re.compile(r"\ben\s*vivo\b")
 _NEGOTIABLE_PATTERN = re.compile(r"\bnegociabl\w*\b")
 
+# Negacion cerca de "participar": "no quiero participar", "ya no deseo participar", "nunca
+# voy a participar", "no puedo participar". Hasta dos palabras entre la negacion y el verbo
+# cubre las formas reales sin bloquear frases donde el "no" queda lejos y no niega la
+# intencion. Hallado por los tests del motor (PR #79): sin esto, "no quiero participar"
+# abria el flujo igual que "quiero participar".
+_NEGATION_PATTERN = re.compile(
+    r"\b(?:no|tampoco|nunca|jamas)\b(?:\s+\w+){0,2}\s+participar"
+)
+
 
 def detect_flow_start(text: str) -> str | None:
-    """Nombre del flujo que el texto dispara, o None. Reglas, nunca un modelo."""
-    if _PARTICIPATION_PATTERN.search(normalize(text or "")):
+    """Nombre del flujo que el texto dispara, o None. Reglas, nunca un modelo.
+
+    Una negacion cerca del verbo apaga el disparador: quien dice "no quiero participar" no
+    debe recibir botones de participacion — que lo atienda el pipeline normal (clasificador),
+    donde "no puedo participar" ademas suele ser una FAQ legitima de problemas de acceso.
+    """
+    normalized = normalize(text or "")
+    if _NEGATION_PATTERN.search(normalized):
+        return None
+    if _PARTICIPATION_PATTERN.search(normalized):
         return "PARTICIPATION"
     return None
 
