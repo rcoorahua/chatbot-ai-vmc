@@ -25,6 +25,9 @@ class AIJob(BaseModel):
     message_id: str
     message_key: str
     requested_at: str
+    # HMAC de la IP del cliente (T-09/D-027) — la calcula el API, que es quien ve el request;
+    # el worker solo la usa para el contador de cuota del anonimo. Nunca la IP en claro.
+    ip_hash: str | None = None
 
 
 class QueueNotConfigured(RuntimeError):

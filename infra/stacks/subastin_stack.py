@@ -166,6 +166,23 @@ class SubastinStack(Stack):
             sort_key=dynamodb.Attribute(name="created_at", type=dynamodb.AttributeType.STRING),
         )
 
+        # T-09 / D-027 (revisada 2026-09-01): contadores del tope de ejecuciones de IA por
+        # actor. PK = quien (`USER#<id>` / `SESSION#<conversation_id>` / `IP#<hash>`), SK = la
+        # ventana (`H#...` por hora, `D#...` por dia). TTL a 48 h: DynamoDB borra los
+        # contadores vencidos solo, sin proceso de limpieza. ESPEJO en scripts/local_setup.py.
+        rate_limits = dynamodb.Table(
+            self,
+            "RateLimits",
+            table_name=f"{prefix}-rate-limits",
+            partition_key=dynamodb.Attribute(
+                name="limit_key", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(name="window", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="expires_at",
+            removal_policy=removal,
+        )
+
         # ─────────────────────────────── S3 — imagenes (RF-042) ───────────────────────────────
         images_bucket = s3.Bucket(
             self,
@@ -223,6 +240,7 @@ class SubastinStack(Stack):
             "TABLE_TICKETS": tickets.table_name,
             "TABLE_ADVISORS": advisors.table_name,
             "TABLE_AI_USAGE": ai_usage.table_name,
+            "TABLE_RATE_LIMITS": rate_limits.table_name,
             "IMAGES_BUCKET": images_bucket.bucket_name,
             "CORS_ALLOWED_ORIGINS": cfg.cors_allowed_origins,
             # Guardrails y ventana de contexto (RNF-007: configuracion, no constantes). Van
@@ -293,7 +311,7 @@ class SubastinStack(Stack):
         # inactividad o la expiracion de sesion anonima lo exigen. No crear hasta cerrarlas.
 
         # Permisos via grants (T4: cero JSON de IAM a mano)
-        for table in (conversations, messages, tickets, advisors, ai_usage):
+        for table in (conversations, messages, tickets, advisors, ai_usage, rate_limits):
             table.grant_read_write_data(api_fn)
             table.grant_read_write_data(worker_ai_fn)
         images_bucket.grant_read_write(api_fn)  # presigned URLs

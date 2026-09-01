@@ -302,6 +302,20 @@ FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE = (
     "así tu caso queda asociado a tu cuenta."
 )
 
+# T-09 / D-027 (revisada 2026-09-01): tope de ejecuciones de IA alcanzado. Respuesta FIJA (no
+# gasta) que orienta a la salida que corresponde por tipo de usuario. Ojo: "pídeme un asesor"
+# funciona incluso agotado, porque esa ruta la deciden las reglas, sin llamar a ningún modelo.
+QUOTA_EXHAUSTED_ANON_RESPONSE = (
+    "Ya respondí varias consultas seguidas en esta sesión y llegué a mi límite por ahora 🙏 "
+    "Crea tu cuenta en VMC Subastas o inicia sesión para seguir conversando y poder "
+    "conectarte con un asesor. También puedes volver a escribirme en un rato."
+)
+QUOTA_EXHAUSTED_AUTH_RESPONSE = (
+    "Llegué a mi límite de respuestas automáticas por ahora 🙏 Si es urgente, dime que "
+    "quieres hablar con un asesor y te conecto de inmediato; si no, tu límite se renueva "
+    "solo en un rato."
+)
+
 # D-024: intento de manipulacion (jailbreak, pedir el prompt, cambiar el rol). Fijo, amable y
 # sin pistas: no confirma que hubo un intento ni que funciono o fallo. Sin llamada IA.
 GUARDRAIL_INJECTION_RESPONSE = (
