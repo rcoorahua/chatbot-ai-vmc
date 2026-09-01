@@ -220,14 +220,19 @@ def _answer_faq(
 ) -> None:
     """FAQ con RAG (RF-017): recuperar, redactar con evidencia, y sin evidencia derivar en vez
     de inventar (RF-018 / AC-002)."""
-    fragments = rag.search(text)
+    retrieved = rag.retrieve(text)
+    fragments = retrieved.relevant
     logger.debug(
         "ai.rag",
         extra={
             "conversation_id": conversation.conversation_id,
             "message_id": message.message_id,
             "results": len(fragments),
-            "best_score": round(max((f.score for f in fragments), default=0.0), 3),
+            "discarded": len(retrieved.discarded),
+            "threshold": retrieved.threshold,
+            "best_score": round(
+                max((f.score for f in retrieved.all_fragments), default=0.0), 3
+            ),
             "topics": [f.topic for f in fragments][:5],
         },
     )
@@ -252,13 +257,23 @@ def _answer_faq(
         provider=_GOOGLE if result.model else usage.NO_PROVIDER,
         model=result.model,
         usage=result.usage,
-        estimated_cost_usd=_cost(llm.ModelTier.ANSWER, result.usage),
+        estimated_cost_usd=_cost(llm.ModelTier.ANSWER, result.model, result.usage),
         latency_ms=result.latency_ms,
         rag_used=bool(fragments),
         rag_results_count=len(fragments),
+        # TODOS los hits, tambien los que no superaron el umbral: cuando la respuesta cae en
+        # "sin evidencia", la consola de dev necesita ver que trajo el indice y con que score
+        # para juzgar el retrieval (y el umbral) sin reproducir la consulta a mano.
         rag_fragments=[
-            {"topic": f.topic, "score": f.score, "source_url": f.source_url} for f in fragments
+            {
+                "topic": f.topic,
+                "score": f.score,
+                "source_url": f.source_url,
+                "relevant": f.score >= retrieved.threshold,
+            }
+            for f in retrieved.all_fragments
         ],
+        rag_min_score=retrieved.threshold,
         handoff_triggered=not result.has_evidence and not anonymous,
     )
     if result.has_evidence:
@@ -385,18 +400,11 @@ def _history(window: list[Message], block_keys: list[str]) -> list[dict[str, str
 # ─────────────────────────────── Contabilidad (AIUsage, T-04) ───────────────────────────────
 
 
-def _cost(tier: llm.ModelTier, tokens: dict[str, int] | None) -> float:
-    """Costo con el precio vigente del tier (regla de llm-cost-optimizer: nunca un numero
-    recordado despues). Los tokens cacheados se cobran como input: sobreestimar antes que
-    subestimar mientras el caching no este activo."""
-    if not tokens:
-        return 0.0
-    spec = llm.model_for(tier)
-    billable_input = tokens.get("input", 0) + tokens.get("cached_read", 0)
-    return (
-        billable_input * spec.input_usd_per_million
-        + tokens.get("output", 0) * spec.output_usd_per_million
-    ) / 1_000_000
+def _cost(tier: llm.ModelTier, model: str | None, tokens: dict[str, int] | None) -> float:
+    """Costo con el precio vigente del modelo que REALMENTE respondio (regla de
+    llm-cost-optimizer: nunca un numero recordado despues). Importa pasar el modelo: el
+    respaldo del tier tiene otra tarifa y cobrarlo con la del principal subestima."""
+    return llm.cost_for(model, tokens, tier=tier)
 
 
 def _record_classification(
@@ -412,7 +420,7 @@ def _record_classification(
         provider=_GOOGLE if called_model else usage.NO_PROVIDER,
         model=classification.model,
         usage=classification.usage,
-        estimated_cost_usd=_cost(llm.ModelTier.FAST, classification.usage),
+        estimated_cost_usd=_cost(llm.ModelTier.FAST, classification.model, classification.usage),
         latency_ms=classification.latency_ms,
     )
 

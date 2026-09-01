@@ -102,12 +102,22 @@ def sin_llm(monkeypatch):
 
 @pytest.fixture
 def sin_rag(monkeypatch):
-    monkeypatch.setattr(ai_worker.rag, "search", lambda text, **kwargs: [])
+    from backend.agent.rag import Fragment, RagResult
+
+    # Hubo un hit, pero bajo el umbral: no es evidencia (RF-018) y aun asi debe quedar
+    # registrado para la consola de dev.
+    descartado = Fragment(text="poco relacionado", topic="Retiro de saldo", score=0.79)
+    monkeypatch.setattr(
+        ai_worker.rag,
+        "retrieve",
+        lambda text, **kwargs: RagResult(relevant=[], discarded=[descartado], threshold=0.84),
+    )
+    return descartado
 
 
 @pytest.fixture
 def con_rag(monkeypatch):
-    from backend.agent.rag import Fragment
+    from backend.agent.rag import Fragment, RagResult
 
     fragmento = Fragment(
         text="La comision es el 3.9%.",
@@ -115,7 +125,11 @@ def con_rag(monkeypatch):
         source_url="https://centro-de-ayuda-vmc.vercel.app/comision",
         score=0.9,
     )
-    monkeypatch.setattr(ai_worker.rag, "search", lambda text, **kwargs: [fragmento])
+    monkeypatch.setattr(
+        ai_worker.rag,
+        "retrieve",
+        lambda text, **kwargs: RagResult(relevant=[fragmento], discarded=[], threshold=0.84),
+    )
     return fragmento
 
 
@@ -278,6 +292,8 @@ def test_faq_con_evidencia_responde_con_el_redactor(limpiar, tablas, fake_llm, c
     assert fragmento["topic"] == "Comision"
     assert float(fragmento["score"]) == pytest.approx(0.9)
     assert fragmento["source_url"] == "https://centro-de-ayuda-vmc.vercel.app/comision"
+    assert fragmento["relevant"] is True
+    assert float(respuesta["rag_min_score"]) == pytest.approx(0.84)
 
 
 def test_faq_sin_evidencia_deriva_en_vez_de_inventar(limpiar, tablas, fake_llm, sin_rag):
@@ -298,6 +314,11 @@ def test_faq_sin_evidencia_deriva_en_vez_de_inventar(limpiar, tablas, fake_llm, 
         if u["execution_type"] == "RESPONSE"
     )
     assert respuesta["handoff_triggered"] is True
+    # Aunque no hubo evidencia, lo que el indice trajo bajo el umbral queda registrado con
+    # `relevant: False`: es lo que la consola de dev muestra para juzgar el retrieval.
+    assert respuesta["rag_used"] is False and respuesta["rag_results_count"] == 0
+    descartado = respuesta["rag_fragments"][0]
+    assert descartado["topic"] == "Retiro de saldo" and descartado["relevant"] is False
 
 
 def test_faq_sin_evidencia_del_anonimo_invita_a_iniciar_sesion(limpiar, fake_llm, sin_rag):
