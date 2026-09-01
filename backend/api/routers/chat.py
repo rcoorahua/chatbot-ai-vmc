@@ -94,11 +94,27 @@ class SessionOut(BaseModel):
     limits: SessionLimits
 
 
+class InteractionIn(BaseModel):
+    """El evento estructurado de un quick reply (D-028, MAPEO.md §3).
+
+    El API solo lo PERSISTE en la metadata del mensaje (T3: la API encola y responde 202);
+    quien lo valida contra el paso vigente del flujo es el worker. Un evento invalido o de
+    una version vieja se degrada a texto normal — nunca es un error para el usuario.
+    """
+
+    action_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z0-9_]+$")
+    value: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z0-9_]+$")
+    flow_version: int = Field(ge=1, le=1_000_000)
+    source_message_id: str | None = Field(default=None, max_length=64)
+
+
 class MessageIn(BaseModel):
     # Lo genera el widget (UUID); repetirlo en un reintento es lo que evita duplicados (RF-038).
     client_message_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     # Tope generoso de transporte; el limite real (RF-014, configurable) lo aplica el servicio.
     content: str = Field(min_length=1, max_length=20_000)
+    # Presente solo cuando el mensaje nacio de un click de quick reply.
+    interaction: InteractionIn | None = None
 
 
 class MessageAccepted(BaseModel):
@@ -197,6 +213,11 @@ def post_message(
             client_message_id=body.client_message_id,
             content=body.content,
             sender_id=session.user_id,
+            metadata=(
+                {"interaction": body.interaction.model_dump(exclude_none=True)}
+                if body.interaction
+                else None
+            ),
         )
     except service.MessageTooLong as exc:
         raise HTTPException(422, str(exc)) from exc

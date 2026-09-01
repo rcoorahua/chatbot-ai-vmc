@@ -92,6 +92,17 @@ class Conversation(_DynamoModel):
     assigned_advisor_id: str | None = None
     summary: str | None = None
     summary_updated_at: str | None = None
+    # Flujo guiado activo (D-028, MAPEO.md): la posicion del usuario en un proceso multi-paso
+    # ("quiero participar" → esperando el tipo de oferta). APARTE del contexto de mensajes
+    # (D-004, efimero): esto es duradero, con vencimiento propio, y se limpia por eventos
+    # (paso resuelto, handoff, guardrail, expiracion). `flow_version` hace atomicas las
+    # transiciones e invalida los botones de versiones viejas — la conversacion es permanente
+    # (D-003) y un quick reply de hace dias no debe mover el flujo de hoy.
+    active_flow: str | None = None
+    flow_step: str | None = None
+    flow_slots: dict[str, Any] | None = None
+    flow_version: int = 0
+    flow_expires_at: str | None = None
     message_count: int = 0
     unread_count: int = 0
     wait_message_sent: bool = False
