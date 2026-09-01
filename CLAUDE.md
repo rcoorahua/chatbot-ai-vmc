@@ -25,7 +25,7 @@ decidir por `STAGE` (dev y stage detallados, prod sobrio; ver `core/observabilit
 
 ```powershell
 docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
-python -m scripts.local_setup     # crea las 5 tablas, 2 colas y el bucket — idempotente
+python -m scripts.local_setup     # crea las 6 tablas, 2 colas y el bucket — idempotente
 python -m scripts.seed_data       # dataset base de las pruebas de lectura
 python -m scripts.reset_local     # borra+recrea tablas, purga colas y reseedea — SIN tocar Docker
 uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
@@ -188,17 +188,20 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-026 Eval de prompts (2026-08-28)**: golden set en `tests/golden/intents.jsonl`; en CI solo
   la parte determinista (`tests/test_golden_intents.py`). La eval real contra Gemini es manual:
   `python -m scripts.eval_intents` (~1 centavo) y exige ≥ 95% para mergear un cambio de prompt.
-- **D-027 Tope diario de IA (2026-08-31) — ⚠️ DECIDIDA PERO NO IMPLEMENTADA**: **anónimo 10
-  ejecuciones de IA al día**, contadas por `hash(IP)` **y** por sesión (se agota la primera de
-  las dos); **autenticado 50/día** por `user_id` (no por IP: es preciso y no se comparte); **con
-  asesor no consume cuota** (no hay llamada a modelo). `0 = ilimitado`, como
-  `MAX_MESSAGES_PER_MINUTE`, y así queda en dev. Cuenta la **ejecución de IA**, no el mensaje:
-  triviales y guardrails no gastan porque no cuestan (`agent/usage.py` ya lo distingue).
-  Complementa a D-005, que es por minuto y por conversación: esto frena el costo acumulado de
-  un mismo actor a lo largo del día. **Implementar apenas se pueda** (T-09 en BACKLOG.md): hoy
-  el único freno ante un anónimo con un script es el de 10/min, que permite 14 400 llamadas
-  diarias. Ojo con dos cosas al construirlo: la IP se guarda **hasheada** (es dato personal) y
-  CGNAT móvil hace que muchos usuarios legítimos compartan IP.
+- **D-027 Tope de ejecuciones de IA (revisada e IMPLEMENTADA 2026-09-01; original
+  2026-08-31)**: **anónimo 10/hora y 20/día**, contados por sesión **y** por `hash(IP)` (se
+  agota la primera); **autenticado el doble (20/hora, 40/día)** por `user_id` (no por IP: es
+  preciso y no se comparte — CGNAT hace que usuarios legítimos compartan IP); **con asesor no
+  consume** (no hay llamada a modelo). Cuenta el **mensaje que llamó a un modelo**, no el
+  mensaje a secas: triviales, guardrails, reglas y ofrecer botones de flujo (D-028) no gastan.
+  Al agotarse, respuesta fija (gratis): al anónimo lo invita a **crear cuenta / iniciar
+  sesión**; al autenticado, a **pedir un asesor** — ruta que sale por reglas y funciona sin
+  cuota. `0 = ilimitado` **y así queda en dev por ahora** (decisión de Aaron 2026-09-01).
+  Código: `agent/quota.py`, tabla `RateLimits` (PK `USER#`/`SESSION#`/`IP#`, SK ventana
+  `H#`/`D#`, TTL 48 h — esquema duplicado en stack **y** `local_setup.py`), la IP viaja
+  **hasheada** (HMAC, `IP_HASH_SECRET`) en el `AIJob`; compuertas en `workers/ai_worker.py`.
+  Tests en `tests/test_quota.py`. Complementa a D-005 (por minuto y por conversación): esto
+  frena el costo acumulado de un mismo actor.
 
 - **D-028 Flujos guiados con quick replies (2026-09-01)**: máquina de estados **liviana** en
   la fila de Conversations (`active_flow`/`flow_step`/`flow_slots`/`flow_version`/
@@ -229,9 +232,9 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-007, D-017, D-019, D-020, D-021…D-023 y D-024…D-026 **cerradas** (arriba); D-018 provisional.
-**D-027 cerrada pero SIN implementar** (tope diario de IA): es la única decisión cerrada con
-código pendiente — ver T-09 en BACKLOG.md.
+D-001…D-007, D-017, D-019, D-020, D-021…D-028 **cerradas** (arriba); D-018 provisional.
+D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagados en dev**
+(`AI_QUOTA_* = 0`); en stage/prod se encienden por variables de entorno.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 

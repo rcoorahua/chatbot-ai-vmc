@@ -116,7 +116,7 @@ cd frontend; npm install; cd ..
 
 ```powershell
 docker compose up -d              # DynamoDB (:8001) + LocalStack SQS/S3 (:4566)
-python -m scripts.local_setup     # crea las 5 tablas, las 2 colas y el bucket
+python -m scripts.local_setup     # crea las 6 tablas, las 2 colas y el bucket
 python -m scripts.seed_data       # carga los datos de prueba
 
 uvicorn backend.api.main:app --reload --port 8000
