@@ -60,10 +60,12 @@
     brand: "VMC Subastas",
     brandSub: "powered by SUBASTOP Co.",
     agent: "Subastín",
-    greetingAuth: (name) => `¡Bienvenido a VMC Subastas ${name}! ¿Cómo te podemos ayudar hoy?`,
+    // El saludo entra como mensaje nuevo en CADA apertura del panel (ver renderMessages):
+    // el salto de linea separa el "hola" de la pregunta, como dos frases de un chat real.
+    greetingAuth: (name) =>
+      `¡Hola! 👋 ${name},\nahora estás hablando con Subastín. ¿Cómo puedo ayudarte?`,
     greetingAnon:
-      "¡Bienvenido Cazador de Ofertas! Somos VMC Subastas, tu Marketplace de confianza. " +
-      "Estamos a tu disposición para cualquier consulta que tengas.",
+      "¡Hola! 👋 Cazador de Ofertas,\nahora estás hablando con Subastín. ¿Cómo puedo ayudarte?",
     homeTitleAuth: (name) => `¡Bienvenido al Nuevo VMC ${name}! ¿Cómo podemos ayudarte?`,
     homeTitleAnon: "¡Bienvenido al Nuevo VMC! ¿Cómo podemos ayudarte?",
     sendUs: "Envíanos un mensaje",
@@ -100,6 +102,10 @@
     back: "Volver",
     close: "Cerrar",
     open: "Abrir chat",
+    minimize: "Minimizar el chat",
+    attach: "Adjuntar archivo",
+    emoji: "Insertar emoji",
+    soon: "Muy pronto",
   };
 
   // Eventos de auditoria que llegan como mensajes SYSTEM (conversations/models.py SystemEvent)
@@ -133,7 +139,14 @@
 
   const state = {
     open: false,
-    view: "home", // home | messages | help
+    // Arranca (y re-abre) SIEMPRE en mensajes: el home queda para quien navegue a el.
+    view: "messages", // home | messages | help
+    // Ancla del saludo local: `greetingNonce` cambia en cada apertura para que la burbuja
+    // vuelva a entrar animada, y `greetingAt` (hora de la apertura) decide DONDE va en el
+    // hilo: el historial (timestamps anteriores) queda arriba y lo que llegue en esta sesion
+    // queda debajo. Por conteo fallaria: el historial carga async DESPUES de abrir.
+    greetingNonce: 0,
+    greetingAt: null,
     // Tope de caracteres del compositor. Se reemplaza con el que informa la sesion; este valor
     // solo cubre el instante previo a la primera respuesta de /chat/sessions.
     maxChars: 500,
@@ -216,6 +229,11 @@
     send: () => svg(["M12 19V5", "M6 11l6-6 6 6"], 20),
     back: () => svg(["M15 18l-6-6 6-6"], 22),
     chevron: () => svg(["M9 6l6 6-6 6"], 18),
+    // El launcher abierto "minimiza" (chevron hacia abajo), no "cierra" con una X: el patron
+    // de Intercom que la pagina anfitriona ya le enseño a los usuarios de VMC.
+    minimize: () => svg(["M6 9.5l6 6 6-6"], 24),
+    clip: () => svg(["M21 11.6l-8.9 8.9a5.6 5.6 0 0 1-7.9-7.9l8.9-8.9a3.7 3.7 0 0 1 5.3 5.3l-8.9 8.9a1.9 1.9 0 0 1-2.6-2.6l8.2-8.2"], 19),
+    smile: () => svg(["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8.6 13.8s1.2 1.9 3.4 1.9 3.4-1.9 3.4-1.9", "M9.2 9.6h.01M14.8 9.6h.01"], 19),
     search: () => svg(["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M21 21l-4.3-4.3"], 18),
   };
 
@@ -996,8 +1014,8 @@
   function updateLauncher() {
     const open = state.open;
     launcherEl.classList.toggle("is-open", open);
-    launcherEl.setAttribute("aria-label", open ? TEXT.close : TEXT.open);
-    launcherIconEl.replaceChildren(open ? ICON.close() : ICON.chat());
+    launcherEl.setAttribute("aria-label", open ? TEXT.minimize : TEXT.open);
+    launcherIconEl.replaceChildren(open ? ICON.minimize() : ICON.chat());
 
     const showBadge = !open && state.unread > 0;
     launcherBadgeEl.hidden = !showBadge;
@@ -1156,18 +1174,27 @@
     // de sistema o un separador de dia rompen el grupo, porque visualmente ya lo separan.
     let previo = null;
 
-    if (state.messages.length === 0) {
-      // Saludo local (no persistido): el mismo texto con el que Intercom abria la conversacion.
-      const saludo = {
-        sender_type: "BOT",
-        content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
-        created_at: null,
-      };
+    // Saludo local (no persistido) que entra como mensaje nuevo en CADA apertura del panel:
+    // el nonce de la apertura le da una clave fresca, asi firstRenderOf vuelve a animarlo.
+    // Se inserta despues del historial (timestamps anteriores a la apertura) y antes de lo
+    // que llegue en esta sesion, como la nota de "ahora hablas con..." de Intercom.
+    let saludoPendiente = state.open || state.messages.length === 0;
+    const saludo = {
+      sender_type: "BOT",
+      content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
+      created_at: null,
+      client_message_id: "greeting:" + state.greetingNonce,
+    };
+    const pushSaludo = () => {
+      saludoPendiente = false;
       items.push(renderBubble(saludo, true));
       previo = saludo;
-    }
+    };
 
     for (const message of state.messages) {
+      if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
+        pushSaludo();
+      }
       const diaAntes = lastDay;
       pushDay(message.created_at);
       if (message.sender_type === "SYSTEM" || message.message_type === "SYSTEM") {
@@ -1179,6 +1206,7 @@
       items.push(renderBubble(message, cambioDeDia || !sameGroup(previo, message)));
       previo = message;
     }
+    if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
       pushDay(draft.createdAt);
       const propio = { sender_type: "USER", created_at: draft.createdAt };
@@ -1381,11 +1409,22 @@
         contador.classList.toggle("is-full", usado >= state.maxChars);
       }
     };
+    // Sin texto no hay nada que enviar: el boton se apaga para que el estado sea visible
+    // ANTES del click, en vez de un click que no hace nada (sendMessage ya ignora el vacio).
+    const sendBtn = h(
+      "button",
+      { class: "send", type: "submit", "aria-label": TEXT.send, disabled: "" },
+      ICON.send()
+    );
+    const syncSend = () => {
+      sendBtn.disabled = textarea.value.trim() === "";
+    };
     const submit = () => {
       const value = textarea.value;
       textarea.value = "";
       autoGrow(textarea);
       pintarContador();
+      syncSend();
       sendMessage(value);
     };
     textarea.addEventListener("keydown", (event) => {
@@ -1397,7 +1436,18 @@
     textarea.addEventListener("input", () => {
       autoGrow(textarea);
       pintarContador();
+      syncSend();
     });
+    // Adjuntos (F6, bloqueado por D-015) y emojis todavia no existen: los botones estan para
+    // que el compositor tenga la anatomia final, pero deshabilitados — nada de controles que
+    // parecen vivos y no hacen nada al click.
+    const tool = (icon, label) =>
+      h(
+        "button",
+        { class: "tool", type: "button", disabled: "", "aria-label": label,
+          title: `${label} — ${TEXT.soon}` },
+        icon
+      );
     return h(
       "form",
       {
@@ -1408,7 +1458,13 @@
         },
       },
       h("div", { class: "composer-field" }, textarea, contador),
-      h("button", { class: "send", type: "submit", "aria-label": TEXT.send }, ICON.send())
+      h(
+        "div",
+        { class: "composer-actions" },
+        tool(ICON.clip(), TEXT.attach),
+        tool(ICON.smile(), TEXT.emoji),
+        sendBtn
+      )
     );
   }
 
@@ -1490,7 +1546,18 @@
     // Al cerrar se olvida la vista dibujada para que al reabrir la pantalla vuelva a entrar
     // con su animacion, en lugar de aparecer de golpe.
     if (!open) lastViewKey = null;
-    if (open && state.view === "messages") state.unread = 0;
+    if (open) {
+      // Directo a mensajes (sin pasar por el home) y con el saludo entrando como mensaje
+      // nuevo: nonce fresco = la burbuja se anima en CADA apertura, no solo la primera.
+      state.view = "messages";
+      state.unread = 0;
+      state.greetingNonce = Date.now();
+      state.greetingAt = new Date().toISOString();
+      state.stickToBottom = true;
+      // Precarga del orbe WebGPU: compilar el shader recien cuando el usuario envia su primer
+      // mensaje hacia que el indicador de "escribiendo" tardara en aparecer.
+      ensureOrbGpu();
+    }
     render();
     schedulePoll();
     if (open) boot();
@@ -1869,8 +1936,19 @@
     /* ── Compositor ──────────────────────────────────────────────────────────────────────
        Borde en gradiente igual que el Input de Concorde: vault en reposo, naranja a vault con
        foco. El textarea crece con el texto (autoGrow) hasta composerMaxPx. */
-    .composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
-    .composer-field { position: relative; flex: 1; min-width: 0; display: flex; }
+    /* Dos filas como el compositor de Intercom: el texto arriba a lo ancho, y debajo la fila
+       de acciones (adjuntar y emoji a la izquierda, enviar a la derecha). */
+    .composer { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px 9px; border-top: 1px solid var(--line); background: var(--surface); }
+    .composer-field { position: relative; min-width: 0; display: flex; }
+    .composer-actions { display: flex; align-items: center; gap: 2px; }
+    .composer-actions .send { margin-left: auto; }
+    .tool {
+      width: 36px; height: 36px; display: grid; place-items: center; flex: none;
+      border: 0; background: none; border-radius: var(--radius-pill); color: var(--ink-soft);
+      cursor: pointer; transition: background-color .18s var(--ease), color .18s var(--ease);
+    }
+    .tool:hover:not([disabled]) { background: rgba(132, 96, 229, .1); color: var(--vault-600); }
+    .tool[disabled] { color: var(--ink-faint); opacity: .55; cursor: default; }
     /* El contador solo aparece cerca del tope (lo decide el JS) y se posa sobre el borde. */
     .counter {
       position: absolute; right: 12px; bottom: -7px; z-index: 1;
@@ -1906,10 +1984,12 @@
       opacity: 0; transition: opacity .3s var(--ease);
     }
     .send svg { position: relative; z-index: 1; transition: transform .3s var(--ease-soft); }
-    .send:hover { transform: translateY(-1.5px) scale(1.03); box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(132, 96, 229, .3) 0 10px 26px; }
-    .send:hover::before { opacity: 1; }
-    .send:hover svg { transform: translateY(-1px); }
-    .send:active { transform: translateY(0) scale(.965); transition-duration: .14s; }
+    .send:hover:not(:disabled) { transform: translateY(-1.5px) scale(1.03); box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(132, 96, 229, .3) 0 10px 26px; }
+    .send:hover:not(:disabled)::before { opacity: 1; }
+    .send:hover:not(:disabled) svg { transform: translateY(-1px); }
+    .send:active:not(:disabled) { transform: translateY(0) scale(.965); transition-duration: .14s; }
+    /* Sin texto no hay envio: gris plano, sin brillo ni elevacion, cursor normal. */
+    .send:disabled { background-image: none; background-color: var(--line-strong); box-shadow: none; cursor: default; }
 
     /* ── Navegacion inferior ─────────────────────────────────────────────────────────────
        La pestaña activa se marca con una barra vault que se dibuja de dentro hacia fuera. */
