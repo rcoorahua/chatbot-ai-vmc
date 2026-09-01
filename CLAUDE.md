@@ -27,6 +27,7 @@ decidir por `STAGE` (dev y stage detallados, prod sobrio; ver `core/observabilit
 docker compose up -d              # dynamodb-local (:8001) + localstack sqs/s3 (:4566)
 python -m scripts.local_setup     # crea las 5 tablas, 2 colas y el bucket — idempotente
 python -m scripts.seed_data       # dataset base de las pruebas de lectura
+python -m scripts.reset_local     # borra+recrea tablas, purga colas y reseedea — SIN tocar Docker
 uvicorn backend.api.main:app --reload --port 8000   # http://localhost:8000/docs
 cd widget; python -m http.server 8080                # widget: http://localhost:8080/test.html
 
@@ -49,7 +50,10 @@ cd frontend; npm run lint; npm run build             # eslint + build de producc
 ```
 
 `local_setup` y `seed_data` hay que **re-ejecutarlos tras cada reinicio de contenedores**:
-dynamodb-local corre `-inMemory` y pierde las tablas.
+dynamodb-local corre `-inMemory` y pierde las tablas. Para limpiar lo que ensuciaron pruebas
+manuales sin reiniciar Docker (más rápido y no interrumpe nada), `python -m scripts.reset_local`
+hace las dos cosas en un solo paso y de paso purga las colas; el worker de IA (`run_ai_worker`)
+no necesita reiniciarse porque no guarda estado entre jobs.
 
 Los tests corren contra **dynamodb-local real**, no mocks: si los contenedores no están arriba
 se saltan en local, pero **fallan duro en CI** (`conftest.py` distingue por la variable `CI`).
@@ -157,10 +161,12 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-004 Contexto para IA (2026-08-28)**: **no hay resumen**. La memoria del bot son los últimos
   **20 mensajes de la última hora** (`service.context_window`). Pasada la ventana, el mensaje se
   atiende solo. `summary`/`summary_updated_at` quedan en el modelo sin uso.
-- **D-005 Guardrails (2026-08-28)**: 2000 caracteres por mensaje; **10 mensajes/min** por
-  conversación → 429 con `Retry-After` (el rechazado no se persiste); imágenes 5 MB, 3 por
-  mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope acumulativo**: con D-003 la conversación es
-  permanente, así que un tope duro la dejaría inservible de por vida.
+- **D-005 Guardrails (2026-08-28, largo de mensaje revisado 2026-08-31)**: **500 caracteres**
+  por mensaje (bajado de 2000: de sobra para el tono conversacional del chat, sin invitar a
+  pegar párrafos); **10 mensajes/min** por conversación → 429 con `Retry-After` (el rechazado
+  no se persiste); imágenes 5 MB, 3 por mensaje, 20 por hora, JPG/PNG/WebP. **Sin tope
+  acumulativo**: con D-003 la conversación es permanente, así que un tope duro la dejaría
+  inservible de por vida.
 - **D-007 IA OFF en handoff (2026-08-28)**: opción simple — la IA **no se re-enciende sola**.
   Queda apagada hasta que un asesor tome y cierre el caso (D-023 la devuelve al bot). Sin
   expiración ni temporizador; si nadie atiende, el caso espera en la bandeja.
@@ -182,6 +188,17 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-026 Eval de prompts (2026-08-28)**: golden set en `tests/golden/intents.jsonl`; en CI solo
   la parte determinista (`tests/test_golden_intents.py`). La eval real contra Gemini es manual:
   `python -m scripts.eval_intents` (~1 centavo) y exige ≥ 95% para mergear un cambio de prompt.
+- **D-027 Tope diario de IA (2026-08-31) — ⚠️ DECIDIDA PERO NO IMPLEMENTADA**: **anónimo 10
+  ejecuciones de IA al día**, contadas por `hash(IP)` **y** por sesión (se agota la primera de
+  las dos); **autenticado 50/día** por `user_id` (no por IP: es preciso y no se comparte); **con
+  asesor no consume cuota** (no hay llamada a modelo). `0 = ilimitado`, como
+  `MAX_MESSAGES_PER_MINUTE`, y así queda en dev. Cuenta la **ejecución de IA**, no el mensaje:
+  triviales y guardrails no gastan porque no cuestan (`agent/usage.py` ya lo distingue).
+  Complementa a D-005, que es por minuto y por conversación: esto frena el costo acumulado de
+  un mismo actor a lo largo del día. **Implementar apenas se pueda** (T-09 en BACKLOG.md): hoy
+  el único freno ante un anónimo con un script es el de 10/min, que permite 14 400 llamadas
+  diarias. Ojo con dos cosas al construirlo: la IP se guarda **hasheada** (es dato personal) y
+  CGNAT móvil hace que muchos usuarios legítimos compartan IP.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -200,6 +217,8 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
 D-001…D-007, D-017, D-019, D-020, D-021…D-023 y D-024…D-026 **cerradas** (arriba); D-018 provisional.
+**D-027 cerrada pero SIN implementar** (tope diario de IA): es la única decisión cerrada con
+código pendiente — ver T-09 en BACKLOG.md.
 
 ## Decisiones TÉCNICAS abiertas (TD-xxx)
 
@@ -211,7 +230,7 @@ D-001…D-007, D-017, D-019, D-020, D-021…D-023 y D-024…D-026 **cerradas** (
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
 | TD-005 | `PythonFunction` (bundling) vs `DockerImageFunction` | PythonFunction mientras deps < 250 MB descomprimido |
 | TD-007 | Dominio custom para la API + DNS/ACM | No bloquea MVP; URL default de API Gateway mientras tanto |
-| TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27: `gemini-3.1-flash-lite` clasifica ($0.25/$1.50 por 1M, 4× más barato que Haiku) y `gemini-3.7-flash` redacta. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002). Ojo: el precio de `3.7-flash` es promocional hasta 2026-12-31 y se duplica el 2027-01-01 |
+| TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27; **modelos recalibrados 2026-09-01** contra la página oficial de precios: `gemini-3.5-flash-lite` clasifica ($0.30/$2.50 por 1M; respaldo `3.1-flash-lite`) y `gemini-3.6-flash` redacta ($1.50/$7.50; respaldo `3.5-flash` a $1.50/$9.00). Se abandonó `3.7-flash`: existe en la API pero NO figura en la tabla de precios (preview sin tarifa) y con key gratuita rechazaba sostenido ("high demand") — en la práctica todo caía al respaldo con un costo estimado inventado. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002) |
 
 TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; backup en
 `../chatbot-ai-vmc-v0-backup.zip`.
@@ -225,7 +244,12 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   IA en `workers/ai_worker.py`). Cada `repository.py` es el único que conoce claves/GSIs.
 - Infra en `infra/`, app del asesor/dashboard en `frontend/` (Next.js), **widget del chat en
   `widget/`** (JS plano sin build, se embebe en VMC; `test.html` para probarlo). Todo el código
-  nuevo sigue este layout.
+  nuevo sigue este layout. `widget/logo-voyager.svg`, `widget/animation.html` y
+  `widget/Anima-Bot.json` son **fuentes de referencia, no assets servidos**: `subastin.js` trae
+  el wordmark de VMC calcado del SVG, el avatar animado del bot es un puerto a Canvas/WebGPU del
+  efecto "Liquid Orb" de `animation.html` (decisión de producto, Aaron 2026-08-31) y el Lottie de
+  `Anima-Bot.json` se descartó a propósito (cargar su runtime era más pesado) — no borrar estos
+  tres archivos ni "limpiarlos" por parecer sueltos, son la fuente de verdad visual.
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
@@ -273,7 +297,21 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. La ruta
   `GET /dev/conversations/{id}/ai-usage` (`api/routers/dev.py`) alimenta la consola de
   `widget/test.html`; con `DEV_OBSERVABILITY=0` (prod) responde 404. Nunca loguear contenido
-  fuera de `content_preview`.
+  fuera de `content_preview`. El mismo router también trae `GET /dev/tables[/{key}]` y
+  `GET /dev/queues` (pestañas "Tablas"/"Cola" de `test.html`): un `scan` completo de cada tabla
+  y un peek de SQS con `VisibilityTimeout=0`. Gate más estricto que `ai-usage` a propósito —
+  `_solo_dev()` exige `stage == "dev"`, ni siquiera vive en stage — porque un scan expone
+  mensajes de TODOS los usuarios, no solo la conversación propia.
+- **`core/llm.py` — quirks por modelo de Gemini 3.x, no generalizar entre tiers**: el piso de
+  `thinking_level` que acepta cada modelo varía (`ModelSpec.thinking_level`) y hay que
+  **probarlo con una llamada real al cambiar de modelo** — `3.7-flash` rechazaba `"minimal"`
+  con `APIError` (tumbó al redactor en local el 2026-09-01, cayendo siempre al fallback fijo
+  como si no hubiera evidencia), mientras que `3.5-flash-lite`, `3.5-flash` y `3.6-flash` lo
+  aceptan (sondeados 2026-09-01; con `"low"`, `3.6-flash` gastó el tope pensando y devolvió
+  vacío). Cada tier lleva un respaldo (`ModelSpec.fallback`) **con su propia tarifa**: el costo
+  en AIUsage se calcula con el precio del modelo que REALMENTE respondió (`llm.cost_for`),
+  nunca con el del principal. Al agregar un modelo o tier nuevo, no asumir que le sirve la
+  config de otro — probarlo aparte. Modelos vigentes: ver TD-008.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
   nunca como variables de entorno del stack. Hoy `core/config.py` y `core/llm.py` los leen del
   entorno (dev); al desplegar hay que resolverlos desde el secreto antes de construir `Settings`.

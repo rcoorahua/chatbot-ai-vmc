@@ -70,6 +70,7 @@ def record_execution(
     rag_used: bool = False,
     rag_results_count: int | None = None,
     rag_fragments: list[dict[str, Any]] | None = None,
+    rag_min_score: float | None = None,
     handoff_triggered: bool = False,
     status: str = "SUCCESS",
 ) -> None:
@@ -106,17 +107,26 @@ def record_execution(
         item["rag_results_count"] = rag_results_count
     if rag_fragments:
         # Que trajo el RAG para esta respuesta (consola de dev, api/routers/dev.py): tema,
-        # score y fuente de cada fragmento recuperado. NUNCA el texto del fragmento — eso es
-        # contenido del Centro de Ayuda, no el mensaje del usuario, pero igual no hace falta
-        # para depurar el retrieval y agrandaria la fila sin necesidad.
+        # score y fuente de cada fragmento recuperado — TAMBIEN los que no superaron el umbral
+        # (`relevant: False`), que es lo que permite juzgar el retrieval cuando la respuesta
+        # cayo en "sin evidencia". NUNCA el texto del fragmento — eso es contenido del Centro
+        # de Ayuda, no el mensaje del usuario, pero igual no hace falta para depurar el
+        # retrieval y agrandaria la fila sin necesidad.
         item["rag_fragments"] = [
             {
                 "topic": fragment["topic"],
                 "score": Decimal(str(round(fragment["score"], 4))),
                 "source_url": fragment["source_url"],
+                # Filas viejas no traen el flag; ausente = era relevante (antes solo se
+                # guardaban los que superaban el umbral).
+                "relevant": bool(fragment.get("relevant", True)),
             }
             for fragment in rag_fragments
         ]
+    if rag_min_score is not None:
+        # El umbral VIGENTE al ejecutar: si se recalibra despues, la fila sigue contando la
+        # historia correcta de por que un fragmento fue (o no) evidencia.
+        item["rag_min_score"] = Decimal(str(round(rag_min_score, 4)))
     # Un evento por ejecucion, con las mismas claves que la fila (RNF-006): en CloudWatch Logs
     # Insights `filter event = "ai.execution" | stats sum(estimated_cost_usd) by source` da la
     # foto de costos sin tocar DynamoDB. Sin contenido de mensajes: solo ids y metricas.

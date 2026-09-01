@@ -12,11 +12,14 @@ decidir si dispara el handoff.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from backend.agent import guardrails, prompts
 from backend.core.config import get_settings
 from backend.core.llm import LLMError, ModelTier, empty_usage, get_client
+
+logger = logging.getLogger(__name__)
 
 # El tope de salida vive en Settings (`ai_answer_max_tokens`, D-005 cerrada 2026-08-28): la
 # brevedad la pide el prompt, el tope la garantiza cuando el modelo se extiende igual.
@@ -89,9 +92,13 @@ def write_answer(
             # produce un fraseo rigido y repetitivo entre conversaciones parecidas.
             temperature=0.2,
         )
-    except LLMError:
+    except LLMError as exc:
         # Un fallo del proveedor no puede convertirse en una respuesta inventada ni en un error
         # crudo al usuario: se trata igual que la falta de evidencia y el worker deriva.
+        # PERO se loguea SIEMPRE: tragarse la causa hizo que un error de configuracion
+        # ("Thinking level MINIMAL is not supported", 2026-09-01) pareciera "no hay evidencia"
+        # durante horas — RAG traia fragmentos buenos y todo caia al texto fijo sin una pista.
+        logger.warning("ai.writer.llm_error", extra={"error": str(exc)})
         return WriterResult(
             text=prompts.WRITER_NO_EVIDENCE_FALLBACK,
             has_evidence=False,

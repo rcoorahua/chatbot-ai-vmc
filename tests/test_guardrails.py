@@ -214,7 +214,7 @@ def test_los_valores_por_defecto_son_los_de_la_decision():
     """D-005/D-004 cerradas 28/08/2026: si alguien cambia un default, este test lo canta."""
     settings = get_settings()
     assert settings.max_messages_per_minute == 10
-    assert settings.max_message_chars == 2000
+    assert settings.max_message_chars == 500
     assert settings.ai_context_messages == 20
     assert settings.ai_context_window_minutes == 60
     assert settings.max_image_bytes == 5 * 1024 * 1024

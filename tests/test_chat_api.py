@@ -102,6 +102,25 @@ def test_sesion_anonima_abre_sin_datos(client, limpiar):
     assert sesion["token"]
 
 
+def test_la_sesion_informa_el_limite_de_caracteres(client, limpiar, monkeypatch):
+    """El widget corta en el limite REAL del servidor (D-005), no en uno copiado.
+
+    Si el numero viviera en `widget/subastin.js`, subir `MAX_MESSAGE_CHARS` en `.env` dejaria
+    al widget cortando en el valor viejo sin que nada avisara: el usuario no podria escribir lo
+    que el servidor si acepta. Por eso viaja en la sesion.
+    """
+    sesion = _sesion(client, limpiar)
+    assert sesion["limits"]["max_message_chars"] == get_settings().max_message_chars
+
+    monkeypatch.setenv("MAX_MESSAGE_CHARS", "500")
+    reset_settings()
+    try:
+        assert _sesion(client, limpiar)["limits"]["max_message_chars"] == 500
+    finally:
+        monkeypatch.delenv("MAX_MESSAGE_CHARS", raising=False)
+        reset_settings()
+
+
 def test_dos_sesiones_anonimas_no_comparten_conversacion(client, limpiar):
     una = _sesion(client, limpiar)
     otra = _sesion(client, limpiar)

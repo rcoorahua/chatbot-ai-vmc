@@ -143,7 +143,9 @@ python -m scripts.run_ai_worker                      # en otra terminal: el bot 
 - Al terminar: `Ctrl+C` y `docker compose down`.
 
 Los dos scripts son idempotentes y **hay que volver a ejecutarlos cada vez que se reinician los
-contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse.
+contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse. Para limpiar
+lo que ensuciaron pruebas manuales sin reiniciar los contenedores, `python -m scripts.reset_local`
+hace las dos cosas en un solo paso (y purga las colas); no hace falta reiniciar el worker de IA.
 
 ### Verificar que todo está bien
 

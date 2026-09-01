@@ -100,7 +100,7 @@ def test_mensaje_ambiguo_usa_el_modelo_y_respeta_su_etiqueta(fake_llm):
 
     assert result.intent is Intent.ADVISOR
     assert result.source == "model"
-    assert result.model == "gemini-3.1-flash-lite"
+    assert result.model == "gemini-3.5-flash-lite"
     assert len(client.calls) == 1
 
 
@@ -220,7 +220,7 @@ def test_con_evidencia_redacta_y_reporta_uso(fake_llm):
 
     assert result.has_evidence is True
     assert result.text == "La comision minima es de X SubasCoins."
-    assert result.model == "gemini-3.7-flash"
+    assert result.model == "gemini-3.6-flash"
     assert result.usage["input"] == 100, "AIUsage necesita el uso real de la llamada"
     assert client.calls[0]["tier"] is ModelTier.ANSWER
 
@@ -266,10 +266,25 @@ def test_el_costo_usa_el_precio_del_tier_que_atendio():
     fast = LLMResponse(text="", model="x", tier=ModelTier.FAST, usage=usage)
     answer = LLMResponse(text="", model="x", tier=ModelTier.ANSWER, usage=usage)
 
-    assert fast.estimated_cost_usd() == pytest.approx(0.25 + 1.50)
-    assert answer.estimated_cost_usd() == pytest.approx(0.75 + 3.75)
+    assert fast.estimated_cost_usd() == pytest.approx(0.30 + 2.50)
+    assert answer.estimated_cost_usd() == pytest.approx(1.50 + 7.50)
     assert fast.estimated_cost_usd() < answer.estimated_cost_usd(), (
         "clasificar debe costar menos que redactar: es el motivo de separar los tiers"
+    )
+
+
+def test_el_respaldo_se_cobra_con_su_propia_tarifa():
+    """Si el respaldo atendio la llamada, AIUsage debe cobrarla con SU precio: usar el del
+    principal subestimaba (o sobreestimaba) el costo real de cada rescate."""
+    usage = {"input": 1_000_000, "output": 1_000_000, "cached_read": 0, "cached_creation": 0}
+    fallback_name = llm.model_for(ModelTier.ANSWER).fallback.name
+
+    rescued = LLMResponse(text="", model=fallback_name, tier=ModelTier.ANSWER, usage=usage)
+
+    assert rescued.estimated_cost_usd() == pytest.approx(1.50 + 9.00)
+    assert llm.cost_for(fallback_name, usage, tier=ModelTier.ANSWER) == pytest.approx(1.50 + 9.00)
+    assert llm.cost_for("gemini-3.6-flash", usage, tier=ModelTier.ANSWER) == pytest.approx(
+        1.50 + 7.50
     )
 
 
