@@ -14,9 +14,10 @@ nunca llega suelta en el body — solo dentro del JWT firmado por VMC (RNF-005, 
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from backend.agent import quota
 from backend.conversations import repository, service
 from backend.conversations.models import Conversation, Message, MessageStatus
 from backend.core import auth, jobs
@@ -204,7 +205,7 @@ def list_messages(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def post_message(
-    conversation_id: str, body: MessageIn, session: auth.CurrentSession
+    conversation_id: str, body: MessageIn, session: auth.CurrentSession, request: Request
 ) -> MessageAccepted:
     conversation = _owned_conversation(session, conversation_id)
     try:
@@ -235,11 +236,25 @@ def post_message(
 
     # Un reintento no vuelve a encolar: el job del mensaje original ya esta en camino.
     if created:
-        _enqueue_or_mark_failed(message)
+        _enqueue_or_mark_failed(message, ip_hash=quota.hash_ip(_client_ip(request)))
     return MessageAccepted(message=MessageOut.from_model(message), duplicate=not created)
 
 
-def _enqueue_or_mark_failed(message: Message) -> None:
+def _client_ip(request: Request) -> str | None:
+    """IP del cliente: en Lambda la deja API Gateway en el evento (Mangum la expone en el
+    scope); en local, la conexion directa de uvicorn. Solo se usa hasheada (T-09/D-027)."""
+    event = request.scope.get("aws.event") or {}
+    source_ip = (
+        event.get("requestContext", {}).get("http", {}).get("sourceIp")
+        if isinstance(event, dict)
+        else None
+    )
+    if source_ip:
+        return source_ip
+    return request.client.host if request.client else None
+
+
+def _enqueue_or_mark_failed(message: Message, *, ip_hash: str | None = None) -> None:
     """RNF-003 manda: el mensaje ya es durable, asi que un fallo de la cola no es un 500 para
     el usuario. Se marca el mensaje para que un barrido lo re-encole y se deja rastro en logs
     (alarma pendiente en RNF-006)."""
@@ -248,6 +263,7 @@ def _enqueue_or_mark_failed(message: Message) -> None:
         message_id=message.message_id,
         message_key=message.message_key,
         requested_at=utc_now_iso(),
+        ip_hash=ip_hash,
     )
     try:
         jobs.enqueue_ai_job(job)

@@ -1,5 +1,5 @@
 """Reinicia el entorno local a un estado limpio SIN tocar los contenedores de Docker: trunca
-(borra y recrea) las 5 tablas de DynamoDB, purga las 2 colas de SQS y vuelve a cargar el
+(borra y recrea) las 6 tablas de DynamoDB, purga las 2 colas de SQS y vuelve a cargar el
 dataset de prueba.
 
     python -m scripts.reset_local
@@ -28,7 +28,7 @@ from scripts.seed_data import cargar
 
 
 def borrar_tablas(verbose: bool = True) -> None:
-    """Borra las 5 tablas si existen. Idempotente, igual que crear_tablas."""
+    """Borra las 6 tablas si existen. Idempotente, igual que crear_tablas."""
     cliente = cliente_dynamo()
     for definicion in definiciones_de_tabla():
         nombre = definicion["TableName"]

@@ -30,8 +30,9 @@ el timeout de esta funcion.
 import logging
 from datetime import timedelta
 
-from backend.agent import flows, guardrails, prompts, rag, trivial, usage, writer
+from backend.agent import flows, guardrails, prompts, quota, rag, trivial, usage, writer
 from backend.agent.classifier import ClassificationResult, classify
+from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
 from backend.conversations import repository, service
 from backend.conversations.models import (
@@ -101,7 +102,7 @@ def _process(body: str) -> None:
         if not conversation.bot_enabled:
             _while_bot_off(conversation)
         else:
-            _attend(conversation, message)
+            _attend(conversation, message, ip_hash=job.ip_hash)
     except Exception:
         repository.update_message_status(
             job.conversation_id, job.message_key, MessageStatus.FAILED
@@ -126,7 +127,7 @@ def _while_bot_off(conversation: Conversation) -> None:
     )
 
 
-def _attend(conversation: Conversation, message: Message) -> None:
+def _attend(conversation: Conversation, message: Message, ip_hash: str | None = None) -> None:
     window = service.context_window(conversation.conversation_id)
     block = _trailing_user_block(window)
     block_keys = [m.message_key for m in block]
@@ -189,16 +190,24 @@ def _attend(conversation: Conversation, message: Message) -> None:
     # ── D-028: flujos guiados con quick replies (MAPEO.md) — reglas y estado, sin IA ──
     # Antes del clasificador a proposito: un click de boton ya trae la intencion estructurada
     # y una respuesta corta ("En Vivo") solo tiene sentido con el estado del flujo.
-    if _handle_flow(conversation, message, text, window, block_keys, anonymous=(
-        conversation.user_type == UserType.ANONYMOUS
-    )):
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    if _handle_flow(conversation, message, text, window, block_keys, anonymous=anonymous,
+                    ip_hash=ip_hash):
         return
+
+    # ── T-09 / D-027: tope de ejecuciones de IA por actor ──
+    # Se decide ANTES de tocar un modelo. Las reglas deterministas siguen vivas con la cuota
+    # agotada (no cuestan): "quiero un asesor" — justo lo que promete el mensaje fijo —
+    # deriva igual. Solo lo que NECESITA un modelo (clasificar lo ambiguo, redactar una FAQ)
+    # recibe la respuesta fija de cuota. En dev todo esta en 0 y este bloque no toca la tabla.
+    rules_verdict = classify_by_rules(text)
+    needs_model = rules_verdict.intent is None or rules_verdict.intent == Intent.FAQ
+    if needs_model and not _spend_quota_or_reply(conversation, message, ip_hash):
+        return  # cuota agotada: ya salio la respuesta fija, gratis
 
     # ── RF-015/016: clasificar (reglas → tier FAST; Gemini orquesta por TD-008) ──
     classification = classify(text, _last_bot_message(window))
     _record_classification(conversation, message, classification)
-
-    anonymous = conversation.user_type == UserType.ANONYMOUS
     if classification.intent == Intent.OTHER:
         _reply_fixed(conversation, message, prompts.OTHER_INTENT_RESPONSE, "fixed_other",
                      intent=classification.intent)
@@ -388,6 +397,7 @@ def _handle_flow(
     block_keys: list[str],
     *,
     anonymous: bool,
+    ip_hash: str | None = None,
 ) -> bool:
     """True si el flujo guiado atendio el mensaje (D-028). El orden importa:
 
@@ -414,6 +424,10 @@ def _handle_flow(
                 value = flows.extract_slot_value(step, text)
             if value is None:
                 return False  # interrupcion: el flujo espera hasta resolverse o vencer
+            # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota agotada
+            # el flujo QUEDA esperando: al renovarse, "en vivo" escrito lo resuelve igual.
+            if not _spend_quota_or_reply(conversation, message, ip_hash):
+                return True
             _clear_flow_if_active(conversation)
             _answer_flow_step(
                 conversation, message, definition, step, value, window, block_keys,
@@ -428,11 +442,14 @@ def _handle_flow(
     step = definition.steps[0]
     direct = flows.extract_slot_value(step, text)
     if direct is not None:
+        if not _spend_quota_or_reply(conversation, message, ip_hash):
+            return True
         _answer_flow_step(
             conversation, message, definition, step, direct, window, block_keys,
             anonymous=anonymous,
         )
         return True
+    # Ofrecer los botones no llama a ningun modelo: no gasta cuota ni se bloquea por ella.
     _offer_flow_step(conversation, message, definition, step)
     return True
 
@@ -499,6 +516,48 @@ def _answer_flow_step(
     _answer_faq(
         conversation, message, query, window, block_keys, anonymous,
         source_prefix=f"flow:{definition.name}:{value}:",
+    )
+
+
+# ───────────────────────── Cuota de IA (T-09 / D-027, rev. 2026-09-01) ─────────────────────────
+
+
+def _quota_kwargs(conversation: Conversation, ip_hash: str | None) -> dict:
+    return {
+        "anonymous": conversation.user_type == UserType.ANONYMOUS,
+        "user_id": conversation.user_id,
+        "conversation_id": conversation.conversation_id,
+        "ip_hash": ip_hash,
+    }
+
+
+def _spend_quota_or_reply(
+    conversation: Conversation, message: Message, ip_hash: str | None
+) -> bool:
+    """True = hay cuota (y queda gastada 1 ejecucion); False = agotada y ya se respondio el
+    mensaje fijo. Con los topes en 0 (dev) siempre True sin tocar la tabla."""
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    if not quota.enabled(anonymous=anonymous):
+        return True
+    qk = _quota_kwargs(conversation, ip_hash)
+    if quota.exhausted(**qk):
+        _reply_quota(conversation, message)
+        return False
+    quota.spend(**qk)
+    return True
+
+
+def _reply_quota(conversation: Conversation, message: Message) -> None:
+    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a crear cuenta (que
+    ademas duplica su cuota y habilita el asesor, D-002); al autenticado, a pedir un asesor —
+    ruta que sale por reglas y funciona sin modelo."""
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    _reply_fixed(
+        conversation,
+        message,
+        prompts.QUOTA_EXHAUSTED_ANON_RESPONSE if anonymous
+        else prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE,
+        "quota:exhausted",
     )
 
 

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     table_tickets: str = "subastin-dev-tickets"
     table_advisors: str = "subastin-dev-advisors"
     table_ai_usage: str = "subastin-dev-ai-usage"
+    table_rate_limits: str = "subastin-dev-rate-limits"
     images_bucket: str | None = None
     ai_jobs_queue_url: str | None = None
     notifications_queue_url: str | None = None
@@ -120,6 +121,23 @@ class Settings(BaseSettings):
     # del autenticado no se cierra nunca, asi que un tope duro la dejaria inservible de por vida
     # y habria que intervenir a mano. El crecimiento lo controlan el rate limit y la retencion
     # (D-014), no un contador que solo sube.
+
+    # ── Tope de ejecuciones de IA por actor (T-09 / D-027, revisada 2026-09-01) ─────────────
+    # Complementa al rate limit de arriba: aquel es por minuto y por conversacion; esto frena
+    # el costo ACUMULADO de un mismo actor. Cuenta mensajes que llamaron a un modelo (los
+    # triviales, guardrails, reglas y ofrecer botones de flujo no gastan porque no cuestan).
+    # 0 = sin tope, y ASI QUEDA EN DEV (decision de Aaron 2026-09-01: apagado por ahora).
+    # Valores decididos para prod: anonimo 10/hora y 20/dia (por sesion Y por hash de IP, se
+    # agota la primera); autenticado el doble (20/hora y 40/dia) por user_id. Al agotarse:
+    # respuesta fija que orienta a crear cuenta (anonimo) o pedir asesor (autenticado) — pedir
+    # asesor sale por reglas, sin modelo, asi que funciona incluso sin cuota.
+    ai_quota_anon_per_hour: int = 0
+    ai_quota_anon_per_day: int = 0
+    ai_quota_auth_per_hour: int = 0
+    ai_quota_auth_per_day: int = 0
+    # Sal del HMAC con el que se hashea la IP (dato personal, jamas en claro). Vacio = se usa
+    # session_signing_key; rotarla reinicia contadores, aceptable con ventanas de horas.
+    ip_hash_secret: str | None = None
 
     # ── Imagenes (RF-040..042, valores de D-005; se aplican en F6) ──────────────────────────
     # Mismo criterio que arriba: todos los topes se renuevan (por imagen, por mensaje, por
