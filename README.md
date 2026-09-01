@@ -70,6 +70,10 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 4. **[BACKLOG.md](BACKLOG.md)** — el trabajo dividido en tickets tomables, con sus dependencias:
    qué se puede empezar hoy, qué bloquea cada decisión pendiente y cómo repartirlo entre dos
    personas sin pisarse.
+5. **[MAPEO.md](MAPEO.md)** — qué intenciones del Centro de Ayuda llevan flujo guiado con
+   botones y cuáles son FAQ planas (D-028), y la taxonomía de tickets propuesta para D-008.
+6. **[TEST.md](TEST.md)** — prueba manual del bot: comandos para levantar y resetear el
+   entorno, y 50 mensajes (30 del Centro de Ayuda, 15 frontera, 5 de manipulación).
 
 ## Estado actual
 
