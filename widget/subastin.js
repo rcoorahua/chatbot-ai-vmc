@@ -848,7 +848,7 @@
     state.pollTimer = setTimeout(poll, delay);
   }
 
-  function sendMessage(text) {
+  function sendMessage(text, interaction) {
     state.stickToBottom = true; // lo propio siempre lleva la vista abajo
     state.unseenBelow = 0;
     const content = text.trim();
@@ -856,6 +856,9 @@
     const clientMessageId = newClientMessageId();
     state.pending.set(clientMessageId, {
       content,
+      // El evento estructurado del quick reply (D-028): viaja con el mensaje y el servidor
+      // lo valida contra el paso vigente — el texto solo es lo que se ve en el hilo.
+      interaction: interaction || null,
       status: "sending",
       createdAt: new Date().toISOString(),
     });
@@ -873,7 +876,10 @@
         request(
           "POST",
           `/chat/conversations/${session.conversationId}/messages`,
-          { client_message_id: clientMessageId, content: draft.content },
+          Object.assign(
+            { client_message_id: clientMessageId, content: draft.content },
+            draft.interaction ? { interaction: draft.interaction } : null
+          ),
           session.token
         )
       );
@@ -1197,6 +1203,7 @@
       previo = saludo;
     };
 
+    const ultimo = state.messages[state.messages.length - 1] || null;
     for (const message of state.messages) {
       if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
         pushSaludo();
@@ -1211,6 +1218,12 @@
       const cambioDeDia = lastDay !== diaAntes;
       items.push(renderBubble(message, cambioDeDia || !sameGroup(previo, message)));
       previo = message;
+      // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
+      // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
+      if (message === ultimo && state.pending.size === 0) {
+        const botones = renderQuickReplies(message);
+        if (botones) items.push(botones);
+      }
     }
     if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
@@ -1382,6 +1395,40 @@
           : h("small", { class: "meta", text: TEXT.sending })
       )
     );
+  }
+
+  /** Botones de respuesta rapida (D-028) bajo el mensaje del bot que los trae en metadata.
+   *  El click manda el LABEL como texto del hilo mas el evento estructurado; el servidor
+   *  valida accion/valor/version contra el paso vigente — aqui no se decide nada. */
+  function renderQuickReplies(message) {
+    const interaction = message.metadata && message.metadata.interaction;
+    if (!interaction || interaction.type !== "QUICK_REPLIES") return null;
+    if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
+    const wrap = h(
+      "div",
+      { class: "quick-replies" + (firstRenderOf("qr:" + message.message_id) ? " is-new" : "") }
+    );
+    for (const option of interaction.options) {
+      if (!option || !option.label || !option.value) continue;
+      wrap.appendChild(
+        h(
+          "button",
+          {
+            class: "qr",
+            type: "button",
+            onclick: () =>
+              sendMessage(option.label, {
+                action_id: interaction.action_id,
+                value: option.value,
+                flow_version: interaction.flow_version,
+                source_message_id: message.message_id,
+              }),
+          },
+          option.label
+        )
+      );
+    }
+    return wrap.childNodes.length ? wrap : null;
   }
 
   function renderSystemEvent(message) {
@@ -1885,6 +1932,17 @@
     .row-mine.is-new { animation-name: bubble-in-mine; }
     /* El saludo entra con un fade vertical puro (sin escala): llega como mensaje, no "brota". */
     .row.is-greeting.is-new { animation: greeting-in .45s var(--ease-soft) both; }
+    /* ── Quick replies (D-028): pildoras bajo el ultimo mensaje del bot ── */
+    .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; max-width: 82%; }
+    .quick-replies.is-new { animation: greeting-in .4s var(--ease-soft) both; }
+    .qr {
+      border: 1.5px solid var(--vault-500); background: var(--surface); color: var(--vault-600);
+      border-radius: var(--radius-pill); padding: 8px 15px; font: inherit; font-size: 14px;
+      font-weight: 600; cursor: pointer;
+      transition: background-color .18s var(--ease), color .18s var(--ease), transform .18s var(--ease);
+    }
+    .qr:hover { background: var(--vault-500); color: #fff; transform: translateY(-1px); }
+    .qr:active { transform: none; }
     .row-typing { animation: fade-in .2s var(--ease) both; }
     .bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
     .row-mine .bubble-wrap { align-items: flex-end; }
