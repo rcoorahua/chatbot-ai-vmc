@@ -200,6 +200,19 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   diarias. Ojo con dos cosas al construirlo: la IP se guarda **hasheada** (es dato personal) y
   CGNAT móvil hace que muchos usuarios legítimos compartan IP.
 
+- **D-028 Flujos guiados con quick replies (2026-09-01)**: máquina de estados **liviana** en
+  la fila de Conversations (`active_flow`/`flow_step`/`flow_slots`/`flow_version`/
+  `flow_expires_at`, 24 h de vigencia), botones como **eventos estructurados** en la metadata
+  del mensaje (el servidor valida acción/valor/versión contra el paso vigente — editar el
+  HTML no inventa acciones) y **consulta canónica** al RAG al resolver el paso. Motivo: "En
+  Vivo" a secas recupera 0 resultados sobre el umbral; la canónica, 4. Nada de LangGraph (el
+  worker ya orquesta; se reevalúa con flujos largos/ciclos/tools). Activo solo
+  **F-PART/PARTICIPATION** (¿En Vivo o Negociable?); F-CONS/F-LIVE/F-NEGO/F-HAB mapeados.
+  Detectar/ofrecer botones no llama a ningún modelo. **Mapeo completo del corpus (22
+  artículos, 111 preguntas) y las respuestas de diseño: [MAPEO.md](MAPEO.md).** Código:
+  `agent/flows.py` (definiciones puras), composición en `workers/ai_worker.py`, transición
+  atómica en `conversations/repository.py`, render en `widget/subastin.js`.
+
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
 Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
