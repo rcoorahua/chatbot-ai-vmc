@@ -28,8 +28,9 @@ el timeout de esta funcion.
 """
 
 import logging
+from datetime import timedelta
 
-from backend.agent import guardrails, prompts, rag, trivial, usage, writer
+from backend.agent import flows, guardrails, prompts, rag, trivial, usage, writer
 from backend.agent.classifier import ClassificationResult, classify
 from backend.agent.intents import Intent
 from backend.conversations import repository, service
@@ -42,7 +43,7 @@ from backend.conversations.models import (
     UserType,
 )
 from backend.core import llm
-from backend.core.clock import minutes_ago_iso
+from backend.core.clock import minutes_ago_iso, to_iso, utc_now, utc_now_iso
 from backend.core.config import get_settings
 from backend.core.jobs import AIJob
 from backend.core.observability import configure_logging, content_preview
@@ -177,10 +178,20 @@ def _attend(conversation: Conversation, message: Message) -> None:
     # aviso de repetido y luego silencio, en vez de una respuesta fija por cada intento.
     verdict = guardrails.check_input(text)
     if verdict is not None:
+        # Un intento de manipulacion no deja un flujo colgado esperando datos (MAPEO.md §4.2).
+        _clear_flow_if_active(conversation)
         _reply_fixed(
             conversation, message, _GUARDRAIL_RESPONSES[verdict.kind],
             f"guardrail:{verdict.kind}:{verdict.rule}",
         )
+        return
+
+    # ── D-028: flujos guiados con quick replies (MAPEO.md) — reglas y estado, sin IA ──
+    # Antes del clasificador a proposito: un click de boton ya trae la intencion estructurada
+    # y una respuesta corta ("En Vivo") solo tiene sentido con el estado del flujo.
+    if _handle_flow(conversation, message, text, window, block_keys, anonymous=(
+        conversation.user_type == UserType.ANONYMOUS
+    )):
         return
 
     # ── RF-015/016: clasificar (reglas → tier FAST; Gemini orquesta por TD-008) ──
@@ -217,9 +228,16 @@ def _answer_faq(
     window: list[Message],
     block_keys: list[str],
     anonymous: bool,
+    source_prefix: str = "",
 ) -> None:
     """FAQ con RAG (RF-017): recuperar, redactar con evidencia, y sin evidencia derivar en vez
-    de inventar (RF-018 / AC-002)."""
+    de inventar (RF-018 / AC-002).
+
+    `text` es lo que se busca y se redacta: para un mensaje normal es lo que escribio el
+    usuario; para un paso de flujo resuelto (D-028) es la consulta canonica, que si recupera
+    evidencia donde "En Vivo" a secas no lo haria. `source_prefix` deja el rastro del flujo
+    en AIUsage ("flow:PARTICIPATION:LIVE:model") sin perder la capa que decidio.
+    """
     retrieved = rag.retrieve(text)
     fragments = retrieved.relevant
     logger.debug(
@@ -248,6 +266,7 @@ def _answer_faq(
         source = f"guardrail:{result.guardrail}"
     else:
         source = "model" if result.model else "fallback"
+    source = source_prefix + source
     usage.record_execution(
         conversation_id=conversation.conversation_id,
         message_id=message.message_id,
@@ -297,6 +316,8 @@ def _handoff(
     record: bool = True,
 ) -> None:
     """Handoff minimo (RF-022): sin ticket (F5) y sin Slack (D-016) todavia."""
+    # Con un humano en camino, ningun flujo guiado sigue esperando datos (MAPEO.md §4.2).
+    _clear_flow_if_active(conversation)
     started = service.start_handoff(conversation, reason=reason)
     logger.info(
         "ai.handoff",
@@ -331,6 +352,154 @@ def _reply_fixed(
     service.post_bot_message(conversation.conversation_id, text)
     _record_free(conversation, message, source=source,
                  intent=str(intent) if intent else None)
+
+
+# ───────────────────────── Flujos guiados (D-028, mapeo en MAPEO.md) ─────────────────────────
+
+
+def _current_flow(
+    conversation: Conversation,
+) -> tuple[flows.FlowDefinition, flows.FlowStep, bool] | None:
+    """(definicion, paso, vigente) del flujo activo; None si no hay flujo o ya no existe la
+    definicion (un deploy pudo retirarla: el estado viejo no debe romper nada)."""
+    if not conversation.active_flow:
+        return None
+    definition = flows.FLOWS.get(conversation.active_flow)
+    step = definition.step(conversation.flow_step or "") if definition else None
+    if definition is None or step is None:
+        return None
+    expired = bool(conversation.flow_expires_at) and conversation.flow_expires_at <= utc_now_iso()
+    return definition, step, not expired
+
+
+def _clear_flow_if_active(conversation: Conversation) -> None:
+    """Limpieza best-effort: si otro proceso movio el flujo primero, no hay nada que hacer."""
+    if conversation.active_flow:
+        repository.clear_flow_state(
+            conversation.conversation_id, expected_version=conversation.flow_version
+        )
+
+
+def _handle_flow(
+    conversation: Conversation,
+    message: Message,
+    text: str,
+    window: list[Message],
+    block_keys: list[str],
+    *,
+    anonymous: bool,
+) -> bool:
+    """True si el flujo guiado atendio el mensaje (D-028). El orden importa:
+
+    1. flujo activo + click valido o texto que resuelve el slot → responder con la consulta
+       canonica y cerrar el flujo;
+    2. flujo activo + texto que NO resuelve → interrupcion FAQ: el flujo queda esperando y el
+       mensaje sigue el pipeline normal (False);
+    3. sin flujo + disparador con el dato ya en el texto ("participar en una En Vivo") →
+       respuesta directa, sin botones ni estado;
+    4. sin flujo + disparador sin dato → persistir el paso y ofrecer los botones (sin IA).
+    """
+    active = _current_flow(conversation)
+    if active is not None:
+        definition, step, vigente = active
+        if not vigente:
+            # Vencio (24 h): se limpia y este mensaje se atiende como cualquier otro.
+            _clear_flow_if_active(conversation)
+        else:
+            interaction = (message.metadata or {}).get("interaction")
+            value = flows.validate_interaction(
+                step, interaction, current_version=conversation.flow_version
+            ) if interaction is not None else None
+            if value is None:
+                value = flows.extract_slot_value(step, text)
+            if value is None:
+                return False  # interrupcion: el flujo espera hasta resolverse o vencer
+            _clear_flow_if_active(conversation)
+            _answer_flow_step(
+                conversation, message, definition, step, value, window, block_keys,
+                anonymous=anonymous,
+            )
+            return True
+
+    flow_name = flows.detect_flow_start(text)
+    if flow_name is None:
+        return False
+    definition = flows.FLOWS[flow_name]
+    step = definition.steps[0]
+    direct = flows.extract_slot_value(step, text)
+    if direct is not None:
+        _answer_flow_step(
+            conversation, message, definition, step, direct, window, block_keys,
+            anonymous=anonymous,
+        )
+        return True
+    _offer_flow_step(conversation, message, definition, step)
+    return True
+
+
+def _offer_flow_step(
+    conversation: Conversation,
+    message: Message,
+    definition: flows.FlowDefinition,
+    step: flows.FlowStep,
+) -> None:
+    """Persiste el paso y publica la pregunta con quick replies. Cero llamadas IA."""
+    expires_at = to_iso(utc_now() + timedelta(hours=flows.FLOW_TTL_HOURS))
+    version = repository.set_flow_state(
+        conversation.conversation_id,
+        flow=definition.name,
+        step=step.action_id,
+        slots={},
+        expires_at=expires_at,
+        expected_version=conversation.flow_version,
+    )
+    if version is None:
+        # Otro job gano la transicion (rafaga D-020): ese publico los botones, aqui silencio.
+        _log_skip(conversation, message, "flow_race")
+        return
+    service.post_bot_message(
+        conversation.conversation_id,
+        step.prompt,
+        metadata=flows.quick_replies_metadata(definition, step, version),
+    )
+    _record_free(conversation, message, source=f"flow:{definition.name}:offered")
+
+
+def _answer_flow_step(
+    conversation: Conversation,
+    message: Message,
+    definition: flows.FlowDefinition,
+    step: flows.FlowStep,
+    value: str,
+    window: list[Message],
+    block_keys: list[str],
+    *,
+    anonymous: bool,
+) -> None:
+    """Paso resuelto: RAG + redactor con la consulta canonica del valor elegido."""
+    query = step.canonical_queries.get(value)
+    if not query:
+        # Definicion incompleta (enum acepta un valor sin consulta): mejor el pipeline comun
+        # que un KeyError que deje el mensaje sin respuesta.
+        logger.warning(
+            "flow.sin_consulta_canonica",
+            extra={"flow": definition.name, "step": step.action_id, "value": value},
+        )
+        query = f"{step.prompt} {step.label_for(value) or value}"
+    logger.info(
+        "ai.flow.resolved",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "flow": definition.name,
+            "step": step.action_id,
+            "value": value,
+        },
+    )
+    _answer_faq(
+        conversation, message, query, window, block_keys, anonymous,
+        source_prefix=f"flow:{definition.name}:{value}:",
+    )
 
 
 # ──────────────────────────────────── Apoyos del flujo ────────────────────────────────────

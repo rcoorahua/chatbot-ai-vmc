@@ -30,6 +30,7 @@ from backend.conversations.models import (
     idempotency_key_for,
 )
 from backend.core.aws import dynamodb_resource
+from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
 
 # Toda SK de mensaje empieza por el año (`2026-...`); los marcadores empiezan por `CMID#`, que
@@ -216,6 +217,78 @@ def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) 
         }
     )
     return _transact_note(update, note)
+
+
+def set_flow_state(
+    conversation_id: str,
+    *,
+    flow: str,
+    step: str,
+    slots: dict[str, Any] | None,
+    expires_at: str,
+    expected_version: int,
+) -> int | None:
+    """Instala (o avanza) el flujo guiado con transicion atomica (D-028).
+
+    La condicion sobre `flow_version` es lo que evita que dos jobs o dos pestañas muevan el
+    flujo a la vez: gana uno y el otro recibe None. `expected_version` SIEMPRE sale de una
+    lectura fresca de la conversacion (el modelo entrega 0 cuando el atributo no existe, y la
+    condicion cubre ese caso con attribute_not_exists).
+    """
+    new_version = expected_version + 1
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression=(
+                "SET active_flow = :flow, flow_step = :step, flow_slots = :slots, "
+                "flow_version = :new, flow_expires_at = :expires, updated_at = :now"
+            ),
+            ConditionExpression=(
+                "attribute_not_exists(flow_version) OR flow_version = :expected"
+            ),
+            ExpressionAttributeValues={
+                ":flow": flow,
+                ":step": step,
+                ":slots": slots or {},
+                ":new": new_version,
+                ":expires": expires_at,
+                ":expected": expected_version,
+                ":now": utc_now_iso(),
+            },
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return None
+        raise
+    return new_version
+
+
+def clear_flow_state(conversation_id: str, *, expected_version: int) -> bool:
+    """Cierra el flujo guiado (paso resuelto, handoff, guardrail o vencimiento).
+
+    Sube `flow_version` a proposito: los quick replies emitidos para la version cerrada
+    quedan invalidos aunque el usuario los clickee despues (MAPEO.md §3). Devuelve False si
+    otro proceso movio el flujo primero — en ese caso no hay nada que limpiar aqui.
+    """
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression=(
+                "REMOVE active_flow, flow_step, flow_slots, flow_expires_at "
+                "SET flow_version = :new, updated_at = :now"
+            ),
+            ConditionExpression="flow_version = :expected",
+            ExpressionAttributeValues={
+                ":new": expected_version + 1,
+                ":expected": expected_version,
+                ":now": utc_now_iso(),
+            },
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return False
+        raise
+    return True
 
 
 def mark_wait_message_sent(conversation_id: str) -> bool:

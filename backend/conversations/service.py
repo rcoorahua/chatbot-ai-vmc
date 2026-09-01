@@ -126,6 +126,7 @@ def post_user_message(
     client_message_id: str,
     content: str,
     sender_id: str | None = None,
+    metadata: dict | None = None,
 ) -> tuple[Message, bool]:
     """Persiste el mensaje del usuario. `(mensaje, True)` si es nuevo; `(original, False)` si
     es un reintento con el mismo `client_message_id` (RF-038)."""
@@ -149,6 +150,9 @@ def post_user_message(
         status=MessageStatus.RECEIVED,
         content=text,
         client_message_id=client_message_id,
+        # El evento estructurado de un quick reply (D-028) viaja aqui; el worker lo valida
+        # contra el paso vigente del flujo — nunca se confia en el cliente (security-guidance).
+        metadata=metadata,
         created_at=now,
     )
     # Solo cuenta como "no leido" para el asesor si el bot ya no atiende (RF-035): mientras la
