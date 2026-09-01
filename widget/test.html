@@ -664,6 +664,7 @@
     if (SOURCE_LABELS[raw]) return SOURCE_LABELS[raw];
     if (raw.startsWith("guardrail:")) return "Guardrail · " + raw.slice("guardrail:".length).replace(/:/g, " · ");
     if (raw.startsWith("handoff:")) return "Handoff · " + raw.slice("handoff:".length);
+    if (raw.startsWith("flow:")) return "Flujo · " + raw.slice("flow:".length).replace(/:/g, " · ");
     return raw || "—";
   }
 

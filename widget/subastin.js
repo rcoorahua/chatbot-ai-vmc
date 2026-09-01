@@ -63,9 +63,9 @@
     // El saludo entra como mensaje nuevo en CADA apertura del panel (ver renderMessages):
     // el salto de linea separa el "hola" de la pregunta, como dos frases de un chat real.
     greetingAuth: (name) =>
-      `¡Hola! 👋 ${name},\nahora estás hablando con Subastín. ¿Cómo puedo ayudarte?`,
+      `¡Hola! 👋 ${name}.\n\nAhora estás hablando con Subastín. ¿Cómo puedo ayudarte?`,
     greetingAnon:
-      "¡Hola! 👋 Cazador de Ofertas,\nahora estás hablando con Subastín. ¿Cómo puedo ayudarte?",
+      "¡Hola! 👋 Cazador de Ofertas.\n\nAhora estás hablando con Subastín. ¿Cómo puedo ayudarte?",
     homeTitleAuth: (name) => `¡Bienvenido al Nuevo VMC ${name}! ¿Cómo podemos ayudarte?`,
     homeTitleAnon: "¡Bienvenido al Nuevo VMC! ¿Cómo podemos ayudarte?",
     sendUs: "Envíanos un mensaje",
@@ -147,6 +147,11 @@
     // queda debajo. Por conteo fallaria: el historial carga async DESPUES de abrir.
     greetingNonce: 0,
     greetingAt: null,
+    // El saludo NO entra junto con el panel: primero abre el panel (su propia transicion) y
+    // ~400 ms despues "llega" el saludo con su fade — como un mensaje de verdad. Sin esta
+    // espera las dos animaciones se pisan y el saludo parece parte del panel.
+    greetingVisible: false,
+    greetingTimer: null,
     // Tope de caracteres del compositor. Se reemplaza con el que informa la sesion; este valor
     // solo cubre el instante previo a la primera respuesta de /chat/sessions.
     maxChars: 500,
@@ -843,7 +848,7 @@
     state.pollTimer = setTimeout(poll, delay);
   }
 
-  function sendMessage(text) {
+  function sendMessage(text, interaction) {
     state.stickToBottom = true; // lo propio siempre lleva la vista abajo
     state.unseenBelow = 0;
     const content = text.trim();
@@ -851,6 +856,9 @@
     const clientMessageId = newClientMessageId();
     state.pending.set(clientMessageId, {
       content,
+      // El evento estructurado del quick reply (D-028): viaja con el mensaje y el servidor
+      // lo valida contra el paso vigente — el texto solo es lo que se ve en el hilo.
+      interaction: interaction || null,
       status: "sending",
       createdAt: new Date().toISOString(),
     });
@@ -868,7 +876,10 @@
         request(
           "POST",
           `/chat/conversations/${session.conversationId}/messages`,
-          { client_message_id: clientMessageId, content: draft.content },
+          Object.assign(
+            { client_message_id: clientMessageId, content: draft.content },
+            draft.interaction ? { interaction: draft.interaction } : null
+          ),
           session.token
         )
       );
@@ -1178,12 +1189,13 @@
     // el nonce de la apertura le da una clave fresca, asi firstRenderOf vuelve a animarlo.
     // Se inserta despues del historial (timestamps anteriores a la apertura) y antes de lo
     // que llegue en esta sesion, como la nota de "ahora hablas con..." de Intercom.
-    let saludoPendiente = state.open || state.messages.length === 0;
+    let saludoPendiente = state.greetingVisible || (!state.open && state.messages.length === 0);
     const saludo = {
       sender_type: "BOT",
       content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
       created_at: null,
       client_message_id: "greeting:" + state.greetingNonce,
+      isGreeting: true,
     };
     const pushSaludo = () => {
       saludoPendiente = false;
@@ -1191,6 +1203,7 @@
       previo = saludo;
     };
 
+    const ultimo = state.messages[state.messages.length - 1] || null;
     for (const message of state.messages) {
       if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
         pushSaludo();
@@ -1205,6 +1218,12 @@
       const cambioDeDia = lastDay !== diaAntes;
       items.push(renderBubble(message, cambioDeDia || !sameGroup(previo, message)));
       previo = message;
+      // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
+      // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
+      if (message === ultimo && state.pending.size === 0) {
+        const botones = renderQuickReplies(message);
+        if (botones) items.push(botones);
+      }
     }
     if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
@@ -1333,7 +1352,8 @@
     // version confirmada no vuelva a entrar deslizandose.
     const fresh = firstRenderOf(message.client_message_id || message.message_id || "greeting");
     const clases =
-      "row" + (mine ? " row-mine" : "") + (primero ? " is-first" : "") + (fresh ? " is-new" : "");
+      "row" + (mine ? " row-mine" : "") + (primero ? " is-first" : "") + (fresh ? " is-new" : "") +
+      (message.isGreeting ? " is-greeting" : "");
     return h(
       "div",
       { class: clases },
@@ -1375,6 +1395,40 @@
           : h("small", { class: "meta", text: TEXT.sending })
       )
     );
+  }
+
+  /** Botones de respuesta rapida (D-028) bajo el mensaje del bot que los trae en metadata.
+   *  El click manda el LABEL como texto del hilo mas el evento estructurado; el servidor
+   *  valida accion/valor/version contra el paso vigente — aqui no se decide nada. */
+  function renderQuickReplies(message) {
+    const interaction = message.metadata && message.metadata.interaction;
+    if (!interaction || interaction.type !== "QUICK_REPLIES") return null;
+    if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
+    const wrap = h(
+      "div",
+      { class: "quick-replies" + (firstRenderOf("qr:" + message.message_id) ? " is-new" : "") }
+    );
+    for (const option of interaction.options) {
+      if (!option || !option.label || !option.value) continue;
+      wrap.appendChild(
+        h(
+          "button",
+          {
+            class: "qr",
+            type: "button",
+            onclick: () =>
+              sendMessage(option.label, {
+                action_id: interaction.action_id,
+                value: option.value,
+                flow_version: interaction.flow_version,
+                source_message_id: message.message_id,
+              }),
+          },
+          option.label
+        )
+      );
+    }
+    return wrap.childNodes.length ? wrap : null;
   }
 
   function renderSystemEvent(message) {
@@ -1457,13 +1511,17 @@
           submit();
         },
       },
-      h("div", { class: "composer-field" }, textarea, contador),
       h(
         "div",
-        { class: "composer-actions" },
-        tool(ICON.clip(), TEXT.attach),
-        tool(ICON.smile(), TEXT.emoji),
-        sendBtn
+        { class: "composer-box" },
+        h("div", { class: "composer-field" }, textarea, contador),
+        h(
+          "div",
+          { class: "composer-actions" },
+          tool(ICON.clip(), TEXT.attach),
+          tool(ICON.smile(), TEXT.emoji),
+          sendBtn
+        )
       )
     );
   }
@@ -1554,6 +1612,14 @@
       state.greetingNonce = Date.now();
       state.greetingAt = new Date().toISOString();
       state.stickToBottom = true;
+      // El saludo llega DESPUES de que el panel termino de abrir (transicion de .38s):
+      // asi su fade se percibe como un mensaje entrante y no como parte de la apertura.
+      state.greetingVisible = false;
+      clearTimeout(state.greetingTimer);
+      state.greetingTimer = setTimeout(() => {
+        state.greetingVisible = true;
+        render();
+      }, 420);
       // Precarga del orbe WebGPU: compilar el shader recien cuando el usuario envia su primer
       // mensaje hacia que el indicador de "escribiendo" tardara en aparecer.
       ensureOrbGpu();
@@ -1651,7 +1717,10 @@
       transition: transform .16s var(--ease-press), box-shadow .16s var(--ease-press);
     }
     .launcher-icon { display: grid; place-items: center; transition: transform .3s var(--ease); }
-    .launcher.is-open .launcher-icon { transform: rotate(90deg); }
+    /* OJO: nada de rotate aqui. El giro de 90° venia de cuando el icono abierto era una X
+       (girarla se leia como animacion); con el chevron hacia abajo, ese giro lo dejaba
+       apuntando a la izquierda. El cambio de icono ya comunica el estado. */
+    .launcher.is-open .launcher-icon { transform: scale(1.06); }
     .badge {
       position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; padding: 0 6px;
       border-radius: var(--radius-pill); border: 2px solid #fff;
@@ -1861,6 +1930,19 @@
     /* Solo las burbujas nuevas entran animadas (lo decide firstRenderOf en el JS). */
     .row.is-new { animation: bubble-in .38s var(--ease-soft) both; }
     .row-mine.is-new { animation-name: bubble-in-mine; }
+    /* El saludo entra con un fade vertical puro (sin escala): llega como mensaje, no "brota". */
+    .row.is-greeting.is-new { animation: greeting-in .45s var(--ease-soft) both; }
+    /* ── Quick replies (D-028): pildoras bajo el ultimo mensaje del bot ── */
+    .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; max-width: 82%; }
+    .quick-replies.is-new { animation: greeting-in .4s var(--ease-soft) both; }
+    .qr {
+      border: 1.5px solid var(--vault-500); background: var(--surface); color: var(--vault-600);
+      border-radius: var(--radius-pill); padding: 8px 15px; font: inherit; font-size: 14px;
+      font-weight: 600; cursor: pointer;
+      transition: background-color .18s var(--ease), color .18s var(--ease), transform .18s var(--ease);
+    }
+    .qr:hover { background: var(--vault-500); color: #fff; transform: translateY(-1px); }
+    .qr:active { transform: none; }
     .row-typing { animation: fade-in .2s var(--ease) both; }
     .bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
     .row-mine .bubble-wrap { align-items: flex-end; }
@@ -1936,11 +2018,23 @@
     /* ── Compositor ──────────────────────────────────────────────────────────────────────
        Borde en gradiente igual que el Input de Concorde: vault en reposo, naranja a vault con
        foco. El textarea crece con el texto (autoGrow) hasta composerMaxPx. */
-    /* Dos filas como el compositor de Intercom: el texto arriba a lo ancho, y debajo la fila
-       de acciones (adjuntar y emoji a la izquierda, enviar a la derecha). */
-    .composer { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px 9px; border-top: 1px solid var(--line); background: var(--surface); }
+    /* Compositor de UNA caja, como Intercom: el borde degradado vive en .composer-box y
+       adentro van el texto (arriba) y la fila de acciones (abajo). El texto no se mezcla con
+       los botones porque son bloques apilados: el textarea termina donde empieza la fila —
+       ese es su "tope" — y con texto largo hace scroll interno en su propia zona. */
+    .composer { padding: 10px 12px 9px; border-top: 1px solid var(--line); background: var(--surface); }
+    .composer-box {
+      display: flex; flex-direction: column; border: 1.5px solid transparent; border-radius: 20px;
+      background-image: linear-gradient(#fff, #fff), linear-gradient(338deg, var(--vault-500) 0%, #fff8f1 100%);
+      background-origin: border-box; background-clip: padding-box, border-box;
+      transition: box-shadow .22s var(--ease), background-image .22s var(--ease);
+    }
+    .composer-box:focus-within {
+      background-image: linear-gradient(#fff, #fff), linear-gradient(148deg, var(--orange-600) 0%, var(--vault-500) 100%);
+      box-shadow: rgba(237, 137, 54, .18) 0 2px 10px;
+    }
     .composer-field { position: relative; min-width: 0; display: flex; }
-    .composer-actions { display: flex; align-items: center; gap: 2px; }
+    .composer-actions { display: flex; align-items: center; gap: 2px; padding: 0 7px 7px 9px; }
     .composer-actions .send { margin-left: auto; }
     .tool {
       width: 36px; height: 36px; display: grid; place-items: center; flex: none;
@@ -1959,18 +2053,11 @@
     .counter.is-full { color: #b3261e; }
     .counter[hidden] { display: none; }
     .composer textarea {
-      flex: 1; resize: none; padding: 11px 15px; font: inherit; color: var(--ink);
-      border: 1.5px solid transparent; border-radius: 18px; outline: none;
+      flex: 1; resize: none; padding: 12px 15px 8px; font: inherit; color: var(--ink);
+      border: 0; border-radius: 20px 20px 0 0; outline: none; background: transparent;
       max-height: 132px; overflow-y: hidden;
-      background-image: linear-gradient(#fff, #fff), linear-gradient(338deg, var(--vault-500) 0%, #fff8f1 100%);
-      background-origin: border-box; background-clip: padding-box, border-box;
-      transition: box-shadow .22s var(--ease), background-image .22s var(--ease);
     }
     .composer textarea::placeholder { color: #6b7280; }
-    .composer textarea:focus {
-      background-image: linear-gradient(#fff, #fff), linear-gradient(148deg, var(--orange-600) 0%, var(--vault-500) 100%);
-      box-shadow: rgba(237, 137, 54, .18) 0 2px 10px;
-    }
     .send {
       position: relative; overflow: hidden; width: 42px; height: 42px; flex: none;
       border-radius: var(--radius-pill); color: #fff; display: grid; place-items: center;
@@ -2031,6 +2118,10 @@
     @keyframes bubble-in {
       0% { opacity: 0; transform: translateY(12px) scale(.86); }
       60% { opacity: 1; transform: translateY(0) scale(1.015); }
+      100% { opacity: 1; transform: none; }
+    }
+    @keyframes greeting-in {
+      0% { opacity: 0; transform: translateY(16px); }
       100% { opacity: 1; transform: none; }
     }
     @keyframes bubble-in-mine {
