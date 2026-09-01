@@ -21,6 +21,7 @@ from backend.conversations import repository, service
 from backend.conversations.models import Conversation, Message, MessageStatus
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
+from backend.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +74,24 @@ class SessionUser(BaseModel):
     name: str | None = None
 
 
+class SessionLimits(BaseModel):
+    """Limites que el widget necesita para no dejar escribir lo que el servidor va a rechazar.
+
+    Viajan en la sesion en vez de estar copiados en el widget: son configuracion (RNF-007,
+    `MAX_MESSAGE_CHARS`), y duplicar el numero en `widget/subastin.js` significaria que subir
+    el limite en `.env` deja al widget cortando en el valor viejo, sin que nada avise.
+    """
+
+    max_message_chars: int
+
+
 class SessionOut(BaseModel):
     token: str
     expires_at: int
     user: SessionUser
     conversation: ConversationOut
     created: bool
+    limits: SessionLimits
 
 
 class MessageIn(BaseModel):
@@ -136,6 +149,7 @@ def create_session(body: SessionIn) -> SessionOut:
         user=SessionUser(type=session.user_type, name=session.user_name),
         conversation=ConversationOut.from_model(conversation),
         created=created,
+        limits=SessionLimits(max_message_chars=get_settings().max_message_chars),
     )
 
 
