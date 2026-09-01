@@ -29,6 +29,10 @@ MODEL_FLOOR = 0.95
 
 
 def main() -> None:
+    # La consola de Windows arranca en cp1252 y no puede imprimir "≈" ni las tildes del golden
+    # set: sin esto el resumen final muere en UnicodeEncodeError DESPUES de gastar la llamada.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(description="Eval del golden set de intents")
     parser.add_argument("--only", choices=["trivial", "guardrail", "rules", "model"])
     parser.add_argument("--show-all", action="store_true", help="imprime tambien los aciertos")
