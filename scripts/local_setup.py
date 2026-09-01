@@ -35,6 +35,7 @@ def nombres_de_tabla() -> dict[str, str]:
         "tickets": _env("TABLE_TICKETS", "subastin-dev-tickets"),
         "advisors": _env("TABLE_ADVISORS", "subastin-dev-advisors"),
         "ai_usage": _env("TABLE_AI_USAGE", "subastin-dev-ai-usage"),
+        "rate_limits": _env("TABLE_RATE_LIMITS", "subastin-dev-rate-limits"),
     }
 
 
@@ -50,7 +51,7 @@ def _gsi(nombre: str, pk: str, sk: str | None = None) -> dict:
 
 
 def definiciones_de_tabla() -> list[dict]:
-    """Las 5 tablas del modelo (PLAN.md §4), con sus claves e indices."""
+    """Las 6 tablas del modelo (PLAN.md §4 + RateLimits de T-09/D-027), con claves e indices."""
     t = nombres_de_tabla()
     return [
         {
@@ -123,6 +124,22 @@ def definiciones_de_tabla() -> list[dict]:
             ],
             "GlobalSecondaryIndexes": [_gsi("gsi_billing", "billing_month", "created_at")],
         },
+        {
+            # T-09 / D-027: contadores del tope de ejecuciones de IA por actor. PK = quien
+            # (`USER#<id>` / `SESSION#<conversation_id>` / `IP#<hash>`), SK = la ventana
+            # (`H#2026-09-01T19` por hora, `D#2026-09-01` por dia). En AWS lleva TTL sobre
+            # `expires_at` (48 h) para que DynamoDB borre solo; dynamodb-local es -inMemory
+            # asi que aqui no hace falta activarlo.
+            "TableName": t["rate_limits"],
+            "KeySchema": [
+                {"AttributeName": "limit_key", "KeyType": "HASH"},
+                {"AttributeName": "window", "KeyType": "RANGE"},
+            ],
+            "AttributeDefinitions": [
+                {"AttributeName": "limit_key", "AttributeType": STRING},
+                {"AttributeName": "window", "AttributeType": STRING},
+            ],
+        },
     ]
 
 
@@ -149,7 +166,7 @@ def recurso_dynamo():
 
 
 def crear_tablas(verbose: bool = True) -> None:
-    """Crea las 5 tablas si no existen. Ignora las que ya estan."""
+    """Crea las 6 tablas si no existen. Ignora las que ya estan."""
     cliente = cliente_dynamo()
     for definicion in definiciones_de_tabla():
         nombre = definicion["TableName"]

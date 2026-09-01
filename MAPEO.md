@@ -218,3 +218,49 @@ handoff sigue las reglas de D-002.
 | Render de botones en el widget + evento de clic | ✅ esta fase |
 | F-CONS · F-LIVE · F-NEGO · F-HAB | 🔜 mapeados arriba, activar uno por uno |
 | HERALD en el paso resuelto | ⛔ bloqueado por D-011 |
+
+---
+
+## 8. Tipos de ticket que el corpus sugiere — INSUMO para D-008 (⚠️ propuesta, NO cierra la decisión)
+
+**D-008 (taxonomía de tickets) sigue ABIERTA y es de Silvana + Julio.** Esta sección es el
+análisis técnico que la alimenta: leyendo las 111 preguntas del Centro de Ayuda, estos son
+los motivos por los que un usuario **realmente** necesita a un humano — es decir, lo que un
+asesor va a encontrarse en su bandeja y va a querer filtrar/priorizar. La forma sigue el
+esquema previsto en la tabla Tickets (`problem_type`, `category`, `tags`).
+
+Criterio: un tipo de ticket existe si el corpus muestra un problema que **el bot no puede
+resolver ni con evidencia** (requiere mirar la cuenta del usuario, mover dinero, o decidir).
+Lo que el corpus responde bien es FAQ/flujo, no ticket.
+
+| `problem_type` propuesto | Cuándo se abre (señales en el corpus) | `category` | Prio sugerida | Datos mínimos que el asesor necesita |
+|---|---|---|---|---|
+| `PAYMENT_ISSUE` | "ya pagué y no se refleja", problemas con código de pago Pacífico, fee cobrado dos veces | `BILLING` | **Alta** | id de oferta, medio de pago, fecha del pago, monto |
+| `REFUND_REQUEST` | "devuélvanme mi saldo en US$", "me devolvieron SubasCoins y yo pagué en dólares", consignación no liberada | `BILLING` | Alta | monto, moneda original, fecha de recarga/consignación |
+| `DEBT_DISPUTE` | "por qué tengo una deuda", "no estoy de acuerdo con el monto", quiere regularizar para volver a participar | `BILLING` | Media | id de la oferta que la originó, monto |
+| `SANCTION_APPEAL` | "no pude entrar a la sala por mi internet, ¿me sancionan igual?", "el proceso cerró sin que pueda bidear", apelar una sanción | `COMPLIANCE` | **Alta** | id del proceso, fecha/hora, evidencia del problema |
+| `ENABLEMENT_ISSUE` | documentos rechazados o sin respuesta tras subirlos, plazo de pago por vencer, "ya pagué y subí todo, ¿ahora qué?" atascado | `PURCHASE` | **Alta** (hay plazos que corren) | id de oferta ganada, qué paso está trabado |
+| `RECEIPT_REQUEST` | "necesito mi boleta/factura del proceso terminado" | `PURCHASE` | Baja | id de oferta, razón social/RUC si es factura |
+| `ACCOUNT_ACCESS` | "el formulario me impide registrarme", recuperación de contraseña que no llega, registro de persona jurídica trabado | `ACCOUNT` | Media | correo registrado, mensaje de error |
+| `RISK_CATEGORY_DISPUTE` | "por qué mi Riesgo Usuario es Alto", perdió Puntos VMC y no sabe por qué, canje que no se aplicó | `ACCOUNT` | Media | — (el asesor lo ve en la cuenta) |
+| `VISIT_ISSUE` | no puede agendar, quiere inspección mecánica y el sistema no lo deja, visita agendada sin confirmación | `LOGISTICS` | Media | id de oferta, fecha deseada |
+| `PLATFORM_BUG` | la sala no carga, los bids no entran, errores repetidos al pujar ("ya van 3 veces que sale error") | `TECHNICAL` | **Alta** durante un proceso En Vivo | dispositivo/navegador, id del proceso, hora |
+| `FORMAL_COMPLAINT` | "quiero presentar un reclamo" (el corpus lo menciona explícitamente → libro de reclamaciones) | `COMPLIANCE` | **Alta** (plazo legal) | descripción del reclamo; el resto lo pide el proceso formal |
+| `OTHER` | todo lo que no calce; el asesor lo re-clasifica al cerrar | — | Media | — |
+
+**`tags` transversales sugeridos** (D-009, también abierta): `EN_VIVO` / `NEGOCIABLE` (tipo
+de oferta), `GANADOR` (el usuario ganó el proceso), `PLAZO_CORRIENDO` (habilitación o pago
+con fecha límite), `RECURRENTE` (mismo usuario, mismo problema, segunda vez).
+
+**Conexiones con lo ya construido:**
+- El `handoff_reason` que hoy guarda la conversación (`advisor_request`, `faq_no_evidence`,
+  reglas de frustración) es la **semilla** del `problem_type`: cuando exista el módulo
+  Tickets (F5), el motivo del handoff pre-llena el tipo y el asesor lo confirma o corrige.
+- Los flujos guiados (§4.1) reducen tickets: F-HAB bien respondido evita `ENABLEMENT_ISSUE`
+  triviales; los que lleguen igual, llegan mejor clasificados (el flujo ya sabe la etapa).
+- `PLATFORM_BUG` durante un En Vivo es el más urgente del mapa: el proceso corre en tiempo
+  real y una falla de sala equivale a un `SANCTION_APPEAL` seguro después.
+
+**Qué falta para cerrar D-008 de verdad (decisión de Silvana + Julio):** validar esta lista
+contra los motivos reales de contacto que hoy ve el equipo en Intercom, definir los campos
+obligatorios por tipo, y decidir la prioridad operativa (SLA) de cada uno.

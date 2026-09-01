@@ -25,15 +25,15 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 
 | Ticket | Qué es | Track |
 |---|---|---|
-| **T-09** | **Tope diario de IA (D-027) — 🔴 lo más urgente** | Dominio/IA |
+
 | T-03 | Módulo de asesores completo | Dominio |
 | T-04 | Repositorio de consumo de IA (`AIUsage`) | IA |
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
 
-**T-09 es el que más urge (31/08/2026).** D-027 quedó cerrada pero sin código: hoy el único
-freno para un anónimo es el de 10 mensajes/minuto, que permite 14 400 llamadas de IA al día
-desde una pestaña. Es el agujero de costo más grande abierto y no depende de nada.
+**T-09 hecho (01/09/2026).** D-027 revisada e implementada: anónimo 10/hora y 20/día
+(sesión + hash de IP), autenticado el doble; apagado en dev (`AI_QUOTA_* = 0`), se enciende
+por variables de entorno en stage/prod. Código en `agent/quota.py` + tabla `RateLimits`.
 
 **T-24 hecho (2026-08-28):** D-004/D-006/D-020 se cerraron y el worker quedó conectado — el bot
 responde (en local: `python -m scripts.run_ai_worker`). También T-04 (AIUsage). El siguiente
@@ -221,7 +221,7 @@ Requerimientos: RF-040..RF-043 · Depende de: T-02
 **Bloqueado por: D-015** (tamaños, compresión y modelo multimodal), D-005 (límite de peso)
 Archivos: `backend/images/*`
 
-**T-09 · Tope diario de ejecuciones de IA** — 🔴 **prioritario: decidido y sin implementar**
+**T-09 · Tope de ejecuciones de IA** — ✅ hecho 01/09/2026 (D-027 revisada: 10/h y 20/d anónimo, doble autenticado, off en dev)
 Requerimientos: RF-014, RNF-007, RNF-005 · Depende de: T-01, T-04 · Bloqueado por: nada
 (**D-027 ya está cerrada**, 31/08/2026 — este ticket se puede empezar hoy)
 Archivos: `infra/stacks/subastin_stack.py` **y** `scripts/local_setup.py` (tabla nueva, hay que
