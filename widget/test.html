@@ -206,13 +206,16 @@
   .f-chip[aria-pressed="true"] .count { opacity: .85; }
   .f-chip[disabled] { opacity: .45; cursor: default; }
   .controls-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-  .switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); cursor: pointer; font-weight: 600; }
-  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-  .track { width: 34px; height: 19px; border-radius: 9999px; background: var(--line-strong); position: relative; transition: background-color .2s var(--ease); flex: none; }
-  .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s var(--ease); }
-  .switch input:checked + .track { background: var(--teal-500); }
-  .switch input:checked + .track::after { transform: translateX(15px); }
-  .switch input:focus-visible + .track { outline: 2px solid var(--vault-500); outline-offset: 2px; }
+  /* Boton de sondeo en vivo: apagado por defecto — la consola solo pide datos cuando se pulsa
+     "Actualizar" o mientras esto esta encendido. El punto pulsante es la unica señal de que
+     hay peticiones saliendo cada REFRESH_MS. */
+  .live-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 9999px; padding: 6px 13px; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; transition: background-color .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease); }
+  .live-btn:hover { background: var(--surface-soft); }
+  .live-btn:focus-visible { outline: 2px solid var(--vault-500); outline-offset: 2px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: none; }
+  .live-btn[aria-pressed="true"] { background: var(--teal-500); border-color: var(--teal-500); color: #fff; }
+  .live-btn[aria-pressed="true"] .live-dot { background: #fff; animation: pulse-live 2s infinite; }
+  @keyframes pulse-live { 0% { opacity: 1; } 50% { opacity: .35; } 100% { opacity: 1; } }
   .console-status { font-size: 12.5px; color: var(--ink-faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
   /* ── Consola: banner de error ─────────────────────────────────────────────────────────── */
@@ -404,11 +407,10 @@
       <div class="controls-right">
         <button type="button" class="ghost" id="toggle-all">Expandir todo</button>
         <button type="button" class="ghost" id="console-refresh">Actualizar</button>
-        <label class="switch" title="Consulta la API cada 3 s mientras la pestaña está visible">
-          <input type="checkbox" id="console-auto" checked>
-          <span class="track"></span>
-          <span>Auto</span>
-        </label>
+        <button type="button" class="live-btn" id="console-live" aria-pressed="false"
+          title="Consulta la API cada 3 s mientras la pestaña esté visible. Apagado, la consola solo se actualiza con el botón Actualizar.">
+          <span class="live-dot"></span><span>Ver en vivo</span>
+        </button>
       </div>
     </div>
 
@@ -618,7 +620,10 @@
     { key: "rag", label: "Con RAG", test: (e) => (e.rag_fragments || []).length > 0 || !!e.rag_used },
   ];
 
-  const state = { filter: "all", expanded: new Set(), expandAll: false, lastPayload: null, turns: [], executions: [] };
+  // `live` arranca APAGADO a proposito: con el sondeo encendido por defecto, el log de uvicorn
+  // se llena de GET repetidos y cuesta ver la peticion que uno esta depurando. Se enciende a
+  // mano con "Ver en vivo"; mientras tanto, "Actualizar" trae los datos de a una.
+  const state = { filter: "all", expanded: new Set(), expandAll: false, lastPayload: null, turns: [], executions: [], live: false };
 
   const els = {
     convState: document.getElementById("conv-state"),
@@ -629,7 +634,7 @@
     status: null,
     dot: document.getElementById("top-dot"),
     toggleAll: document.getElementById("toggle-all"),
-    auto: document.getElementById("console-auto"),
+    live: document.getElementById("console-live"),
   };
 
   function isPaid(execution) {
@@ -1067,13 +1072,15 @@
     els.dot.className = "dot" + (kind ? " " + kind : "");
   }
 
-  function setStatus(text) {
+  function setStatus(text, conMarcaDePausa = true) {
     if (!els.status) {
       els.status = node("span", "console-status");
       els.status.setAttribute("aria-live", "polite");
       document.querySelector(".controls-right").appendChild(els.status);
     }
-    els.status.textContent = text;
+    // Sin esta marca, un dato viejo se ve identico a uno recien traido: la unica diferencia es
+    // la hora, y nadie la compara contra el reloj.
+    els.status.textContent = text + (conMarcaDePausa && !state.live ? " · en pausa" : "");
   }
 
   // ─────────────────────────────────── Carga de datos ───────────────────────────────────
@@ -1119,7 +1126,7 @@
         return;
       }
       const data = await response.json();
-      setDot(els.auto.checked ? "live" : "");
+      setDot(state.live ? "live" : "");
       banner(null);
 
       const serialized = JSON.stringify(data);
@@ -1204,7 +1211,7 @@
           .then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
       ]);
       banner(null);
-      setDot(els.auto.checked ? "live" : "");
+      setDot(state.live ? "live" : "");
 
       // Chips con el conteo real de cada tabla.
       replaceChildren(
@@ -1288,7 +1295,7 @@
       const datos = await fetch(apiUrl() + "/dev/queues")
         .then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
       banner(null);
-      setDot(els.auto.checked ? "live" : "");
+      setDot(state.live ? "live" : "");
 
       replaceChildren(
         document.getElementById("q-cards"),
@@ -1381,13 +1388,17 @@
     renderTurns();
     syncToggleAll();
   });
-  els.auto.addEventListener("change", () => {
-    setDot(els.auto.checked ? "live" : "");
-    if (els.auto.checked) refreshConsole();
+  els.live.addEventListener("click", () => {
+    state.live = !state.live;
+    els.live.setAttribute("aria-pressed", String(state.live));
+    setDot(state.live ? "live" : "");
+    // Encenderlo trae datos YA: esperar hasta REFRESH_MS parece que el boton no hizo nada.
+    if (state.live) refreshActive();
+    else setStatus("en pausa · pulsa Ver en vivo o Actualizar", false);
   });
 
   setInterval(() => {
-    if (els.auto.checked && document.visibilityState === "visible") refreshActive();
+    if (state.live && document.visibilityState === "visible") refreshActive();
   }, REFRESH_MS);
 
   renderAll();
