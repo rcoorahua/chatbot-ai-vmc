@@ -111,7 +111,7 @@ class Settings(BaseSettings):
 
     # ── Limites contra abuso (RF-014 / RNF-007, D-005 cerrada 2026-08-28) ───────────────────
     # Un mensaje sin tope se convertiria en un item DynamoDB de 400 KB y en un prompt caro.
-    max_message_chars: int = 2000
+    max_message_chars: int = 500
     messages_page_size: int = 50
     # Rate limit por conversacion (que con D-002 es por usuario): ritmo humano incluso
     # escribiendo rapido y en frases partidas. Pasarse devuelve 429, no pierde el mensaje.

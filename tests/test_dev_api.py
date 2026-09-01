@@ -70,7 +70,7 @@ def _registrar(conversation_id: str, *, pagada: bool) -> None:
         intent="FAQ",
         source="model" if pagada else "advisor_request",
         provider="GOOGLE" if pagada else usage.NO_PROVIDER,
-        model="gemini-3.7-flash" if pagada else None,
+        model="gemini-3.6-flash" if pagada else None,
         usage={"input": 900, "output": 120, "cached_read": 0, "cached_creation": 0}
         if pagada
         else None,
@@ -85,9 +85,12 @@ def _registrar(conversation_id: str, *, pagada: bool) -> None:
                 "source_url": "https://centro-de-ayuda-vmc.vercel.app/comision",
             },
             {"topic": "Fee por el uso de pasarela", "score": 0.844, "source_url": ""},
+            # Por debajo del umbral: no fue evidencia, pero la consola lo muestra igual.
+            {"topic": "Retiro de saldo", "score": 0.81, "source_url": "", "relevant": False},
         ]
         if pagada
         else None,
+        rag_min_score=0.84 if pagada else None,
     )
 
 
@@ -108,17 +111,21 @@ def test_la_sesion_ve_sus_ejecuciones_con_totales(client, limpiar, caplog):
         "de la mas reciente a la mas antigua"
     )
     pagada = data["executions"][0]
-    assert pagada["model"] == "gemini-3.7-flash" and pagada["input_tokens"] == 900
+    assert pagada["model"] == "gemini-3.6-flash" and pagada["input_tokens"] == 900
     assert pagada["estimated_cost_usd"] == pytest.approx(0.001125)
 
-    # AC-O5: la consola necesita saber QUE trajo el RAG, no solo cuantos fragmentos.
+    # AC-O5: la consola necesita saber QUE trajo el RAG, no solo cuantos fragmentos —
+    # incluidos los hits bajo el umbral, marcados como no relevantes.
     assert [f["topic"] for f in pagada["rag_fragments"]] == [
         "¿Cuánto es la comisión?",
         "Fee por el uso de pasarela",
+        "Retiro de saldo",
     ]
     assert pagada["rag_fragments"][0]["score"] == pytest.approx(0.8712)
     assert pagada["rag_fragments"][0]["source_url"].startswith("https://")
     assert pagada["rag_fragments"][1]["source_url"] == ""
+    assert [f["relevant"] for f in pagada["rag_fragments"]] == [True, True, False]
+    assert pagada["rag_min_score"] == pytest.approx(0.84)
     sin_rag = data["executions"][1]
     assert sin_rag["rag_fragments"] == [], "la clasificacion no toca RAG"
     assert data["totals"] == {
@@ -164,3 +171,55 @@ def test_apagada_la_ruta_no_existe(client, limpiar, monkeypatch):
         headers=_auth(sesion),
     )
     assert response.status_code == 404, "en prod la ruta no se revela ni con sesion valida"
+
+
+# ───────────────────── Inspector de tablas y colas (pestañas de test.html) ─────────────────────
+# AC-O6: con STAGE=dev, /dev/tables lista las 5 tablas y el scan de una devuelve items y claves.
+# AC-O7: fuera de dev NO EXISTEN (404), aunque DEV_OBSERVABILITY este encendido — el gate es mas
+#        estricto que el de ai-usage porque un scan vuelca datos de TODOS los usuarios.
+
+
+def test_el_inspector_lista_las_cinco_tablas(client):
+    response = client.get("/dev/tables")
+    assert response.status_code == 200
+    tables = response.json()["tables"]
+    assert [t["key"] for t in tables] == [
+        "conversations", "messages", "tickets", "advisors", "ai-usage"
+    ]
+    assert all("count" in t or "error" in t for t in tables)
+
+
+def test_el_scan_devuelve_items_y_claves(client):
+    response = client.get("/dev/tables/messages?limit=5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["key_attributes"] == ["conversation_id", "message_key"]
+    assert data["count"] <= 5
+    assert isinstance(data["items"], list)
+
+
+def test_una_tabla_desconocida_es_404(client):
+    assert client.get("/dev/tables/usuarios").status_code == 404
+
+
+def test_el_inspector_no_existe_fuera_de_dev(client, monkeypatch):
+    """El gate estricto: en stage, ai-usage sigue vivo pero el inspector no."""
+    monkeypatch.setenv("STAGE", "stage")
+    reset_settings()
+    try:
+        assert client.get("/dev/tables").status_code == 404
+        assert client.get("/dev/tables/messages").status_code == 404
+        assert client.get("/dev/queues").status_code == 404
+    finally:
+        reset_settings()
+
+
+def test_el_inspector_de_colas_responde_estructura(client):
+    """No exige localstack arriba: una cola caida se reporta como error, nunca como 500."""
+    response = client.get("/dev/queues")
+    assert response.status_code == 200
+    data = response.json()
+    assert [q["key"] for q in data["queues"]] == ["ai-jobs", "notifications"]
+    for queue in data["queues"]:
+        assert ("visible" in queue and "peek" in queue) or "error" in queue
+    assert isinstance(data["recent_jobs"], list)

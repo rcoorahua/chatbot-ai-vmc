@@ -166,18 +166,34 @@ def crear_tablas(verbose: bool = True) -> None:
                 raise
 
 
+def cliente_sqs():
+    return boto3.client(
+        "sqs",
+        endpoint_url=_env("SQS_ENDPOINT_URL", "http://localhost:4566"),
+        region_name=_env("AWS_REGION", "us-east-1"),
+        aws_access_key_id=_env("AWS_ACCESS_KEY_ID", "local"),
+        aws_secret_access_key=_env("AWS_SECRET_ACCESS_KEY", "local"),
+        config=_CFG,
+    )
+
+
+def nombres_de_cola() -> tuple[str, str]:
+    """(ai-jobs, notifications). Reusado por reset_local.py para purgar sin duplicar los ids."""
+    return ("subastin-dev-ai-jobs", "subastin-dev-notifications")
+
+
 def crear_colas_y_bucket(verbose: bool = True) -> None:
     """SQS y S3 en LocalStack. No bloquea si LocalStack no esta arriba (es opcional para tests)."""
-    endpoint = _env("SQS_ENDPOINT_URL", "http://localhost:4566")
     comunes = {
         "region_name": _env("AWS_REGION", "us-east-1"),
         "aws_access_key_id": _env("AWS_ACCESS_KEY_ID", "local"),
         "aws_secret_access_key": _env("AWS_SECRET_ACCESS_KEY", "local"),
         "config": _CFG,
     }
+    endpoint = _env("SQS_ENDPOINT_URL", "http://localhost:4566")
     try:
-        sqs = boto3.client("sqs", endpoint_url=endpoint, **comunes)
-        for cola in ("subastin-dev-ai-jobs", "subastin-dev-notifications"):
+        sqs = cliente_sqs()
+        for cola in nombres_de_cola():
             sqs.create_queue(QueueName=cola)
             if verbose:
                 print(f"  cola lista: {cola}")
