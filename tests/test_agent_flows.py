@@ -84,6 +84,38 @@ def test_detect_flow_start_con_texto_vacio_o_none_no_revienta(message):
     assert detect_flow_start(message) is None
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "no quiero participar",
+        "ya no quiero participar en esto",
+        "No deseo participar",
+        "tampoco quiero participar",
+        "nunca voy a participar",
+        # "no puedo participar" es una FAQ legitima de problemas de acceso: debe ir al
+        # clasificador/RAG, no a los botones de participacion.
+        "no puedo participar en la oferta",
+    ],
+)
+def test_una_negacion_cerca_del_verbo_no_dispara_el_flujo(message):
+    """Hallado por esta misma suite (PR #79): "no quiero participar" abria el flujo igual
+    que "quiero participar". La negacion apaga el disparador y el mensaje sigue el
+    pipeline normal."""
+    assert detect_flow_start(message) is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # El "no" lejano no niega la intencion: el disparador debe seguir vivo.
+        "no tengo cuenta pero quiero participar",
+        "hola, no se mucho de esto, quiero participar",
+    ],
+)
+def test_un_no_lejano_no_apaga_el_disparador(message):
+    assert detect_flow_start(message) == "PARTICIPATION"
+
+
 # ──────────────── extract_offer_type / extract_slot_value: leer el slot del texto ────────────────
 
 
