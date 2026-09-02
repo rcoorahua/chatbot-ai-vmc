@@ -87,7 +87,7 @@ Deben responderse con evidencia del RAG (fuente citada) o, en los marcados, por 
 | 13 | ¿Dónde encuentro mi Código Único de Usuario? | RAG · Recarga |
 | 14 | Hice una recarga, ¿puedo pedir devolución de mi saldo en dólares? | RAG · Devoluciones |
 | 15 | ¿Cuándo me devuelven la consignación? | RAG · Consignación |
-| 16 | ¿Cómo y cuánto debo consignar para participar? | RAG · Consignación |
+| 16 | ¿Cómo y cuánto debo consignar para participar? | **Flujo F-CONS**: botones [En Vivo \| Negociable], sin IA |
 | 17 | **quiero participar** | **Flujo F-PART**: botones [Oferta En Vivo \| Oferta Negociable], **sin llamar a la IA** |
 | 18 | **quiero participar en una oferta en vivo** | **Flujo directo**: sin botones, RAG con consulta canónica |
 | 19 | ¿Qué es el precio base y el precio reserva? | RAG · En Vivo |
@@ -95,11 +95,11 @@ Deben responderse con evidencia del RAG (fuente citada) o, en los marcados, por 
 | 21 | ¿Puedo participar desde mi celular? | RAG · En Vivo |
 | 22 | ¿Cuántos bids puedo hacer? | RAG · En Vivo |
 | 23 | Quedé segundo en una oferta que cerró con precio reserva, ¿tengo opciones? | RAG · En Vivo (cierre) |
-| 24 | Gané una oferta En Vivo, ¿cuáles son los siguientes pasos? | RAG · Ganador |
+| 24 | Gané una oferta En Vivo, ¿cuáles son los siguientes pasos? | **Flujo F-LIVE directo** (etapa ganador): RAG canónico, sin botones |
 | 25 | ¿Qué diferencia hay entre Ganador Directo y Mejor Postor? | RAG · Ganador |
-| 26 | Me habilitaron para comprar, ¿qué documentos debo subir? | RAG · Habilitación |
+| 26 | Me habilitaron para comprar, ¿qué documentos debo subir? | **Flujo F-HAB directo** (documentos): RAG canónico, sin botones |
 | 27 | ¿Cómo funciona la oferta Negociable? | RAG · Negociable |
-| 28 | El vendedor me mandó una contrapropuesta, ¿qué hago? | RAG · Negociable |
+| 28 | El vendedor me mandó una contrapropuesta, ¿qué hago? | **Flujo F-NEGO directo** (contrapropuesta): RAG canónico, sin botones |
 | 29 | ¿Qué pasa si incumplo mis responsabilidades como participante? | RAG · Sanciones |
 | 30 | ¿Cómo agendo una visita para ver el vehículo? | RAG · Visitas |
 
@@ -111,7 +111,7 @@ Aquí lo que se prueba es que **no invente** y que degrade con elegancia.
 |---|---|---|
 | 31 | en vivo | Sin flujo activo no hay contexto: no debe inventar (deriva o invita a login si es anónimo) |
 | 32 | *(tras el #17)* negociable | El flujo lo resuelve **por texto**, sin clic |
-| 33 | no quiero participar | **NO** debe sacar botones (la negación apaga el disparador) |
+| 33 | no quiero participar | **NO** debe sacar botones (la negación apaga el disparador; aplica también a "no quiero consignar") |
 | 34 | si | Respuesta suelta sin contexto: no debe inventar |
 | 35 | cuanto es | Pregunta cortada: pide precisión o deriva, nunca adivina cifras |
 | 36 | ¿? | Solo signos |

@@ -211,8 +211,9 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   del mensaje (el servidor valida acción/valor/versión contra el paso vigente — editar el
   HTML no inventa acciones) y **consulta canónica** al RAG al resolver el paso. Motivo: "En
   Vivo" a secas recupera 0 resultados sobre el umbral; la canónica, 4. Nada de LangGraph (el
-  worker ya orquesta; se reevalúa con flujos largos/ciclos/tools). Activo solo
-  **F-PART/PARTICIPATION** (¿En Vivo o Negociable?); F-CONS/F-LIVE/F-NEGO/F-HAB mapeados.
+  worker ya orquesta; se reevalúa con flujos largos/ciclos/tools). **Los 5
+  flujos activos** (F-PART y, desde 2026-09-01, F-CONS/F-LIVE/F-NEGO/F-HAB); las 16
+  consultas canónicas verificadas contra el índice real.
   Detectar/ofrecer botones no llama a ningún modelo. **Mapeo completo del corpus (22
   artículos, 111 preguntas) y las respuestas de diseño: [MAPEO.md](MAPEO.md).** Código:
   `agent/flows.py` (definiciones puras), composición en `workers/ai_worker.py`, transición
