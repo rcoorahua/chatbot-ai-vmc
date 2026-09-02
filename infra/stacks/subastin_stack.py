@@ -38,9 +38,40 @@ from aws_cdk import (
 from aws_cdk import (
     aws_sqs as sqs,
 )
-from aws_cdk.aws_lambda_python_alpha import PythonFunction  # bundling requiere Docker corriendo
 from config import StageConfig
 from constructs import Construct
+
+# Directorio real que contiene el paquete `backend/` (repo root) — NO `backend/` en sí. Los
+# imports son absolutos (`backend.api.main`, `backend.workers.ai_worker`, backend/__init__.py):
+# si el asset apuntara a `backend/` como raíz, el ZIP quedaría con `api/`, `core/`, etc. sueltos
+# y sin el paquete `backend` que el propio código importa (el bug real: ModuleNotFoundError:
+# backend en cold start — cdk synth no lo detecta porque nunca importa el handler).
+# cdk.json corre "python app.py" con cwd=infra/ (mismo motivo por el que el `entry` viejo era
+# "../backend" y no "backend"): un solo ".." sube de infra/ a la raíz del repo.
+_REPO_ROOT = ".."
+
+
+def _lambda_code(requirements_file: str) -> lambda_.Code:
+    """Bundlea SOLO `backend/` (no todo el repo) con SOLO las deps de esa función — reemplaza
+    `PythonFunction` (que exige un único requirements.txt compartido en `entry`) por
+    `Code.from_asset` con un `command` explícito: instala ese requirements.txt puntual y copia
+    `backend/` tal cual, conservándolo como paquete real dentro del asset."""
+    return lambda_.Code.from_asset(
+        _REPO_ROOT,
+        exclude=[
+            "frontend", "widget", "infra", "tests", "scripts", "docs",
+            ".git", ".github", "node_modules", "**/__pycache__", "**/.venv", "*.md",
+        ],
+        bundling=cdk.BundlingOptions(
+            image=lambda_.Runtime.PYTHON_3_12.bundling_image,
+            command=[
+                "bash",
+                "-c",
+                f"pip install -r backend/{requirements_file} -t /asset-output "
+                "&& cp -r backend /asset-output/backend",
+            ],
+        ),
+    )
 
 
 class SubastinStack(Stack):
@@ -270,24 +301,22 @@ class SubastinStack(Stack):
             # desplegar hay que resolverlos desde el secreto antes de construir Settings.
         }
 
-        api_fn = PythonFunction(
+        api_fn = lambda_.Function(
             self,
             "ApiFn",
-            entry="../backend",
-            index="api/main.py",
-            handler="handler",
+            code=_lambda_code("requirements-api.txt"),
+            handler="backend.api.main.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=cfg.api_memory_mb,
             timeout=Duration.seconds(15),  # la API no llama a la IA (T8)
             environment={**common_env, "AI_JOBS_QUEUE_URL": ai_jobs.queue_url},
         )
 
-        worker_ai_fn = PythonFunction(
+        worker_ai_fn = lambda_.Function(
             self,
             "WorkerAiFn",
-            entry="../backend",
-            index="workers/ai_worker.py",
-            handler="handler",
+            code=_lambda_code("requirements-worker-ai.txt"),
+            handler="backend.workers.ai_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=1024,
             timeout=Duration.seconds(cfg.worker_ai_timeout_s),
@@ -297,12 +326,11 @@ class SubastinStack(Stack):
             event_sources.SqsEventSource(ai_jobs, batch_size=5, report_batch_item_failures=True)
         )
 
-        worker_notify_fn = PythonFunction(
+        worker_notify_fn = lambda_.Function(
             self,
             "WorkerNotifyFn",
-            entry="../backend",
-            index="workers/notify_worker.py",
-            handler="handler",
+            code=_lambda_code("requirements-worker-notify.txt"),
+            handler="backend.workers.notify_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(30),
         )

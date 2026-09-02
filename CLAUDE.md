@@ -341,8 +341,10 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
   el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
-- Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
-  entorno local de dev — mantener ambos en sync al agregar una dependencia.
+- Deps: `backend/requirements-{api,worker-ai,worker-notify}.txt` es lo que CDK bundlea por
+  función (separadas para no cargar cada Lambda con lo que no usa — ver infra/stacks/
+  subastin_stack.py); `pyproject.toml` es el entorno local de dev — mantener los tres en sync
+  con lo que realmente se importa al agregar una dependencia.
 - Locales y **no versionados** (`.gitignore`): `my-usage.md` (chuleta personal), `REFERENCIA/`
   (proyecto v0 de referencia; su `.cursor/` no aplica a este repo), `data/helpcenter/*.md` y
   `chunks.json` (se regeneran con `helpcenter_fetch`). No enlazarlos desde docs versionadas.
