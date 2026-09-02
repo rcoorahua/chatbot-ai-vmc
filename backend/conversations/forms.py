@@ -54,6 +54,18 @@ class HandoffForm:
     phone: str | None = None
 
 
+# El formulario se pide en DOS pasos (decision de Aaron, 2026-09-02): primero quien eres,
+# despues que te pasa. Cinco campos de golpe dentro de una burbuja de chat se leen como un
+# tramite; dos pantallas cortas se leen como una conversacion.
+#
+# El PASO lo declara el servidor, campo por campo, y no lo adivina el widget por el nombre:
+# quien decide que datos hacen falta es esta funcion (depende de si el usuario es anonimo o de
+# si su JWT trajo correo), asi que tambien le toca decir donde va cada uno. Si el paso 1 se
+# queda sin campos —el caso normal del autenticado— el widget dibuja un solo paso.
+STEP_CONTACT = 1
+STEP_CASE = 2
+
+
 def handoff_form_spec(*, anonymous: bool, needs_email: bool) -> dict:
     """La metadata del mensaje del bot que el widget dibuja como tarjeta de formulario.
 
@@ -62,15 +74,19 @@ def handoff_form_spec(*, anonymous: bool, needs_email: bool) -> dict:
     """
     fields: list[dict] = []
     if anonymous:
-        fields.append(_field("name", "Nombre", "text", required=True, max=MAX_NAME_CHARS))
-        fields.append(_field("email", "Correo", "email", required=True, max=MAX_EMAIL_CHARS))
-        fields.append(
-            _field("phone", "Teléfono (opcional)", "tel", required=False, max=MAX_PHONE_CHARS)
-        )
+        fields.append(_field("name", "Nombre", "text", STEP_CONTACT, required=True,
+                             max=MAX_NAME_CHARS))
+        fields.append(_field("email", "Correo", "email", STEP_CONTACT, required=True,
+                             max=MAX_EMAIL_CHARS))
+        fields.append(_field("phone", "Teléfono (opcional)", "tel", STEP_CONTACT,
+                             required=False, max=MAX_PHONE_CHARS))
     elif needs_email:
-        fields.append(_field("email", "Correo", "email", required=True, max=MAX_EMAIL_CHARS))
-    fields.append(_field("subject", "Asunto", "text", required=True, max=MAX_SUBJECT_CHARS))
-    fields.append(_field("detail", "Cuéntanos qué pasó", "textarea", required=True, max=None))
+        fields.append(_field("email", "Correo", "email", STEP_CONTACT, required=True,
+                             max=MAX_EMAIL_CHARS))
+    fields.append(_field("subject", "Asunto", "text", STEP_CASE, required=True,
+                         max=MAX_SUBJECT_CHARS))
+    fields.append(_field("detail", "Cuéntanos qué pasó", "textarea", STEP_CASE, required=True,
+                         max=None))
     return {
         "interaction": {
             "type": HANDOFF_FORM,
@@ -81,8 +97,10 @@ def handoff_form_spec(*, anonymous: bool, needs_email: bool) -> dict:
     }
 
 
-def _field(name: str, label: str, kind: str, *, required: bool, max: int | None) -> dict:
-    spec = {"name": name, "label": label, "type": kind, "required": required}
+def _field(
+    name: str, label: str, kind: str, step: int, *, required: bool, max: int | None
+) -> dict:
+    spec = {"name": name, "label": label, "type": kind, "step": step, "required": required}
     if max is not None:
         spec["max"] = max
     return spec

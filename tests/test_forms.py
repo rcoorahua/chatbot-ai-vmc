@@ -19,6 +19,36 @@ def _campos(spec: dict) -> list[str]:
     return [f["name"] for f in spec["interaction"]["fields"]]
 
 
+def _pasos(spec: dict) -> dict[int, list[str]]:
+    """{paso: [campos]} — el agrupamiento que el widget usa para dibujar el asistente."""
+    agrupado: dict[int, list[str]] = {}
+    for field in spec["interaction"]["fields"]:
+        agrupado.setdefault(field["step"], []).append(field["name"])
+    return agrupado
+
+
+def test_el_formulario_se_pide_en_dos_pasos_contacto_y_caso():
+    """Cinco campos de golpe dentro de una burbuja se leen como un trámite. El servidor dice
+    en qué paso va cada uno; el widget no lo adivina por el nombre."""
+    assert _pasos(forms.handoff_form_spec(anonymous=True, needs_email=False)) == {
+        forms.STEP_CONTACT: ["name", "email", "phone"],
+        forms.STEP_CASE: ["subject", "detail"],
+    }
+
+
+def test_el_autenticado_con_correo_tiene_un_solo_paso():
+    """Sin datos de contacto que pedir, el paso 1 se queda vacío y el widget dibuja una sola
+    pantalla: anunciar "paso 1 de 2" para un recorrido que no existe sería mentir."""
+    pasos = _pasos(forms.handoff_form_spec(anonymous=False, needs_email=False))
+    assert pasos == {forms.STEP_CASE: ["subject", "detail"]}
+
+
+def test_al_autenticado_sin_correo_se_le_pide_en_el_paso_de_contacto():
+    pasos = _pasos(forms.handoff_form_spec(anonymous=False, needs_email=True))
+    assert pasos[forms.STEP_CONTACT] == ["email"]
+    assert pasos[forms.STEP_CASE] == ["subject", "detail"]
+
+
 def test_la_tarjeta_pide_contacto_solo_al_anonimo():
     anon = forms.handoff_form_spec(anonymous=True, needs_email=False)
     assert anon["interaction"]["type"] == forms.HANDOFF_FORM
