@@ -365,7 +365,15 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   prod `INFO` **sin contenido** (`content_preview` devuelve solo el largo). JSON dentro de Lambda,
   texto en local. Convención: el mensaje del log es el nombre del evento (`ai.execution`,
   `ai.handoff`, `ai.debounce.skip`…) y los datos van en `extra`; `usage.record_execution` emite
-  un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. La ruta
+  un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. **Peticiones HTTP (2026-09-02, `api/request_log.py`)**: un `http.request`
+  por petición (método, plantilla de ruta, path, estado, duración, `request_id`) y un
+  `http.error` con el MOTIVO de cada rechazo — que es lo que convierte "un 404" en "un 404
+  porque la conversación no existe". El nivel sigue al resultado (2xx DEBUG, 4xx WARNING, 5xx
+  ERROR), así que en prod (INFO) los problemas saltan solos y el tráfico normal no. **Se
+  instala AL FINAL en `api/main.py`**: `add_middleware` antepone, así que el último agregado es
+  el más externo; instalado antes quedaba por dentro del authorizer de dev y sus 401 no dejaban
+  rastro. Nunca registra el cuerpo, la cabecera `Authorization` ni la query cruda: por ahí van
+  los mensajes, el formulario de handoff y el token de sesión. La ruta
   `GET /dev/conversations/{id}/ai-usage` (`api/routers/dev.py`) alimenta la consola de
   `widget/test.html`; con `DEV_OBSERVABILITY=0` (prod) responde 404. Nunca loguear contenido
   fuera de `content_preview`. El mismo router también trae `GET /dev/tables[/{key}]` y
