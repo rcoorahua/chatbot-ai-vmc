@@ -237,6 +237,13 @@ del modelo. Ajustes detectados (agregar al modelo antes de crear tablas):
     `conversations/service.py`: hace atómica la regla "máximo 1" (D-002) con una creación
     condicional, sin consultar GSI1 antes de crear (dos pestañas a la vez no crean dos). GSI1
     sigue sirviendo para el historial que ve el asesor (RF-012).
+11. **D-029 (2026-09-02): hilo + casos sin GSI nuevos** — `Conversations` gana `kind`
+    (`THREAD`/`CASE`), `title`, `contact_name/email/phone`, `source_conversation_id` y
+    `closed_by`; GSI1 (`user_id`/`updated_at`) lista el hilo y los casos del usuario y, con
+    filtro, cuenta los casos abiertos para el tope. `Messages` gana el tipo `FORM_RESPONSE`
+    (resumen legible en `content`, valores y transcripción del hilo en `metadata`). La
+    conversación anónima y sus mensajes llevan `expires_at` (TTL, `ANONYMOUS_CONVERSATION_TTL_DAYS`).
+    El caso se crea con sus tres primeros mensajes en una sola `TransactWriteItems`.
 
 ---
 
@@ -476,6 +483,17 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   `agent/guardrails.py`), D-025 (un emoji máximo, sin markdown ni guiones largos) y D-026
   (golden set en `tests/golden/`, eval real manual con `scripts/eval_intents.py`, piso 95%).
   Detalle en [CLAUDE.md](CLAUDE.md).
+- **De negocio cerrada (2026-09-02, Aaron): D-029 — casos y handoff con formulario.** Revisa
+  D-002/D-003/D-017/D-019/D-023 tras estudiar Intercom y Zendesk (varias conversaciones por
+  persona; el ticket es la conversación escalada). Autenticado: un hilo permanente con el bot
+  (`kind=THREAD`) y hasta 5 casos abiertos (`kind=CASE`) que nacen del formulario de asesor
+  (asunto + detalle); el hilo sigue con el bot encendido. Anónimo: una conversación por sesión,
+  puede pedir asesor dejando nombre y correo (teléfono opcional; RF-003 vuelve a aplicar), se
+  deriva en el sitio, con TTL y tope de handoffs por IP. Pedir asesor o "FAQ sin evidencia"
+  ya no derivan solos: el bot ofrece la tarjeta (`HANDOFF_FORM`, mecanismo de D-028) y deriva
+  `POST /chat/conversations/{id}/handoff`. Un caso o la anónima cerrados quedan `CLOSED` y de
+  solo lectura; el hilo del autenticado vuelve al bot (D-023). Sin GSI nuevos. Detalle y
+  código en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-008** (taxonomía tickets), **D-010** (campos de usuario),
