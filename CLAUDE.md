@@ -10,8 +10,8 @@ Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con
 **Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
 DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
 dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repartir trabajo.
-Flujos guiados e intenciones del corpus: [MAPEO.md](MAPEO.md). Prueba manual del bot (comandos
-+ 50 mensajes de prueba): [TEST.md](TEST.md).
+Flujos guiados e intenciones del corpus: [MAPEO.md](MAPEO.md). Prueba manual del bot (comandos,
+50 mensajes sueltos y 30 conversaciones de varios turnos): [TEST.md](TEST.md).
 
 ## Comandos
 
