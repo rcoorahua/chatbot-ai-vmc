@@ -139,6 +139,20 @@ class Settings(BaseSettings):
     # session_signing_key; rotarla reinicia contadores, aceptable con ventanas de horas.
     ip_hash_secret: str | None = None
 
+    # ── Casos y handoff con formulario (D-029, cerrada 2026-09-02) ──────────────────────────
+    # Autenticado: un hilo permanente con el bot y hasta N casos abiertos (PENDING_ADVISOR o
+    # IN_ATTENTION) a la vez. Al llegar al tope, el formulario responde 409 y el widget invita
+    # a seguir en un caso abierto. 0 = sin tope.
+    max_open_cases_per_user: int = 5
+    # Anonimo: cuantos handoffs por dia acepta una misma IP (hasheada). Frena al que abre
+    # pestañas para inundar la bandeja con correos falsos. 0 = sin tope, y asi queda en dev
+    # (misma politica que AI_QUOTA_*); en stage/prod se enciende por variable de entorno.
+    anon_handoffs_per_ip_per_day: int = 0
+    # La conversacion anonima (y sus mensajes) caduca sola por TTL de DynamoDB: sin cuenta no
+    # hay forma de volver a ella, asi que conservarla mas alla de un margen operativo solo
+    # acumula chats muertos. 0 = sin TTL. El valor definitivo de retencion lo fija D-014.
+    anonymous_conversation_ttl_days: int = 30
+
     # ── Imagenes (RF-040..042, valores de D-005; se aplican en F6) ──────────────────────────
     # Mismo criterio que arriba: todos los topes se renuevan (por imagen, por mensaje, por
     # hora). Ninguno es acumulativo, asi que el usuario nunca se queda sin poder enviar fotos.

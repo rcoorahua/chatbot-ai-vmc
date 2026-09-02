@@ -1,14 +1,23 @@
-"""Router publico del widget (`/chat/*`) — RF-001, RF-004, RF-005, RF-008 y AC-008.
+"""Router publico del widget (`/chat/*`) — RF-001, RF-003, RF-004, RF-005, RF-008, AC-008.
 
 Contrato con el widget (widget/subastin.js):
-  POST /chat/sessions                              → identidad + conversacion + token de sesion
+  POST /chat/sessions                              → identidad + hilo del bot + token de sesion
+  GET  /chat/conversations                         → hilo + casos del usuario (D-029)
   GET  /chat/conversations/{id}                    → estado de la conversacion
-  GET  /chat/conversations/{id}/messages?after=    → sondeo de mensajes nuevos (TD-001: polling)
-  POST /chat/conversations/{id}/messages           → 202: persiste, encola el job IA (T8)
+  GET  /chat/conversations/{id}/messages           → sin cursor: los ultimos N (+ estado de la
+                                                     conversacion); `after=` sondeo de lo
+                                                     nuevo (TD-001: polling); `before=` pagina
+                                                     hacia atras
+  POST /chat/conversations/{id}/messages           → 202: persiste, encola el job IA (T8);
+                                                     409 si la conversacion esta cerrada
+  POST /chat/conversations/{id}/handoff            → 201: formulario de asesor (D-029): abre
+                                                     un caso (autenticado) o deriva en el sitio
+                                                     (anonimo, RF-003)
 
-Toda ruta salvo la primera exige `Authorization: Bearer <token de sesion>` y el token esta
-atado a UNA conversacion (D-002): pedir otra es 403 aunque exista. La identidad del usuario
-nunca llega suelta en el body — solo dentro del JWT firmado por VMC (RNF-005, core/auth.py).
+Toda ruta salvo la primera exige `Authorization: Bearer <token de sesion>`. Autorizacion: el
+autenticado ve todo lo suyo (hilo y casos, por `user_id`); el anonimo solo la conversacion
+atada a su token. Otra cosa es 403 aunque exista. La identidad del usuario nunca llega
+suelta en el body — solo dentro del JWT firmado por VMC (RNF-005, core/auth.py).
 """
 
 import logging
@@ -17,9 +26,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from backend.agent import quota
-from backend.conversations import repository, service
-from backend.conversations.models import Conversation, Message, MessageStatus
+from backend.agent import prompts, quota
+from backend.conversations import forms, repository, service
+from backend.conversations.models import Conversation, Message, MessageStatus, UserType
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
@@ -35,12 +44,16 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ConversationOut(BaseModel):
     conversation_id: str
     user_type: str
+    kind: str
     status: str
     bot_enabled: bool
+    title: str | None = None
     message_count: int
+    last_message_preview: str | None = None
     last_message_at: str
     created_at: str
     updated_at: str
+    closed_at: str | None = None
 
     @classmethod
     def from_model(cls, conversation: Conversation) -> "ConversationOut":
@@ -124,9 +137,35 @@ class MessageAccepted(BaseModel):
 
 
 class MessagesOut(BaseModel):
+    # Estado vigente de la conversacion en cada sondeo: el widget decide con esto la cadencia,
+    # el indicador de "escribiendo" y si el compositor sigue abierto (D-029).
+    conversation: ConversationOut
     messages: list[MessageOut]
     # SK del ultimo mensaje entregado: el widget lo devuelve como `after` en el siguiente sondeo.
     next_after: str | None
+    # SK del mas antiguo entregado y si hay mas detras: para "ver mensajes anteriores".
+    next_before: str | None = None
+    has_more: bool = False
+
+
+class ConversationsOut(BaseModel):
+    conversations: list[ConversationOut]
+
+
+class HandoffIn(BaseModel):
+    """Lo que el usuario contesto en la tarjeta de formulario (conversations/forms.py valida
+    de verdad; aqui solo topes de transporte)."""
+
+    subject: str = Field(min_length=1, max_length=1_000)
+    detail: str = Field(min_length=1, max_length=20_000)
+    name: str | None = Field(default=None, max_length=1_000)
+    email: str | None = Field(default=None, max_length=1_000)
+    phone: str | None = Field(default=None, max_length=200)
+
+
+class HandoffOut(BaseModel):
+    # La conversacion que espera al asesor: el caso nuevo (autenticado) o la misma (anonimo).
+    conversation: ConversationOut
 
 
 # ──────────────────────────────────────── Rutas ────────────────────────────────────────
@@ -171,12 +210,24 @@ def create_session(body: SessionIn) -> SessionOut:
 
 
 def _owned_conversation(session: auth.ChatSession, conversation_id: str) -> Conversation:
-    if conversation_id != session.conversation_id:
+    # El 403 del ajeno sale ANTES de leer nada cuando la regla es por id (anonimo); para el
+    # autenticado hay que leer la fila para comparar el `user_id`. Un id inexistente del
+    # anonimo es 403, no 404: no se confirma que exista lo que no es suyo.
+    if not session.is_authenticated and conversation_id != session.conversation_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conversacion no es de tu sesion")
     conversation = repository.get_conversation(conversation_id)
     if conversation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada")
+    if not service.owns(session, conversation):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conversacion no es de tu sesion")
     return conversation
+
+
+@router.get("/conversations", response_model=ConversationsOut)
+def list_conversations(session: auth.CurrentSession) -> ConversationsOut:
+    return ConversationsOut(
+        conversations=[ConversationOut.from_model(c) for c in service.list_conversations(session)]
+    )
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationOut)
@@ -189,14 +240,80 @@ def list_messages(
     conversation_id: str,
     session: auth.CurrentSession,
     after: str | None = Query(default=None, max_length=128),
+    before: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> MessagesOut:
-    _owned_conversation(session, conversation_id)
-    messages = service.list_messages(conversation_id, after=after, limit=limit)
+    if before and after:
+        raise HTTPException(422, "before y after son excluyentes")
+    conversation = _owned_conversation(session, conversation_id)
+    if after:
+        messages = service.list_messages(conversation_id, after=after, limit=limit)
+        has_more = False
+    else:
+        messages, has_more = service.latest_messages(conversation_id, before=before, limit=limit)
     return MessagesOut(
+        conversation=ConversationOut.from_model(conversation),
         messages=[MessageOut.from_model(message) for message in messages],
         next_after=messages[-1].message_key if messages else after,
+        next_before=messages[0].message_key if messages else before,
+        has_more=has_more,
     )
+
+
+@router.post(
+    "/conversations/{conversation_id}/handoff",
+    response_model=HandoffOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_handoff(
+    conversation_id: str, body: HandoffIn, session: auth.CurrentSession, request: Request
+) -> HandoffOut:
+    """El usuario envio el formulario de asesor (D-029). Autenticado: 201 con el CASO nuevo;
+    anonimo: 201 con su misma conversacion ya derivada (RF-003). 409 si no se puede derivar
+    desde aqui (ya derivada, cerrada, o tope de casos); 422 con `field` si un dato no pasa;
+    429 si la IP anonima ya pidio demasiados asesores hoy."""
+    conversation = _owned_conversation(session, conversation_id)
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    if anonymous:
+        ip_hash = quota.hash_ip(_client_ip(request))
+        limit = get_settings().anon_handoffs_per_ip_per_day
+        if ip_hash and not quota.take_daily_slot(f"HANDOFF#IP#{ip_hash}", limit=limit):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Ya recibimos varias solicitudes de asesor desde tu conexion hoy. "
+                "Crea tu cuenta en VMC para continuar.",
+                headers={"Retry-After": "3600"},
+            )
+    form = forms.HandoffForm(
+        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
+        phone=body.phone,
+    )
+    confirmation = (
+        prompts.HANDOFF_ANON_CONFIRMATION if anonymous else prompts.HANDOFF_CASE_CONFIRMATION
+    )
+    try:
+        waiting = service.request_handoff(conversation, form, confirmation=confirmation)
+    except forms.FormValidationError as exc:
+        raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
+    except service.TooManyOpenCases as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Ya tienes {exc.limit} casos abiertos. Continua en uno de ellos o espera a que "
+            "un asesor lo cierre.",
+        ) from exc
+    except service.HandoffNotAllowed as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Esta conversacion ya esta con el equipo o cerrada"
+        ) from exc
+    logger.info(
+        "chat.handoff",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "case_id": waiting.conversation_id,
+            "anonymous": anonymous,
+        },
+    )
+    return HandoffOut(conversation=ConversationOut.from_model(waiting))
 
 
 @router.post(
@@ -224,6 +341,10 @@ def post_message(
         raise HTTPException(422, str(exc)) from exc
     except service.EmptyMessage as exc:
         raise HTTPException(422, str(exc)) from exc
+    except service.ConversationClosed as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Esta conversacion esta cerrada. Abre una nueva."
+        ) from exc
     except service.RateLimited as exc:
         # `Retry-After` es el estandar de 429: el widget lo respeta en vez de reintentar solo.
         raise HTTPException(

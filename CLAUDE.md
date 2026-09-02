@@ -130,6 +130,11 @@ moverla a "cerradas" aquí y reflejarla en PLAN.md.
 Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`,
 `conversations/service.py`, `widget/`.
 
+> **2026-09-02 — D-029 revisa D-002, D-003, D-017, D-019 y D-023** (ver la última viñeta de
+> esta sección). Sus textos originales se conservan abajo como historia; donde choquen, manda
+> D-029: el anónimo SÍ puede pedir asesor (con correo), el autenticado tiene hilo + casos, y
+> "cerrar" un caso o la conversación anónima los deja `CLOSED`.
+
 - **D-001 Identidad VMC ↔ Subastín**: JWT de identidad **firmado por el servidor de VMC** (HS256,
   secreto compartido `VMC_IDENTITY_SECRET`), dejado en la página como
   `window.subastinSettings.userJwt` y verificado en `POST /chat/sessions`, que devuelve un token de
@@ -219,6 +224,40 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   `agent/flows.py` (definiciones puras), composición en `workers/ai_worker.py`, transición
   atómica en `conversations/repository.py`, render en `widget/subastin.js`.
 
+- **D-029 Casos y handoff con formulario (2026-09-02, Aaron)**: revisa D-002/D-003/D-017/
+  D-019/D-023 tras estudiar el modelo de Intercom y Zendesk (varias conversaciones por
+  persona; el ticket es la conversación escalada). **Autenticado**: un hilo permanente con el
+  bot (`kind=THREAD`, id determinista: D-003 sigue) y hasta **5 casos abiertos**
+  (`kind=CASE`, `MAX_OPEN_CASES_PER_USER`) creados por el **formulario de asesor** (asunto +
+  detalle; correo solo si el JWT de VMC no lo trajo). El caso nace `PENDING_ADVISOR` con el
+  bot apagado y trae la nota `CASE_OPENED`, el mensaje `FORM_RESPONSE` (valores + transcripción
+  de los últimos 20 mensajes del hilo, para el asesor) y la confirmación fija; el hilo sigue
+  con el bot **encendido** y una nota `CASE_OPENED` que enlaza al caso — pedir asesor ya no
+  bloquea al bot. **Anónimo**: **una** conversación por sesión (D-002/D-018 siguen; nada en
+  localStorage, decisión de Aaron); puede pedir asesor dejando **nombre y correo
+  obligatorios, teléfono opcional** (RF-003 vuelve a tener efecto): su conversación se deriva
+  **en el sitio** y el bot lo invita a crear cuenta en VMC. Seguridad del anónimo: la fila y
+  sus mensajes llevan **TTL** (`ANONYMOUS_CONVERSATION_TTL_DAYS`, 30, DynamoDB borra solo),
+  tope de handoffs por IP hasheada y día (`ANON_HANDOFFS_PER_IP_PER_DAY`, **0 en dev** como
+  D-027; 5 en stage/prod), contacto validado en el servidor y jamás en logs, solo un handoff
+  por conversación (409 después). Pedir asesor (regla o modelo) y "FAQ sin evidencia" ya
+  **no derivan solos**: el bot **ofrece la tarjeta** (`metadata.interaction.type =
+  HANDOFF_FORM`, mismo mecanismo que D-028, campos según el usuario) y sigue atendiendo;
+  deriva `POST /chat/conversations/{id}/handoff` al enviarla (422 con `field`, 409 si no
+  procede o hay tope, 429 por IP). **Cierre**: un caso o la conversación anónima quedan
+  `CLOSED` (`closed_by`, solo lectura: mensaje → 409, nota `CONVERSATION_CLOSED`); el hilo del
+  autenticado sigue volviendo al bot con `TICKET_CLOSED` (D-023). Sin autocierre: D-007 se
+  mantiene. **Widget**: pestaña "Mensajes" = lista (hilo + casos con estado), tarjeta de
+  formulario, barra de conversación cerrada ("Nueva conversación" / "Volver a Subastín"),
+  historial desde los últimos N con "ver anteriores", y sondeo por estado (TD-001). **El
+  ticket sigue siendo D-008**: el caso ES la conversación escalada; `Tickets` queda para F5
+  solo si hace falta trazabilidad aparte del chat. Sin esquema nuevo en DynamoDB (GSI1 sirve
+  para listar hilo + casos). Código: `conversations/forms.py` (puro, lo comparten worker y
+  API), `service.request_handoff`/`list_conversations`/`owns`/`close_case`,
+  `repository.create_conversation_with_messages`/`close_conversation`/`list_open_cases`,
+  `api/routers/chat.py`, `workers/ai_worker._offer_handoff_form`. Tests:
+  `tests/test_chat_cases.py`, `tests/test_forms.py`.
+
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
 Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
@@ -235,7 +274,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-007, D-017, D-019, D-020, D-021…D-028 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-017, D-019, D-020, D-021…D-029 **cerradas** (arriba); D-018 provisional.
 D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagados en dev**
 (`AI_QUOTA_* = 0`); en stage/prod se encienden por variables de entorno.
 
@@ -243,7 +282,7 @@ D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagado
 
 | ID | Tema | Recomendación actual |
 |---|---|---|
-| TD-001 | Entrega en tiempo real: polling vs API Gateway WebSocket | **Sigue polling** (revisado 2026-09-01, Aaron): `widget/subastin.js` sondea 2,5 s abierto / 15 s cerrado, pausa con pestaña oculta. Webhook no es opción (el navegador no tiene URL pública) y SSE tampoco (HTTP API + Lambda no hace streaming, T1/T2), así que la alternativa real es una **API WebSocket aparte**. **No es un problema de latencia**: el piso lo pone el debounce de 6 s de D-020, y el polling solo agrega ~1,25 s de media sobre un presupuesto de 10 s (RNF-001). El argumento es **costo**: cada poll = 1 request de API Gateway + 1 Lambda + 1 query DynamoDB, o sea 1.440 req/hora por usuario con el chat abierto y 240 con la página cargada. Construirlo cuesta: API nueva en CDK, auth en `$connect` con el token de D-001, tabla de conexiones (duplicada en stack **y** `local_setup.py`), push desde `ai_worker`/`advisor` con `post_to_connection` + IAM, reconexión con backoff, **y el polling se queda igual de fallback** (redes que bloquean WS). Además rompería T5 si localstack no cubre WebSocket. Antes de eso, la mejora barata es **polling adaptativo** (rápido solo con respuesta pendiente). Revisar con números de tráfico reales de producción |
+| TD-001 | Entrega en tiempo real: polling vs API Gateway WebSocket | **Sigue polling** (revisado 2026-09-01, Aaron): `widget/subastin.js` sondea 2,5 s abierto / 15 s cerrado, pausa con pestaña oculta. Webhook no es opción (el navegador no tiene URL pública) y SSE tampoco (HTTP API + Lambda no hace streaming, T1/T2), así que la alternativa real es una **API WebSocket aparte**. **No es un problema de latencia**: el piso lo pone el debounce de 6 s de D-020, y el polling solo agrega ~1,25 s de media sobre un presupuesto de 10 s (RNF-001). El argumento es **costo**: cada poll = 1 request de API Gateway + 1 Lambda + 1 query DynamoDB, o sea 1.440 req/hora por usuario con el chat abierto y 240 con la página cargada. Construirlo cuesta: API nueva en CDK, auth en `$connect` con el token de D-001, tabla de conexiones (duplicada en stack **y** `local_setup.py`), push desde `ai_worker`/`advisor` con `post_to_connection` + IAM, reconexión con backoff, **y el polling se queda igual de fallback** (redes que bloquean WS). Además rompería T5 si localstack no cubre WebSocket. **Polling adaptativo implementado el 2026-09-02** (`widget/subastin.js`): cadencia por estado —2 s esperando al bot, 5 s con asesor, 15 s en reposo, 60 s con el panel cerrado solo si hay casos abiertos (una llamada a la lista), 30 s para el anónimo cerrado que espera asesor, nada en los demás casos—, backoff exponencial con jitter ante errores, arranque perezoso del anónimo (sin sesión hasta abrir el chat: antes cada pestaña de VMC creaba una fila) y el estado de la conversación viaja en cada sondeo. Revisar WebSocket con números de tráfico reales de producción |
 | TD-002 | Haiku vía API Anthropic directa vs Amazon Bedrock | Preguntar al equipo AWS si Bedrock está habilitado (PLAN §6.8); sin respuesta aún |
 | TD-003 | Hosting frontend: Vercel vs Amplify | Sin recomendación aún; fuera del stack CDK en ambos casos |
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
@@ -278,9 +317,11 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
   `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:
   `agent/guardrails.py` (entrada y salida), `tests/golden/intents.jsonl`, `scripts/eval_intents.py`.
-  `RAG_MIN_SCORE` calibrado en `0.84` (2026-08-28, ver "RAG" abajo). Falta correr la eval real
-  de intents y anotar el score base, la notificación Slack (D-016) y el ticket al derivar
-  (D-008). El resto (`tickets`, `catalog`,
+  `RAG_MIN_SCORE` calibrado en `0.84` (2026-08-28, ver "RAG" abajo). **Casos y handoff con
+  formulario (D-029, 2026-09-02)**: `conversations/forms.py`, `POST /chat/…/handoff`,
+  `GET /chat/conversations`, lista y tarjeta en el widget. Falta correr la eval real
+  de intents y anotar el score base, la notificación Slack (D-016) y la taxonomía del asunto
+  del formulario (D-008; hoy texto libre). El resto (`tickets`, `catalog`,
   `images`, `notifications`, `routers/dashboard.py`, `workers/notify_worker.py`) son stubs con
   docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
   el usuario lo pida, no por adelantado.

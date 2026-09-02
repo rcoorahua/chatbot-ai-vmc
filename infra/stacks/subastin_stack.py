@@ -254,6 +254,11 @@ class SubastinStack(Stack):
             "AI_CONTEXT_WINDOW_MINUTES": "60",
             "MAX_MESSAGE_CHARS": "2000",
             "MAX_MESSAGES_PER_MINUTE": "10",
+            # D-029: casos abiertos por usuario, handoffs anonimos por IP y dia, y TTL de la
+            # conversacion anonima. En dev (core/config.py) el tope por IP va en 0.
+            "MAX_OPEN_CASES_PER_USER": "5",
+            "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
+            "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
             "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
             "MAX_IMAGES_PER_MESSAGE": "3",
             "MAX_IMAGES_PER_HOUR": "20",
