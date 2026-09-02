@@ -174,7 +174,45 @@ _SELECT_HAB_TOPIC = FlowStep(
 # Los 5 flujos de MAPEO.md §4.1, todos ACTIVOS (F-CONS/F-LIVE/F-NEGO/F-HAB activados
 # 2026-09-01 por pedido de Aaron). Las consultas canonicas de cada valor estan verificadas
 # contra el indice real — ver el bloque de verificacion en MAPEO.md.
+# Confirmar el paso a un asesor (revision de D-029, 2026-09-02). No es un flujo del corpus
+# como los de MAPEO.md: es una pregunta de si/no que el BOT abre cuando se queda sin
+# evidencia, para no empujar el formulario sin preguntar. Se apoya en la misma maquinaria
+# (transicion atomica, version que invalida botones viejos, vencimiento) porque el problema es
+# el mismo: hay que recordar que se pregunto algo y validar la respuesta contra ese paso.
+HANDOFF_CONFIRM = "HANDOFF_CONFIRM"
+
+def _lexicon(*items: str) -> frozenset[str]:
+    """El lexico pasa por la MISMA normalizacion que el mensaje, asi "sí", "si" y "SI" caen en
+    la misma entrada sin duplicarlas a mano (heuristics.normalize)."""
+    return frozenset(normalize(item) for item in items)
+
+
+_CONFIRM_YES = _lexicon(
+    "si", "sip", "claro", "dale", "ya", "por favor", "si por favor", "sí porfa", "porfa",
+    "bueno", "ok", "okey", "vale", "de acuerdo", "quiero", "si quiero", "asesor",
+    "si asesor", "conectame", "conectame con un asesor",
+)
+_CONFIRM_NO = _lexicon(
+    "no", "nop", "no gracias", "no por ahora", "ahora no", "todavia no", "mejor no",
+    "no hace falta", "no es necesario", "asi esta bien", "gracias", "no gracias por ahora",
+)
+
+_CONFIRM_HANDOFF = FlowStep(
+    action_id="CONFIRM_HANDOFF",
+    slot="confirm",
+    # El texto que se publica NO es este: el worker manda el suyo (el de "no tengo ese dato",
+    # `prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE`) para no partir la respuesta en dos mensajes.
+    # Este queda como respaldo si algun dia se ofrece el paso desde otro sitio.
+    prompt="¿Quieres que te conecte con un asesor del equipo?",
+    options=(
+        QuickReply(label="Sí, con un asesor", value="YES"),
+        QuickReply(label="No, gracias", value="NO"),
+    ),
+)
+
+
 FLOWS: dict[str, FlowDefinition] = {
+    HANDOFF_CONFIRM: FlowDefinition(name=HANDOFF_CONFIRM, steps=(_CONFIRM_HANDOFF,)),
     "PARTICIPATION": FlowDefinition(name="PARTICIPATION", steps=(_SELECT_OFFER_TYPE,)),
     "CONSIGNMENT": FlowDefinition(name="CONSIGNMENT", steps=(_CONS_SELECT_OFFER_TYPE,)),
     "LIVE_STAGE": FlowDefinition(name="LIVE_STAGE", steps=(_SELECT_LIVE_STAGE,)),
@@ -334,11 +372,26 @@ def _extract_hab_topic(text: str) -> str | None:
     })
 
 
+def _extract_confirm(text: str) -> str | None:
+    """Si/no escrito a mano, para quien contesta en vez de clickear el boton.
+
+    Solo acepta la respuesta SUELTA: "si, y ademas queria preguntarte otra cosa" no es un si
+    limpio y es mejor dejarlo pasar como mensaje normal que derivar por error.
+    """
+    t = normalize(text or "").strip(" .!¡?¿,")
+    if t in _CONFIRM_YES:
+        return "YES"
+    if t in _CONFIRM_NO:
+        return "NO"
+    return None
+
+
 _SLOT_EXTRACTORS = {
     "offer_type": extract_offer_type,
     "live_stage": _extract_live_stage,
     "nego_stage": _extract_nego_stage,
     "hab_topic": _extract_hab_topic,
+    "confirm": _extract_confirm,
 }
 
 

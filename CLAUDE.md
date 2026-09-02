@@ -10,8 +10,8 @@ Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con
 **Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
 DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
 dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repartir trabajo.
-Flujos guiados e intenciones del corpus: [MAPEO.md](MAPEO.md). Prueba manual del bot (comandos
-+ 50 mensajes de prueba): [TEST.md](TEST.md).
+Flujos guiados e intenciones del corpus: [MAPEO.md](MAPEO.md). Prueba manual del bot (comandos,
+50 mensajes sueltos y 30 conversaciones de varios turnos): [TEST.md](TEST.md).
 
 ## Comandos
 
@@ -37,6 +37,9 @@ python -m scripts.helpcenter_fetch                   # Centro de Ayuda -> data/h
 python -m scripts.helpcenter_upload --verify "cuanto es la comision"   # sube a Pinecone e imprime scores (calibra RAG_MIN_SCORE); --replace = refresco completo
 python -m scripts.advisor_token --sub sub-ana-001 --name "Ana Torres"   # Bearer para /advisor en local (ADVISOR_DEV_AUTH=1)
 python -m scripts.run_ai_worker                      # el bot responde en local (worker contra la cola de localstack; pide GEMINI_API_KEY)
+#   ⚠️ NO se recarga solo: tras tocar agent/, workers/ o conversations/ hay que REINICIARLO.
+#   `uvicorn --reload` sí recoge los cambios de la API, y esa asimetría hace creer que un
+#   arreglo "no funcionó" cuando lo que responde es el proceso viejo (pasó el 2026-09-02).
 python -m scripts.eval_intents                       # eval REAL del golden set contra Gemini (~1 centavo); obligatoria al tocar agent/prompts.py o heuristics.py
 
 python -m pytest -q                                  # suite completa (lo que corre el CI)
@@ -257,6 +260,14 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   `repository.create_conversation_with_messages`/`close_conversation`/`list_open_cases`,
   `api/routers/chat.py`, `workers/ai_worker._offer_handoff_form`. Tests:
   `tests/test_chat_cases.py`, `tests/test_forms.py`.
+  **Revisión del 2026-09-02 (Aaron), tras ver el flujo real en la consola de dev:** cuando el
+  bot se queda **sin evidencia** ya no publica el formulario de una — **pregunta** "¿quieres
+  que te conecte con un asesor?" con botones sí/no (flujo `HANDOFF_CONFIRM` en `agent/flows.py`,
+  misma maquinaria de D-028) y el formulario sale solo con el "sí". Cuando el usuario **pide**
+  un asesor (intent ADVISOR) el formulario sigue saliendo directo: volver a preguntárselo a
+  quien acaba de pedirlo es un turno de más. La confirmación **vale solo para el turno
+  siguiente**: si el usuario la ignora y pregunta otra cosa, se descarta (a diferencia de un
+  flujo del corpus, que espera 24 h) — un "sí" de mañana no puede derivar por un tema olvidado.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -288,6 +299,7 @@ D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagado
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
 | TD-005 | `PythonFunction` (bundling) vs `DockerImageFunction` | PythonFunction mientras deps < 250 MB descomprimido |
 | TD-007 | Dominio custom para la API + DNS/ACM | No bloquea MVP; URL default de API Gateway mientras tanto |
+| TD-009 | **Procesos multi-paso: ¿reglas de texto, flujo con estado, o acotar el prompt?** | **Abierta desde 2026-09-02.** El prompt del redactor manda explicar "un paso a la vez" y preguntar si continuar (`WRITER_SYSTEM_PROMPT`, bloque `<conversacion>`), así que el bot abre contratos de varios turnos ("¿Deseas que te explique el siguiente paso?"). Detrás de esa promesa **no hay estado**: la sostiene `agent/followups.py`, que al detectar una continuación busca en el RAG **la pregunta previa del usuario** en lugar del mensaje actual. Funciona y está medido (ver la viñeta de continuidad en "Invariantes"), pero es heurística: una continuación que las reglas no reconozcan vuelve a buscar el texto suelto y deriva. **Las cuatro salidas:** (a) **medir primero** — el log `ai.rag` ya trae `contextualized` y `followup_rule`, así que se puede contar cuántas continuaciones caen fuera de las reglas antes de decidir nada; (b) **acotar el prompt** para que no prometa pasos que el sistema no sostiene (toca `agent/prompts.py` → exige golden set y eval real, D-026); (c) **modelar los procesos como flujos** de D-028 con estado y botones, que es lo que MAPEO.md §4.1 ya mapea — ojo que el registro **no** es uno hoy ("cada pregunta se autocontiene"); (d) **reescribir la consulta con el modelo** (query rewriting), la respuesta estándar de la industria, pero cuesta una llamada por turno de continuación y choca con D-027. **Recomendación: (a) y luego (b) o (c).** Dato para dimensionar: el margen es angosto — con la pregunta previa sola, "Hola como me registro" recupera 4/4 con 0.859 contra un umbral de 0.84 |
 | TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27; **modelos recalibrados 2026-09-01** contra la página oficial de precios: `gemini-3.5-flash-lite` clasifica ($0.30/$2.50 por 1M; respaldo `3.1-flash-lite`) y `gemini-3.6-flash` redacta ($1.50/$7.50; respaldo `3.5-flash` a $1.50/$9.00). Se abandonó `3.7-flash`: existe en la API pero NO figura en la tabla de precios (preview sin tarifa) y con key gratuita rechazaba sostenido ("high demand") — en la práctica todo caía al respaldo con un costo estimado inventado. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002) |
 
 TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; backup en
@@ -357,7 +369,15 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   prod `INFO` **sin contenido** (`content_preview` devuelve solo el largo). JSON dentro de Lambda,
   texto en local. Convención: el mensaje del log es el nombre del evento (`ai.execution`,
   `ai.handoff`, `ai.debounce.skip`…) y los datos van en `extra`; `usage.record_execution` emite
-  un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. La ruta
+  un `ai.execution` por ejecución con las mismas claves que la fila de AIUsage. **Peticiones HTTP (2026-09-02, `api/request_log.py`)**: un `http.request`
+  por petición (método, plantilla de ruta, path, estado, duración, `request_id`) y un
+  `http.error` con el MOTIVO de cada rechazo — que es lo que convierte "un 404" en "un 404
+  porque la conversación no existe". El nivel sigue al resultado (2xx DEBUG, 4xx WARNING, 5xx
+  ERROR), así que en prod (INFO) los problemas saltan solos y el tráfico normal no. **Se
+  instala AL FINAL en `api/main.py`**: `add_middleware` antepone, así que el último agregado es
+  el más externo; instalado antes quedaba por dentro del authorizer de dev y sus 401 no dejaban
+  rastro. Nunca registra el cuerpo, la cabecera `Authorization` ni la query cruda: por ahí van
+  los mensajes, el formulario de handoff y el token de sesión. La ruta
   `GET /dev/conversations/{id}/ai-usage` (`api/routers/dev.py`) alimenta la consola de
   `widget/test.html`; con `DEV_OBSERVABILITY=0` (prod) responde 404. Nunca loguear contenido
   fuera de `content_preview`. El mismo router también trae `GET /dev/tables[/{key}]` y
@@ -375,6 +395,30 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   en AIUsage se calcula con el precio del modelo que REALMENTE respondió (`llm.cost_for`),
   nunca con el del principal. Al agregar un modelo o tier nuevo, no asumir que le sirve la
   config de otro — probarlo aparte. Modelos vigentes: ver TD-008.
+- **Lo que se BUSCA en el RAG no siempre es lo que el usuario escribió** (`agent/followups.py`,
+  2026-09-02; decisión de fondo pendiente en **TD-009**). El prompt del redactor promete
+  continuidad ("un paso a la vez, pregunta si continuar") y la recuperación era de un solo
+  turno: "Ya estoy ahí" no se parece a nada del corpus, así que un usuario a mitad de una
+  explicación terminaba derivado por "falta de evidencia" **con el artículo correcto entre los
+  descartados** (0.789 contra el umbral 0.84, medido en el índice real). Ahora, si el mensaje es
+  una continuación, la consulta pasa a ser **la pregunta previa del usuario, SOLA**. Tres cosas
+  que costó aprender y conviene no re-descubrir:
+  1. **No se le pega el texto del seguimiento.** Medido: `"Hola como me registro"` recupera 4/4
+     con 0.859, y `"Hola como me registro sí"` solo 1/4 con 0.841. Las palabras de un acuse no
+     describen nada del corpus y dispersan el embedding. Una continuación no cambia el tema, así
+     que tampoco debe cambiar la evidencia; lo que cambia es lo que el REDACTOR dice sobre ella,
+     y para eso recibe el texto original más el historial.
+  2. **El emoji final no puede esconder la pregunta.** D-025 permite un emoji al cierre, así que
+     casi toda pregunta real del bot llega como "¿…el siguiente paso? 🚚" y un `endswith("?")` a
+     secas daba False: la regla de "responde a lo que preguntó el bot" no se activaba nunca.
+  3. **Una pregunta con botones NO abre turno de tema.** Si el último mensaje del bot lleva
+     `interaction` (quick replies, sí/no del asesor, formulario), lo que el usuario escriba y no
+     la responda es un tema NUEVO. Sin esto, "mejor dime cuánto es la comisión" escrito tras
+     "¿quieres un asesor?" heredaba el tema viejo y buscaba la pregunta equivocada.
+
+  Todo por reglas deterministas, sin llamada a modelo (no gasta cuota D-027). **No confundir con
+  D-028**: `flows.py` es estado persistido con botones; esto solo cambia la consulta y no guarda
+  nada.
 - **La taxonomía de tickets es una PROPUESTA, no la decisión.** D-008 sigue abierta y la
   cierran Silvana + Julio. Toda la taxonomía (los 12 `problem_type`, su categoría, su
   prioridad y sus datos mínimos) vive SOLO en `backend/tickets/taxonomy.py`, y el enum de

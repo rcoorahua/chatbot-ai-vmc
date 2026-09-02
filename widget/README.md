@@ -53,14 +53,21 @@ Qué verificar:
 - **Eventos del sistema**: un mensaje `sender_type=SYSTEM` (`TICKET_CLOSED`, `CASE_OPENED`,
   `CONVERSATION_CLOSED`…) se dibuja como nota de sistema en el hilo, estilo Intercom.
 - **Pedir asesor (D-029)**: "quiero hablar con un asesor" hace que Subastín ofrezca una
-  **tarjeta de formulario** debajo de su mensaje (asunto y detalle; al visitante le pide además
-  nombre, correo y teléfono opcional). Al enviarla: el visitante ve su misma conversación en
+  **tarjeta de formulario** centrada debajo de su mensaje. Al visitante se le pide en **dos
+  pasos**: primero nombre, correo y teléfono opcional con un botón "Siguiente" neutro, y luego
+  asunto y mensaje con el "Enviar al asesor" en color primario. El usuario autenticado cuyo JWT
+  ya trajo correo ve un **solo paso**. Si el bot se queda sin evidencia no muestra el formulario
+  de una: **pregunta** con botones sí/no y solo con el "sí" aparece. Al enviarla: el visitante ve su misma conversación en
   "Esperando asesor" con la invitación a crear cuenta; el usuario autenticado entra a un **caso
   nuevo** y su hilo con Subastín sigue respondiendo. La pestaña **Mensajes** del autenticado
   lista el hilo y sus casos con estado; un caso cerrado por el asesor queda de solo lectura con
   "Volver a Subastín" (el visitante ve "Nueva conversación", que abre otra sesión).
 - **Historial largo**: el hilo abre en los últimos 50 mensajes y arriba aparece "Ver mensajes
   anteriores" mientras quede historia.
+- **El saludo abre el hilo, no se repite**: "¡Hola! 👋..." es la primera burbuja de la
+  conversación. Minimizar y volver a abrir el panel **no** lo reinyecta al final: si ya
+  conversaste, el saludo sigue arriba (y con el historial paginado no se dibuja hasta cargarlo
+  entero, porque encima de una página parcial mentiría sobre dónde empezó la conversación).
 
 - **El bot responde** cuando corre el worker en otra terminal (`python -m scripts.run_ai_worker`,
   con `GEMINI_API_KEY`, `PINECONE_API_KEY` y `AI_JOBS_QUEUE_URL` en `.env`). Sin el worker, los

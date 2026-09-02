@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
-from backend.api import dev_auth
+from backend.api import dev_auth, request_log
 from backend.api.routers import advisor, chat, dashboard, dev
 from backend.core.config import get_settings
 from backend.core.observability import configure_logging
@@ -30,6 +30,12 @@ app.add_middleware(
 # authorizer esta en el API Gateway (T1) y este middleware no se instala (dev_auth.py).
 if dev_auth.should_install():
     app.add_middleware(dev_auth.DevCognitoAuthorizer)
+
+# RNF-006: una linea por peticion (metodo, ruta, estado, duracion) y el motivo de cada rechazo.
+# Va AL FINAL a proposito: `add_middleware` antepone, asi que el ultimo en agregarse es el mas
+# EXTERNO y ve todas las respuestas. Instalado antes quedaba por dentro del authorizer de dev y
+# sus 401 no dejaban rastro (se vio al probarlo: `/advisor/*` rechazado y ni una linea).
+request_log.install(app)
 
 app.include_router(chat.router)
 app.include_router(advisor.router)

@@ -221,6 +221,13 @@ handoff sigue las reglas de D-002.
 
 ---
 
+> **Nota (2026-09-02):** además de los flujos del corpus, `agent/flows.py` define
+> `HANDOFF_CONFIRM`, que **no sale de este mapeo**: es la pregunta de sí/no que el bot abre
+> cuando se queda sin evidencia, para no empujar el formulario de asesor sin preguntar
+> (revisión de D-029). Usa la misma maquinaria de estado por la misma razón — hay que recordar
+> que se preguntó algo y validar la respuesta contra ese paso — pero su resolución no consulta
+> el índice, así que no tiene consultas canónicas y vale solo para el turno siguiente.
+
 ## 8. Tipos de ticket que el corpus sugiere — INSUMO para D-008 (⚠️ propuesta, NO cierra la decisión)
 
 **D-008 (taxonomía de tickets) sigue ABIERTA y es de Silvana + Julio.** Esta sección es el

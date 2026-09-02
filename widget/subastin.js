@@ -71,8 +71,8 @@
     brand: "VMC Subastas",
     brandSub: "powered by SUBASTOP Co.",
     agent: "Subastín",
-    // El saludo entra como mensaje nuevo en CADA apertura del panel (ver renderMessages):
-    // el salto de linea separa el "hola" de la pregunta, como dos frases de un chat real.
+    // Abre la conversacion UNA vez (ver renderMessages): es el inicio del hilo, no un mensaje
+    // que llega. El salto de linea separa el "hola" de la pregunta, como dos frases reales.
     greetingAuth: (name) =>
       `¡Hola! 👋 ${name}.\n\nAhora estás hablando con Subastín. ¿Cómo puedo ayudarte?`,
     greetingAnon:
@@ -132,6 +132,12 @@
     formSending: "Enviando…",
     formFailed: "No se pudo enviar. Inténtalo de nuevo.",
     formRequired: "Completa este campo",
+    formNext: "Siguiente",
+    formBack: "Atrás",
+    formStepOf: (actual, total) => `Paso ${actual} de ${total}`,
+    // Titulo por paso. El servidor decide QUÉ campos van en cada uno (conversations/forms.py);
+    // el encabezado es copy de interfaz y vive aquí, como el resto de los textos.
+    formStepTitles: ["¿Con quién hablamos?", "¿En qué te ayudamos?"],
     noCases: "Cuando pidas un asesor, tu caso aparecerá aquí.",
     offlineStatus: "Sin conexión",
     caseOpenedFrom: (title) => (title ? `Abriste el caso «${title}»` : "Abriste un caso para un asesor"),
@@ -173,15 +179,10 @@
     open: false,
     // Arranca (y re-abre) SIEMPRE en mensajes: el home queda para quien navegue a el.
     view: "messages", // home | messages | help
-    // Ancla del saludo local: `greetingNonce` cambia en cada apertura para que la burbuja
-    // vuelva a entrar animada, y `greetingAt` (hora de la apertura) decide DONDE va en el
-    // hilo: el historial (timestamps anteriores) queda arriba y lo que llegue en esta sesion
-    // queda debajo. Por conteo fallaria: el historial carga async DESPUES de abrir.
-    greetingNonce: 0,
-    greetingAt: null,
-    // El saludo NO entra junto con el panel: primero abre el panel (su propia transicion) y
-    // ~400 ms despues "llega" el saludo con su fade — como un mensaje de verdad. Sin esta
-    // espera las dos animaciones se pisan y el saludo parece parte del panel.
+    // El saludo de una conversacion RECIEN abierta no aparece junto con el panel: primero
+    // abre el panel (su propia transicion) y ~400 ms despues "llega" con su fade, como un
+    // mensaje de verdad. Sin esa espera las dos animaciones se pisan y parece parte del
+    // panel. Solo aplica al hilo vacio: con historial el saludo ya esta arriba y no "llega".
     greetingVisible: false,
     greetingTimer: null,
     // Tope de caracteres del compositor. Se reemplaza con el que informa la sesion; este valor
@@ -226,10 +227,13 @@
     // Ultimo `last_message_at` visto por conversacion: con el panel cerrado, un caso que
     // avanzo desde entonces suma al contador del boton flotante.
     seenAt: {},
-    // Formulario de asesor en curso: borrador (sobrevive al re-render), error y envio.
+    // Formulario de asesor en curso: borrador (sobrevive al re-render), error, envio y el
+    // paso visible. El borrador guarda TODOS los campos, tambien los de pasos ya pasados:
+    // volver atras no puede perder lo escrito, y el envio manda el formulario completo.
     formDraft: {},
     formError: null,
     formBusy: false,
+    formStep: 0,
   };
 
   // ───────────────────────────────── Utilidades DOM ─────────────────────────────────
@@ -834,6 +838,7 @@
     state.seenAt = {};
     state.formDraft = {};
     state.formError = null;
+    state.formStep = 0;
     state.typingSince = null;
     storeSession(null);
   }
@@ -961,6 +966,7 @@
     state.unseenBelow = 0;
     state.stickToBottom = true;
     state.formError = null;
+    state.formStep = 0;
     state.view = "messages";
     state.unread = 0;
     render();
@@ -1107,6 +1113,42 @@
 
   // ───────────────────────── Formulario de asesor (D-029) ─────────────────────────
 
+  /** Los pasos que declara el servidor, en orden. Un formulario sin `step` (o con todos los
+   *  campos en el mismo) es UN paso: ahi el boton es directamente el de enviar. */
+  function formSteps(spec) {
+    const vistos = [];
+    for (const field of spec.fields) {
+      const paso = field.step || 1;
+      if (!vistos.includes(paso)) vistos.push(paso);
+    }
+    return vistos.sort((a, b) => a - b);
+  }
+
+  function fieldsOfStep(spec, paso) {
+    return spec.fields.filter((field) => (field.step || 1) === paso);
+  }
+
+  /** Primer campo obligatorio vacio de la lista, o null si estan todos. */
+  function missingIn(fields) {
+    for (const field of fields) {
+      if (field.required && !String(state.formDraft[field.name] || "").trim()) return field;
+    }
+    return null;
+  }
+
+  function advanceHandoff(spec) {
+    const pasos = formSteps(spec);
+    const falta = missingIn(fieldsOfStep(spec, pasos[state.formStep]));
+    if (falta) {
+      state.formError = { field: falta.name, message: TEXT.formRequired };
+      render();
+      return;
+    }
+    state.formError = null;
+    state.formStep = Math.min(state.formStep + 1, pasos.length - 1);
+    render();
+  }
+
   async function submitHandoff(spec) {
     if (state.formBusy) return;
     const values = {};
@@ -1114,7 +1156,10 @@
       const value = String(state.formDraft[field.name] || "").trim();
       if (value) values[field.name] = value;
       else if (field.required) {
+        // Un obligatorio vacio puede estar en un paso anterior (el usuario volvio y lo borro):
+        // se salta a SU paso, porque marcar un campo que no se ve no le dice nada a nadie.
         state.formError = { field: field.name, message: TEXT.formRequired };
+        state.formStep = formSteps(spec).indexOf(field.step || 1);
         render();
         return;
       }
@@ -1129,6 +1174,7 @@
       );
       state.formBusy = false;
       state.formDraft = {};
+      state.formStep = 0; // si mas adelante se ofrece otro, empieza por el principio
       const conv = data.conversation;
       if (conv.conversation_id === id) {
         // Anonimo: su misma conversacion ya espera al asesor; el sondeo trae lo nuevo.
@@ -1145,13 +1191,23 @@
     } catch (error) {
       state.formBusy = false;
       const detail = error.detail;
+      const campo = detail && typeof detail === "object" ? detail.field : null;
       state.formError = {
-        field: detail && typeof detail === "object" ? detail.field : null,
+        field: campo,
         message:
           (detail && typeof detail === "object" && detail.detail) ||
           (typeof detail === "string" ? detail : null) ||
           TEXT.formFailed,
       };
+      // El servidor valida el formulario ENTERO (formato del correo, largo del asunto): si lo
+      // que rechaza esta en un paso anterior, hay que llevar al usuario ahi o veria un error
+      // sobre un campo invisible.
+      if (campo) {
+        const conElError = spec.fields.find((field) => field.name === campo);
+        if (conElError) {
+          state.formStep = formSteps(spec).indexOf(conElError.step || 1);
+        }
+      }
       render();
     }
   }
@@ -1505,25 +1561,32 @@
     // de sistema o un separador de dia rompen el grupo, porque visualmente ya lo separan.
     let previo = null;
 
-    // Saludo local (no persistido) que entra como mensaje nuevo en CADA apertura del panel:
-    // el nonce de la apertura le da una clave fresca, asi firstRenderOf vuelve a animarlo.
-    // Se inserta despues del historial (timestamps anteriores a la apertura) y antes de lo
-    // que llegue en esta sesion, como la nota de "ahora hablas con..." de Intercom.
-    let saludoPendiente =
-      isThread(state.conversation) &&
-      (state.greetingVisible || (!state.open && state.messages.length === 0));
-    const saludo = {
-      sender_type: "BOT",
-      content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
-      created_at: null,
-      client_message_id: "greeting:" + state.greetingNonce,
-      isGreeting: true,
-    };
-    const pushSaludo = () => {
-      saludoPendiente = false;
-      items.push(renderBubble(saludo, true));
-      previo = saludo;
-    };
+    // Saludo local (no persistido): es el INICIO de la conversacion, asi que va ARRIBA del
+    // todo y una sola vez. Antes se re-inyectaba al final en cada apertura del panel y, a
+    // mitad de una charla, se leia como si el bot volviera a saludar de la nada.
+    // Dos condiciones:
+    //   - solo en el hilo del bot (un caso con asesor no se presenta como Subastin);
+    //   - solo con el historial COMPLETO cargado (`!state.hasMore`): encima de una pagina
+    //     parcial estaria mintiendo sobre donde empezo la conversacion.
+    // Con el hilo vacio espera al fade de la apertura (`greetingVisible`); con historial ya
+    // es contenido viejo y se dibuja de una.
+    const hayHistorial = state.messages.length > 0;
+    if (isThread(state.conversation) && !state.hasMore && (hayHistorial || state.greetingVisible)) {
+      items.push(
+        renderBubble(
+          {
+            sender_type: "BOT",
+            content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
+            created_at: null,
+            // Clave estable: `firstRenderOf` lo anima UNA vez por carga de pagina, no en
+            // cada render ni en cada apertura del panel.
+            client_message_id: "greeting",
+            isGreeting: true,
+          },
+          true
+        )
+      );
+    }
 
     if (state.hasMore) {
       items.push(
@@ -1537,9 +1600,6 @@
     }
     const ultimo = state.messages[state.messages.length - 1] || null;
     for (const message of state.messages) {
-      if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
-        pushSaludo();
-      }
       const diaAntes = lastDay;
       pushDay(message.created_at);
       if (message.sender_type === "SYSTEM" || message.message_type === "SYSTEM") {
@@ -1557,7 +1617,6 @@
         if (botones) items.push(botones);
       }
     }
-    if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
       if (draft.conversationId && draft.conversationId !== state.activeId) continue;
       pushDay(draft.createdAt);
@@ -1745,7 +1804,11 @@
     if (message.sender_type !== "BOT") return null;
     if (state.conversation && state.conversation.status !== "BOT_ATTENDING") return null;
     const error = state.formError;
-    const fields = interaction.fields.map((field) => {
+    const pasos = formSteps(interaction);
+    // El paso pudo quedar fuera de rango si el formulario cambio de forma entre renders.
+    const indice = Math.min(state.formStep, pasos.length - 1);
+    const ultimo = indice === pasos.length - 1;
+    const fields = fieldsOfStep(interaction, pasos[indice]).map((field) => {
       const invalid = error && error.field === field.name;
       const attrs = {
         name: field.name,
@@ -1755,6 +1818,14 @@
         autocomplete: field.type === "email" ? "email" : field.type === "tel" ? "tel" : field.name === "name" ? "name" : "off",
         oninput: (event) => {
           state.formDraft[field.name] = event.target.value;
+          // Al escribir se retira el error de ESE campo: dejarlo en rojo mientras lo corrigen
+          // es ruido. El del servidor se vuelve a evaluar al enviar.
+          if (state.formError && state.formError.field === field.name) {
+            state.formError = null;
+            event.target.classList.remove("is-invalid");
+            const aviso = event.target.closest(".form-card").querySelector(".form-error");
+            if (aviso) aviso.remove();
+          }
         },
       };
       const input =
@@ -1764,23 +1835,57 @@
       input.value = state.formDraft[field.name] || "";
       return h("label", {}, h("span", { text: field.label }), input);
     });
+    // Un solo paso (el autenticado que ya tiene correo): sin encabezado de progreso, que
+    // anunciaria un recorrido que no existe.
+    const cabecera = pasos.length > 1
+      ? h(
+          "div",
+          { class: "form-head" },
+          h("strong", { text: TEXT.formStepTitles[indice] || "" }),
+          h("small", { text: TEXT.formStepOf(indice + 1, pasos.length) })
+        )
+      : null;
     return h(
       "form",
       {
         class: "form-card" + (firstRenderOf("form:" + message.message_id) ? " is-new" : ""),
         onsubmit: (event) => {
           event.preventDefault();
-          submitHandoff(interaction);
+          if (ultimo) submitHandoff(interaction);
+          else advanceHandoff(interaction);
         },
       },
+      cabecera,
       fields,
       error ? h("p", { class: "form-error", text: error.message }) : null,
-      h("button", {
-        class: "qr qr-solid",
-        type: "submit",
-        disabled: state.formBusy ? "" : null,
-        text: state.formBusy ? TEXT.formSending : interaction.submit || TEXT.send,
-      })
+      h(
+        "div",
+        { class: "form-actions" },
+        indice > 0
+          ? h("button", {
+              class: "btn-plain",
+              type: "button",
+              text: TEXT.formBack,
+              onclick: () => {
+                state.formError = null;
+                state.formStep = indice - 1;
+                render();
+              },
+            })
+          : null,
+        // "Siguiente" es neutro y "Enviar" es primario a proposito: solo el ultimo boton
+        // manda algo al equipo, y tiene que verse distinto de un simple avanzar.
+        h("button", {
+          class: ultimo ? "qr qr-solid" : "qr btn-neutral",
+          type: "submit",
+          disabled: state.formBusy ? "" : null,
+          text: state.formBusy
+            ? TEXT.formSending
+            : ultimo
+              ? interaction.submit || TEXT.send
+              : TEXT.formNext,
+        })
+      )
     );
   }
 
@@ -2112,22 +2217,22 @@
     // con su animacion, en lugar de aparecer de golpe.
     if (!open) lastViewKey = null;
     if (open) {
-      // Directo a mensajes (sin pasar por el home) y con el saludo entrando como mensaje
-      // nuevo: nonce fresco = la burbuja se anima en CADA apertura, no solo la primera.
-      // Si un caso avanzo mientras estaba cerrado, se abre en la lista para que se vea.
+      // Directo a mensajes (sin pasar por el home). Si un caso avanzo mientras estaba
+      // cerrado, se abre en la lista para que se vea.
       state.view = !isAnonymous() && state.unread > 0 && hasOpenCase() ? "inbox" : "messages";
       state.unread = 0;
-      state.greetingNonce = Date.now();
-      state.greetingAt = new Date().toISOString();
       state.stickToBottom = true;
-      // El saludo llega DESPUES de que el panel termino de abrir (transicion de .38s):
-      // asi su fade se percibe como un mensaje entrante y no como parte de la apertura.
-      state.greetingVisible = false;
-      clearTimeout(state.greetingTimer);
-      state.greetingTimer = setTimeout(() => {
-        state.greetingVisible = true;
-        render();
-      }, 420);
+      // Conversacion recien empezada: el saludo entra DESPUES de que el panel termino de
+      // abrir (transicion de .38s), asi su fade se percibe como un mensaje y no como parte
+      // del panel. Con historial el saludo ya esta arriba y esto no cambia nada.
+      if (state.messages.length === 0) {
+        state.greetingVisible = false;
+        clearTimeout(state.greetingTimer);
+        state.greetingTimer = setTimeout(() => {
+          state.greetingVisible = true;
+          render();
+        }, 420);
+      }
       // Precarga del orbe WebGPU: compilar el shader recien cuando el usuario envia su primer
       // mensaje hacia que el indicador de "escribiendo" tardara en aparecer.
       ensureOrbGpu();
@@ -2456,11 +2561,28 @@
     .qr-solid { background: var(--vault-500); color: #fff; }
     .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
     /* ── Formulario de asesor (D-029): tarjeta bajo el mensaje del bot ── */
+    /* Centrada y no pegada al lado del bot: no es una burbuja mas del hilo, es una tarjeta
+       que pide la atencion del usuario mientras la contesta. */
     .form-card {
-      display: flex; flex-direction: column; gap: 10px; margin: 8px 0 2px; max-width: 92%;
-      background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px;
+      display: flex; flex-direction: column; gap: 10px; margin: 10px auto 2px;
+      align-self: center; width: 100%; max-width: 300px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px;
       box-shadow: var(--shadow-card);
     }
+    .form-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px; }
+    .form-head strong { font-size: 15px; }
+    .form-head small { color: var(--ink-faint); font-size: 12px; }
+    .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    /* Avanzar no es enviar: gris, sin peso. El primario se reserva para el envio real. */
+    .btn-neutral {
+      border-color: var(--line-strong); color: var(--ink-soft); background: var(--surface);
+    }
+    .btn-neutral:hover { background: var(--line); color: var(--ink); border-color: var(--line-strong); }
+    .btn-plain {
+      border: 0; background: none; color: var(--ink-faint); font: inherit; font-size: 13.5px;
+      padding: 8px 6px; cursor: pointer; margin-right: auto;
+    }
+    .btn-plain:hover { color: var(--vault-600); }
     .form-card.is-new { animation: greeting-in .4s var(--ease-soft) both; }
     .form-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
     .form-card input, .form-card textarea {
@@ -2470,7 +2592,6 @@
     .form-card input:focus, .form-card textarea:focus { outline: none; border-color: var(--vault-500); }
     .form-card .is-invalid { border-color: #d64545; }
     .form-card textarea { min-height: 72px; resize: vertical; }
-    .form-card .qr { align-self: flex-end; }
     .form-error { margin: 0; color: #8a1c12; font-size: 12.5px; }
     .banner-info { background: rgba(132, 96, 229, .08); color: var(--vault-700); }
     .status-dot.is-off { background: #b3b3b3; animation: none; box-shadow: none; }
