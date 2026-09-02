@@ -272,12 +272,17 @@ HANDOFF_OFFER_RESPONSE = (
     "Completa estos datos para que pueda revisar tu caso."
 )
 
-# AC-002 (FAQ sin evidencia): se reconoce el limite y se ofrece el asesor en el mismo mensaje.
-# Dos mensajes seguidos del bot ("no se" y luego "te derivo") leen como dos fallos; uno solo
-# lee como una atencion. Vale para anonimo y autenticado: ambos pueden derivar (D-029).
-FAQ_NO_EVIDENCE_OFFER_RESPONSE = (
+# AC-002 (FAQ sin evidencia). Revisado el 2026-09-02: antes esto venia con el formulario
+# pegado y el usuario se encontraba pidiendo asesor sin haberlo pedido. Ahora PREGUNTA, con
+# botones de si/no (flujo HANDOFF_CONFIRM); el formulario sale solo si contesta que si.
+FAQ_NO_EVIDENCE_CONFIRM_RESPONSE = (
     "No tengo ese dato a la mano y prefiero no darte información incorrecta 🙏 "
-    "Si quieres, completa estos datos y un asesor del equipo lo revisa contigo."
+    "¿Quieres que te conecte con un asesor del equipo?"
+)
+
+# El usuario dijo que NO al asesor: se cierra sin insistir y se deja la puerta abierta.
+HANDOFF_DECLINED_RESPONSE = (
+    "Listo, lo dejamos ahí 🙂 Si necesitas otra cosa de VMC Subastas, escríbeme por aquí."
 )
 
 # Caso creado (autenticado): primer mensaje del bot DENTRO del caso. El "cuanto tarda" no se

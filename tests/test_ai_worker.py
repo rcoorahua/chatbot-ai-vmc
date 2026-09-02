@@ -5,8 +5,11 @@ Criterios:
          el aviso de repeticion sale una vez y a la siguiente el bot calla
   AC-W2  debounce (D-020): el job de un mensaje con otro mas nuevo detras se salta, y el job
          del ultimo responde la rafaga completa en UNA llamada
-  AC-W3  FAQ con evidencia responde con el redactor; sin evidencia NO inventa: ofrece el
-         formulario de asesor (AC-002 con D-029) y el bot sigue encendido hasta que lo envien
+  AC-W3  FAQ con evidencia responde con el redactor; sin evidencia NO inventa: PREGUNTA si
+         quiere un asesor (botones si/no) y solo con el "si" sale el formulario. El bot sigue
+         encendido en todo el camino
+  AC-W8  continuidad (2026-09-02): un mensaje que solo tiene sentido pegado al anterior ("ya
+         estoy ahi") se busca en el indice CON la pregunta previa del usuario
   AC-W4  pedir asesor ofrece el formulario (tarjeta HANDOFF_FORM): al anonimo le pide nombre
          y correo (RF-003), al autenticado solo asunto y detalle (y correo si el JWT no lo
          trajo). La derivacion real la hace POST /chat/.../handoff, no el worker
@@ -132,6 +135,23 @@ def con_rag(monkeypatch):
         lambda text, **kwargs: RagResult(relevant=[fragmento], discarded=[], threshold=0.84),
     )
     return fragmento
+
+
+@pytest.fixture
+def consultas_rag(monkeypatch):
+    """Registra el TEXTO con el que se consulta el indice: es lo que cambia la continuidad."""
+    from backend.agent.rag import Fragment, RagResult
+
+    vistas: list[str] = []
+    fragmento = Fragment(text="Para registrarte, ingresa a vmcsubastas.com.",
+                         topic="Registro", score=0.9)
+
+    def espia(text, **kwargs):
+        vistas.append(text)
+        return RagResult(relevant=[fragmento], discarded=[], threshold=0.84)
+
+    monkeypatch.setattr(ai_worker.rag, "retrieve", espia)
+    return vistas
 
 
 def _conversacion(limpiar, *, autenticada=True):
@@ -305,27 +325,36 @@ def _formulario_ofrecido(conversation_id):
     return ultima, [f["name"] for f in interaction["fields"]]
 
 
-def test_faq_sin_evidencia_ofrece_el_formulario_en_vez_de_inventar(
-    limpiar, tablas, fake_llm, sin_rag
-):
-    """AC-002 con D-029: la recuperacion no trae nada → se ofrece el asesor (tarjeta), nunca
-    una respuesta generada; el bot sigue encendido hasta que el usuario envie el formulario."""
+def _confirmacion_ofrecida(conversation_id):
+    """La ultima respuesta del bot pregunta por el asesor con botones si/no."""
+    ultima = _respuestas_bot(conversation_id)[-1]
+    interaction = (ultima.metadata or {}).get("interaction") or {}
+    assert interaction.get("action_id") == "CONFIRM_HANDOFF", ultima.metadata
+    return ultima, [o["value"] for o in interaction["options"]]
+
+
+def test_faq_sin_evidencia_pregunta_antes_de_derivar(limpiar, tablas, fake_llm, sin_rag):
+    """AC-002 con D-029 revisada (2026-09-02): la recuperacion no trae nada → el bot lo
+    reconoce y PREGUNTA si quiere un asesor. Nada de respuesta generada y nada de formulario
+    sin pedirlo; el bot sigue encendido."""
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
-    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
-    assert ultima.content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
-    # La identidad de prueba no trae correo: el formulario lo pide ademas de asunto y detalle.
-    assert campos == ["email", "subject", "detail"]
+    assert actual.active_flow == "HANDOFF_CONFIRM"
+    ultima, valores = _confirmacion_ofrecida(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
+    assert valores == ["YES", "NO"]
+    interaction = (ultima.metadata or {}).get("interaction") or {}
+    assert interaction["type"] == "QUICK_REPLIES", "el widget ya sabe dibujar estos botones"
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)
 
     respuesta = next(
         u for u in _usos(tablas, conversation.conversation_id)
         if u["execution_type"] == "RESPONSE"
     )
-    assert respuesta["handoff_triggered"] is True
+    assert respuesta["handoff_triggered"] is True, "el caso termino proponiendo un humano"
     # Aunque no hubo evidencia, lo que el indice trajo bajo el umbral queda registrado con
     # `relevant: False`: es lo que la consola de dev muestra para juzgar el retrieval.
     assert respuesta["rag_used"] is False and respuesta["rag_results_count"] == 0
@@ -333,16 +362,74 @@ def test_faq_sin_evidencia_ofrece_el_formulario_en_vez_de_inventar(
     assert descartado["topic"] == "Retiro de saldo" and descartado["relevant"] is False
 
 
-def test_faq_sin_evidencia_del_anonimo_ofrece_el_formulario_con_contacto(
+def test_decir_que_si_a_la_confirmacion_saca_el_formulario(limpiar, fake_llm, sin_rag):
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+
+    _atiende(_escribe(conversation, "si"))
+
+    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
+    assert campos == ["email", "subject", "detail"]
+    actual = repository.get_conversation(conversation.conversation_id)
+    assert actual.active_flow is None, "la pregunta ya se contesto"
+    assert actual.status == "BOT_ATTENDING", "derivar es cosa del formulario, no del worker"
+
+
+def test_decir_que_no_cierra_sin_insistir(limpiar, fake_llm, sin_rag):
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+
+    _atiende(_escribe(conversation, "no gracias"))
+
+    respuestas = _respuestas_bot(conversation.conversation_id)
+    assert respuestas[-1].content == prompts.HANDOFF_DECLINED_RESPONSE
+    assert (respuestas[-1].metadata or {}).get("interaction") is None, "sin formulario"
+    assert repository.get_conversation(conversation.conversation_id).active_flow is None
+
+
+def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
+    limpiar, fake_llm, monkeypatch
+):
+    """Una pregunta de si/no vale para el turno siguiente. Si el usuario la ignora y pregunta
+    otra cosa, se limpia: un "si" de mañana no puede derivar por un tema ya olvidado."""
+    from backend.agent.rag import Fragment, RagResult
+
+    # Sin evidencia para lo primero (dispara la pregunta) y con evidencia para lo segundo.
+    fragmento = Fragment(text="La comision es el 3.9%.", topic="Comision", score=0.9)
+
+    def rag_selectivo(text, **kwargs):
+        if "comision" in text.lower():
+            return RagResult(relevant=[fragmento], discarded=[], threshold=0.84)
+        return RagResult(relevant=[], discarded=[], threshold=0.84)
+
+    monkeypatch.setattr(ai_worker.rag, "retrieve", rag_selectivo)
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+    assert conversation.active_flow == "HANDOFF_CONFIRM"
+
+    _atiende(_escribe(conversation, "mejor dime cuanto es la comision"))
+
+    actual = repository.get_conversation(conversation.conversation_id)
+    assert actual.active_flow is None, "la confirmacion se descarto"
+    assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
+
+
+def test_el_anonimo_tambien_decide_y_su_formulario_pide_contacto(
     limpiar, fake_llm, sin_rag
 ):
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    ultima, _valores = _confirmacion_ofrecida(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
 
-    actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
-    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
-    assert ultima.content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
+    conversation = repository.get_conversation(conversation.conversation_id)
+    _atiende(_escribe(conversation, "si"))
+
+    _ultima, campos = _formulario_ofrecido(conversation.conversation_id)
     assert campos == ["name", "email", "phone", "subject", "detail"], "RF-003: contacto"
 
 
@@ -523,7 +610,7 @@ def test_una_cifra_sin_respaldo_no_llega_al_usuario_y_ofrece_asesor(
 
     contenidos = [m.content for m in _hilo(conversation.conversation_id)]
     assert fake_llm.answer not in contenidos
-    assert prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE in contenidos
+    assert prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE in contenidos
     assert repository.get_conversation(conversation.conversation_id).status == "BOT_ATTENDING"
     respuesta = next(
         u for u in _usos(tablas, conversation.conversation_id)
@@ -546,3 +633,30 @@ def test_el_intento_repetido_de_manipulacion_recibe_aviso_y_luego_silencio(
         prompts.GUARDRAIL_INJECTION_RESPONSE,
         prompts.TRIVIAL_REPEAT_RESPONSE,
     ]
+
+
+# ───────────────────────────── AC-W8: continuidad de la charla ─────────────────────────────
+
+
+def test_una_continuacion_se_busca_con_la_pregunta_previa(limpiar, fake_llm, consultas_rag):
+    """El bug del 2026-09-02: el bot explicaba el registro paso a paso, el usuario respondia
+    "ya estoy ahi" y el caso derivaba por falta de evidencia. La consulta al indice era
+    literalmente "ya estoy ahi", que no se parece a nada del corpus."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "como me registro en VMC?"))
+    assert consultas_rag[-1] == "como me registro en VMC?"
+
+    _atiende(_escribe(conversation, "ya estoy ahi"))
+
+    assert consultas_rag[-1] == "como me registro en VMC? ya estoy ahi"
+    # Y con evidencia, responde el redactor en vez de proponer un asesor.
+    assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
+
+
+def test_una_pregunta_nueva_no_arrastra_el_tema_anterior(limpiar, fake_llm, consultas_rag):
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "como me registro en VMC?"))
+
+    _atiende(_escribe(conversation, "cuanto es la comision?"))
+
+    assert consultas_rag[-1] == "cuanto es la comision?", "son dos temas distintos"
