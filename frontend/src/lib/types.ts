@@ -52,19 +52,110 @@ export interface Conversation {
 export interface Message {
   conversation_id: string;
   message_id: string;
+  /** SK real del mensaje (`ThreadOut.next_before/next_after` la usan para paginar/sondear). */
+  message_key: string;
   sender_type: SenderType;
   sender_id: string | null;
   message_type: MessageType;
   status: MessageStatus;
   content: string | null;
+  client_message_id: string | null;
   attachment: { url: string; content_type?: string } | null;
+  /** D-029: valores estructurados del formulario + transcripción de origen (FORM_RESPONSE). */
+  metadata: Record<string, unknown> | null;
   created_at: string;
 }
 
+/** Espejo de `backend/tickets/taxonomy.py` (StrEnum) — D-008 sigue ABIERTA, es propuesta. */
+export type ProblemType =
+  | "PAYMENT_ISSUE"
+  | "REFUND_REQUEST"
+  | "DEBT_DISPUTE"
+  | "SANCTION_APPEAL"
+  | "ENABLEMENT_ISSUE"
+  | "RECEIPT_REQUEST"
+  | "ACCOUNT_ACCESS"
+  | "RISK_CATEGORY_DISPUTE"
+  | "VISIT_ISSUE"
+  | "PLATFORM_BUG"
+  | "FORMAL_COMPLAINT"
+  | "OTHER";
+
+export type TicketCategory = "BILLING" | "COMPLIANCE" | "PURCHASE" | "ACCOUNT" | "LOGISTICS" | "TECHNICAL" | "GENERAL";
+
+export type TicketPriority = "HIGH" | "MEDIUM" | "LOW";
+
+export type TicketTag = "EN_VIVO" | "NEGOCIABLE" | "GANADOR" | "PLAZO_CORRIENDO" | "RECURRENTE";
+
+export type TicketStatus = "PENDING" | "IN_PROGRESS" | "CLOSED";
+
+/** Quién puso el `problem_type` actual — el dato con el que se mide si la propuesta de D-008 sirve. */
+export type ClassificationSource = "RULES" | "ADVISOR";
+
+/** Espejo de `TicketOut` (backend/api/routers/advisor.py) — 1:1 con la conversación escalada. */
+export interface Ticket {
+  ticket_id: string;
+  conversation_id: string;
+  status: TicketStatus;
+  user_type: UserType;
+  user_id: string | null;
+  user_email: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  problem_type: ProblemType;
+  category: TicketCategory;
+  priority: TicketPriority;
+  tags: TicketTag[];
+  classification_source: ClassificationSource;
+  classification_rule: string | null;
+  title: string | null;
+  description: string | null;
+  collected_data: Record<string, unknown>;
+  missing_data: string[];
+  handoff_reason: string | null;
+  assigned_advisor_id: string | null;
+  assigned_at: string | null;
+  resolution: string | null;
+  /** A diferencia de `Conversation.closed_by` (ADVISOR/AUTO), aquí es el `advisor_id` real. */
+  closed_by: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+/** Un `problem_type` de `GET /advisor/taxonomy`, con la ayuda de contexto para el select. */
+export interface TaxonomyProblemType {
+  problem_type: ProblemType;
+  category: TicketCategory;
+  priority: TicketPriority;
+  when: string;
+  required: Array<{ name: string; label: string }>;
+}
+
+/** `GET /advisor/taxonomy` completo — `proposal: true` mientras D-008 siga abierta. */
+export interface TaxonomyCatalog {
+  proposal: boolean;
+  decision: string;
+  problem_types: TaxonomyProblemType[];
+  categories: TicketCategory[];
+  priorities: TicketPriority[];
+  tags: TicketTag[];
+}
+
+/** Espejo de `AdvisorOut` (`GET /advisor/me`) — el asesor real detrás del JWT. */
+export interface Advisor {
+  advisor_id: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  status: "INVITED" | "ACTIVE" | "DISABLED";
+  last_login_at: string | null;
+}
+
 /**
- * Advisor real (backend/advisors/models.py) es un stub — status INVITED/ACTIVE/DISABLED,
- * role ADVISOR (RF-007). No hay campo `name` definido todavía: se usa uno de sesión aquí
- * solo para el saludo del header, no como contrato.
+ * Sesión mock (pre-integración): se usa hoy para el saludo del header sin llamar a la API.
+ * Se reemplaza por `Advisor` (arriba) al conectar `GET /advisor/me` a las páginas.
  */
 export interface AdvisorSession {
   advisor_id: string;
