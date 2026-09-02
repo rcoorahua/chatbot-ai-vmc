@@ -73,6 +73,13 @@ def limpiar(tablas):
             tablas["messages"].delete_item(
                 Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
             )
+        # Derivar abre un ticket (RF-023): sin borrarlo aqui queda en el GSI de estado y
+        # rompe las pruebas de lectura que cuentan los pendientes del dataset base.
+        for item in tablas["tickets"].query(
+            IndexName="gsi1_conversation",
+            KeyConditionExpression=Key("conversation_id").eq(conversation_id),
+        )["Items"]:
+            tablas["tickets"].delete_item(Key={"ticket_id": item["ticket_id"]})
         tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
     for advisor_id in asesores:
         tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
