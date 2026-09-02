@@ -48,6 +48,22 @@ export class ApiError extends Error {
   }
 }
 
+/** Mensaje legible para mostrar tal cual en la UI (no un log técnico). */
+export function apiErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      return "Sesión de asesor inválida o vencida. (dev: pega un token nuevo con setAdvisorToken() en la consola).";
+    }
+    if (typeof err.detail === "string") return err.detail;
+    if (err.detail && typeof err.detail === "object" && "detail" in err.detail) {
+      const nested = (err.detail as { detail: unknown }).detail;
+      if (typeof nested === "string") return nested;
+    }
+    return err.message;
+  }
+  return "No se pudo conectar con el servidor.";
+}
+
 /** `undefined`/`false` se omiten — así los callers pasan el objeto de filtros tal cual. */
 function query(params: object): string {
   const search = new URLSearchParams();
@@ -69,7 +85,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, body);
+  // FastAPI envuelve HTTPException(status, detail) como {"detail": detail} — detail puede ser
+  // un string (404 normal) o un objeto (409 de take(), que además trae `conversation`).
+  if (!res.ok) throw new ApiError(res.status, body && typeof body === "object" && "detail" in body ? body.detail : body);
   return body as T;
 }
 

@@ -1,12 +1,12 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import QueueRow from "@/components/QueueRow";
-import { CURRENT_ADVISOR, MOCK_CONVERSATIONS } from "@/lib/mock-data";
-import { MOCK_NOW_MS } from "@/lib/format";
-import type { ConversationStatus } from "@/lib/types";
+import { apiErrorMessage, getConversations } from "@/lib/api";
+import { useAdvisor } from "@/lib/advisor-context";
+import type { Conversation, ConversationStatus } from "@/lib/types";
 
 const FILTERS: Array<{ label: string; statuses: ConversationStatus[] | null; param: string | null }> = [
   { label: "Todas", statuses: null, param: null },
@@ -47,6 +47,7 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { advisor } = useAdvisor();
 
   const activeId = pathname.startsWith("/advisor/inbox/") ? pathname.split("/advisor/inbox/")[1] : undefined;
   const estado = searchParams.get("estado");
@@ -54,6 +55,45 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
     0,
     FILTERS.findIndex((f) => f.param === estado),
   );
+
+  // `result` solo se escribe desde dentro de los callbacks de la promesa (nunca síncrono en el
+  // cuerpo del efecto — react-hooks/set-state-in-effect). loading/conversations/error se DERIVAN
+  // comparando `result.key` contra el filtro vigente, en vez de guardarse aparte.
+  const [result, setResult] = useState<
+    { key: number; conversations: Conversation[] } | { key: number; error: string } | null
+  >(null);
+  const [now] = useState(() => Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    getConversations({ status: FILTERS[filterIndex].statuses?.[0], limit: 100 })
+      .then((found) => {
+        if (cancelled) return;
+        // El backend no promete un orden total entre estados abiertos y cerrados — el mismo
+        // criterio que ya usaba el mock: abiertos primero (más reciente arriba), cerrados
+        // después (más reciente arriba también, no al revés).
+        const sorted = [...found].sort((a, b) => {
+          const aOpen = a.status !== "CLOSED";
+          const bOpen = b.status !== "CLOSED";
+          if (aOpen !== bOpen) return aOpen ? -1 : 1;
+          return aOpen
+            ? a.last_message_at.localeCompare(b.last_message_at)
+            : b.last_message_at.localeCompare(a.last_message_at);
+        });
+        setResult({ key: filterIndex, conversations: sorted });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setResult({ key: filterIndex, error: apiErrorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filterIndex]);
+
+  const loading = result?.key !== filterIndex;
+  const conversations = !loading && result && "conversations" in result ? result.conversations : [];
+  const error = !loading && result && "error" in result ? result.error : null;
 
   function selectFilter(index: number): void {
     const params = new URLSearchParams(searchParams.toString());
@@ -63,18 +103,6 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
     const query = params.toString();
     router.replace(`${pathname}${query ? `?${query}` : ""}`, { scroll: false });
   }
-
-  const conversations = MOCK_CONVERSATIONS.filter((conv) => {
-    const statuses = FILTERS[filterIndex].statuses;
-    return statuses === null || statuses.includes(conv.status);
-  }).sort((a, b) => {
-    const aOpen = a.status !== "CLOSED";
-    const bOpen = b.status !== "CLOSED";
-    if (aOpen !== bOpen) return aOpen ? -1 : 1;
-    return aOpen
-      ? a.last_message_at.localeCompare(b.last_message_at)
-      : b.last_message_at.localeCompare(a.last_message_at);
-  });
 
   const topUrgentId =
     conversations.find((c) => c.status === "PENDING_ADVISOR" && !c.assigned_advisor_id)?.conversation_id ?? null;
@@ -92,7 +120,7 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
       >
         <div className="flex items-center justify-between px-2 pt-1">
           <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Cola de casos</h2>
-          <span className="text-xs font-semibold text-neutral-400">{MOCK_CONVERSATIONS.length}</span>
+          <span className="text-xs font-semibold text-neutral-400">{conversations.length}</span>
         </div>
         {/* TabSelector de Concorde impone 83px mínimos por pestaña — 4 no entran en un rail
             angosto sin cortar "Cerradas" sin aviso. Grid de 4 columnas iguales en vez de flex:
@@ -121,7 +149,15 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
           })}
         </div>
         <div className="flex min-h-0 flex-1 flex-col divide-y divide-black/5 overflow-y-auto">
-          {conversations.length === 0 ? (
+          {loading ? (
+            <div className="flex flex-col gap-2 p-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-14 animate-pulse rounded-xl bg-neutral-100" />
+              ))}
+            </div>
+          ) : error ? (
+            <p className="px-3 py-8 text-center text-sm text-[#9A4A0F]">{error}</p>
+          ) : conversations.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-neutral-500">
               Nada en &quot;{FILTERS[filterIndex].label}&quot; ahora mismo.
             </p>
@@ -132,8 +168,8 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
                 conversation={conv}
                 active={conv.conversation_id === activeId}
                 mostUrgent={conv.conversation_id === topUrgentId}
-                now={MOCK_NOW_MS}
-                isMine={conv.assigned_advisor_id === CURRENT_ADVISOR.advisor_id}
+                now={now}
+                isMine={conv.assigned_advisor_id === advisor?.advisor_id}
               />
             ))
           )}

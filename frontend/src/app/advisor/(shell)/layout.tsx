@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Button, { UserIcon } from "@/concorde/components/Button";
 import { InboxIcon, ChartIcon } from "@/components/icons";
-import { CURRENT_ADVISOR } from "@/lib/mock-data";
+import { AdvisorProvider, useAdvisor } from "@/lib/advisor-context";
 
 const NAV_ITEMS = [
   { href: "/advisor/inbox", label: "Bandeja", icon: InboxIcon },
@@ -18,7 +18,16 @@ const NAV_ITEMS = [
  * (RF-047 pidió cambiarlo). Botones/avatares vienen de Concorde para marca consistente.
  */
 export default function AdvisorShellLayout({ children }: { children: ReactNode }) {
+  return (
+    <AdvisorProvider>
+      <ShellChrome>{children}</ShellChrome>
+    </AdvisorProvider>
+  );
+}
+
+function ShellChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { advisor, error } = useAdvisor();
 
   return (
     <div className="flex min-h-screen flex-col overflow-x-hidden bg-[#f7f7fb]">
@@ -47,7 +56,11 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
             })}
           </nav>
         </div>
-        <Button variant="sm-logged-in" icon={<UserIcon />} username={CURRENT_ADVISOR.display_name} />
+        <Button
+          variant="sm-logged-in"
+          icon={<UserIcon />}
+          username={error ? "Sin sesión" : (advisor?.name ?? advisor?.email ?? "…")}
+        />
       </header>
       <main className="flex min-w-0 flex-1 flex-col p-4 sm:p-6">{children}</main>
     </div>
