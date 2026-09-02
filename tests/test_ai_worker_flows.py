@@ -482,7 +482,9 @@ def test_el_flujo_vencido_se_limpia_y_sigue_el_pipeline_normal(limpiar, tablas, 
 # ───────────────────────────── AC-F8: handoff y guardrail limpian el flujo ─────────────────────
 
 
-def test_pedir_asesor_con_flujo_activo_deriva_y_limpia_el_flujo(limpiar, tablas, sin_llm, sin_rag):
+def test_pedir_asesor_con_flujo_activo_ofrece_el_formulario_y_limpia_el_flujo(
+    limpiar, tablas, sin_llm, sin_rag
+):
     """MAPEO.md §4.2: con un humano en camino, ningun flujo se queda esperando datos."""
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "quiero participar"))
@@ -492,7 +494,10 @@ def test_pedir_asesor_con_flujo_activo_deriva_y_limpia_el_flujo(limpiar, tablas,
     _atiende(_escribe(conversation, "quiero hablar con un asesor por favor"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "PENDING_ADVISOR" and actual.bot_enabled is False
+    # D-029: el worker ofrece el formulario (el bot sigue encendido); deriva al enviarlo.
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
+    ultima = _respuestas_bot(conversation.conversation_id)[-1]
+    assert (ultima.metadata or {}).get("interaction", {}).get("type") == "HANDOFF_FORM"
     assert actual.active_flow is None
     assert actual.flow_version == activa.flow_version + 1
 
@@ -595,21 +600,22 @@ def test_el_flujo_funciona_igual_para_el_anonimo(limpiar, tablas, sin_llm, sin_r
     assert actual.active_flow == "PARTICIPATION"
 
 
-def test_el_anonimo_sin_evidencia_al_resolver_invita_a_login_no_deriva(
+def test_el_anonimo_sin_evidencia_al_resolver_recibe_el_formulario_no_deriva(
     limpiar, tablas, fake_llm, sin_rag
 ):
-    """D-002: el anonimo nunca deriva. Si el paso se resuelve pero el RAG no trae evidencia
-    (aqui via `sin_rag`), recibe la invitacion a iniciar sesion — no un handoff — y el flujo
-    igual se limpia (la limpieza ocurre ANTES de saber si hay evidencia, ai_worker._handle_flow)."""
+    """D-029: si el paso se resuelve pero el RAG no trae evidencia (aqui via `sin_rag`), el
+    bot ofrece el formulario de asesor — la derivacion la hace el usuario al enviarlo — y el
+    flujo igual se limpia (la limpieza ocurre ANTES de saber si hay evidencia)."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "quiero participar"))
 
     _atiende(_escribe(conversation, "en vivo"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, "D-002: no deriva"
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, "no deriva solo"
     assert actual.active_flow is None, "se limpio igual al resolver el paso"
 
     respuestas = _respuestas_bot(conversation.conversation_id)
-    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE
+    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
+    assert (respuestas[-1].metadata or {}).get("interaction", {}).get("type") == "HANDOFF_FORM"
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)

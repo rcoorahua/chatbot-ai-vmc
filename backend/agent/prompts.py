@@ -264,11 +264,35 @@ CATALOG_FALLBACK_RESPONSE = (
     "Si quieres, también te conecto con un asesor para que te ayude a buscar."
 )
 
-# Handoff iniciado (RF-022): confirmacion al usuario. El "cuanto tarda" no se promete: depende
-# de la bandeja, y prometer un plazo que no controlamos es inventar.
-HANDOFF_STARTED_RESPONSE = (
-    "Listo, te conecto con un asesor del equipo 🙌 "
-    "Mientras tanto puedes dejar aquí cualquier detalle extra: el asesor verá toda la conversación."
+# D-029 (2026-09-02): pedir asesor ya no deriva de inmediato — el bot OFRECE el formulario
+# (tarjeta con asunto y detalle; nombre, correo y telefono si es anonimo, RF-003) y la
+# derivacion ocurre cuando el usuario lo envia. Mientras tanto el bot sigue atendiendo.
+HANDOFF_OFFER_RESPONSE = (
+    "Claro, te conecto con un asesor del equipo 🙌 "
+    "Completa estos datos para que pueda revisar tu caso."
+)
+
+# AC-002 (FAQ sin evidencia): se reconoce el limite y se ofrece el asesor en el mismo mensaje.
+# Dos mensajes seguidos del bot ("no se" y luego "te derivo") leen como dos fallos; uno solo
+# lee como una atencion. Vale para anonimo y autenticado: ambos pueden derivar (D-029).
+FAQ_NO_EVIDENCE_OFFER_RESPONSE = (
+    "No tengo ese dato a la mano y prefiero no darte información incorrecta 🙏 "
+    "Si quieres, completa estos datos y un asesor del equipo lo revisa contigo."
+)
+
+# Caso creado (autenticado): primer mensaje del bot DENTRO del caso. El "cuanto tarda" no se
+# promete: depende de la bandeja, y prometer un plazo que no controlamos es inventar.
+HANDOFF_CASE_CONFIRMATION = (
+    "Listo, tu caso quedó registrado y un asesor te responderá por aquí mismo 🙌 "
+    "Mientras tanto puedes dejar más detalles en este hilo; el asesor los verá todos."
+)
+
+# Handoff del anonimo (en su unica conversacion): se le dice como lo van a contactar y se le
+# invita a crear cuenta, porque sin cuenta esta conversacion no se conserva (RF-004 / D-018).
+HANDOFF_ANON_CONFIRMATION = (
+    "Listo, un asesor se comunicará contigo por aquí o al correo que dejaste 🙌 "
+    "Si cierras esta pestaña la conversación no se conserva: crea tu cuenta en VMC Subastas "
+    "para guardar tus conversaciones y hablar con un asesor cuando quieras."
 )
 
 # RF-027 / AC-004: el usuario insiste mientras espera. Se envia UNA sola vez por periodo de
@@ -276,30 +300,6 @@ HANDOFF_STARTED_RESPONSE = (
 HANDOFF_WAIT_RESPONSE = (
     "Tu solicitud ya está con el equipo y un asesor te responderá por aquí mismo 🙂 "
     "Todo lo que escribas mientras tanto le va a llegar."
-)
-
-# D-002: el anonimo no deriva (no hay forma de retomar su caso dias despues). Se le invita a
-# iniciar sesion.
-ANONYMOUS_ADVISOR_RESPONSE = (
-    "Para conectarte con un asesor necesito que inicies sesión en VMC Subastas 🔐 "
-    "Así tu caso queda asociado a tu cuenta y podemos darte seguimiento. "
-    "Entra a tu cuenta y vuelve a escribirme por aquí."
-)
-
-# AC-002 (FAQ sin evidencia, usuario autenticado): se reconoce el limite y se deriva de una
-# vez, en el mismo mensaje. Dos mensajes seguidos del bot ("no se" y luego "te derivo") leen
-# como dos fallos; uno solo lee como una atencion.
-FAQ_NO_EVIDENCE_HANDOFF_RESPONSE = (
-    "No tengo ese dato a la mano y prefiero no darte información incorrecta, "
-    "así que te conecto con un asesor del equipo 🙌 "
-    "Deja aquí cualquier detalle extra: el asesor verá toda la conversación."
-)
-
-# FAQ sin evidencia para el ANONIMO: no puede derivar (D-002), se le invita a iniciar sesion.
-FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE = (
-    "No tengo ese dato a la mano y prefiero no darte información incorrecta 🙏 "
-    "Para conectarte con un asesor, inicia sesión en VMC Subastas y vuelve a escribirme: "
-    "así tu caso queda asociado a tu cuenta."
 )
 
 # T-09 / D-027 (revisada 2026-09-01): tope de ejecuciones de IA alcanzado. Respuesta FIJA (no
