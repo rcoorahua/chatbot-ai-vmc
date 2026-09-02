@@ -340,14 +340,28 @@ class SubastinStack(Stack):
             jwt_audience=[user_pool_client.user_pool_client_id],
         )
 
-        # /advisor/* y /dashboard/* exigen JWT de Cognito EN EL GATEWAY:
-        # sin token valido, la Lambda ni siquiera se invoca.
-        http_api.add_routes(
-            path="/advisor/{proxy+}", integration=api_integration, authorizer=cognito_authorizer
-        )
-        http_api.add_routes(
-            path="/dashboard/{proxy+}", integration=api_integration, authorizer=cognito_authorizer
-        )
+        # /advisor/* y /dashboard/* exigen JWT de Cognito EN EL GATEWAY: sin token valido, la
+        # Lambda ni siquiera se invoca. `add_routes` sin `methods` es ANY (incluye OPTIONS) —
+        # el preflight CORS del navegador NUNCA manda Authorization, asi que el authorizer lo
+        # rechazaria con 401 antes de que FastAPI (CORSMiddleware) pueda responderlo, y el
+        # panel del asesor (cross-origin: Vercel/Amplify vs. la URL del API) quedaria roto en
+        # stage/prod aunque funcione en local, donde el dev_auth de FastAPI ya deja pasar
+        # OPTIONS (DETAILS.md §4.3). OPTIONS va en su propia ruta, sin authorizer.
+        PROTECTED_METHODS = [
+            apigwv2.HttpMethod.GET,
+            apigwv2.HttpMethod.POST,
+            apigwv2.HttpMethod.PATCH,
+        ]
+        for proxy_path in ("/advisor/{proxy+}", "/dashboard/{proxy+}"):
+            http_api.add_routes(
+                path=proxy_path,
+                integration=api_integration,
+                authorizer=cognito_authorizer,
+                methods=PROTECTED_METHODS,
+            )
+            http_api.add_routes(
+                path=proxy_path, integration=api_integration, methods=[apigwv2.HttpMethod.OPTIONS]
+            )
         # Todo lo demas (chat publico, /health) cae en $default → misma Lambda; la identidad del
         # chat (VMC / sesion anonima) se valida DENTRO de FastAPI segun D-001/D-018.
         apigwv2.HttpRoute(
