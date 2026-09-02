@@ -32,10 +32,10 @@ from backend.agent.flows import (
     validate_interaction,
 )
 
-# El paso real y unico activo hoy (F-PART, MAPEO.md §4.1). Se usa como paso "vigente" en la
-# mayoria de los tests; las pruebas de invariantes de la seccion 5 iteran TODO FLOWS, no solo
-# este paso, para que agregar F-CONS/F-LIVE/F-NEGO/F-HAB (mapeados, no activados) quede cubierto
-# sin tocar este archivo.
+# El paso de F-PART (MAPEO.md §4.1), usado como paso "vigente" en la mayoria de los tests.
+# Las pruebas de invariantes iteran TODO FLOWS — cubren tambien F-CONS/F-LIVE/F-NEGO/F-HAB
+# (activados 2026-09-01) y cualquier flujo futuro sin tocar este archivo; sus disparadores y
+# extractores propios se prueban en la seccion final.
 _OFFER_TYPE_STEP = FLOWS["PARTICIPATION"].step("SELECT_OFFER_TYPE")
 
 
@@ -409,3 +409,86 @@ def test_flow_definition_step_existente_e_inexistente():
 
     assert flujo.step("NO_EXISTE") is None
     assert flujo.step("") is None
+
+
+# ────── Los 4 flujos activados el 2026-09-01 (F-CONS, F-LIVE, F-NEGO, F-HAB) ──────
+# Las invariantes de la seccion anterior ya los cubren (consultas canonicas completas,
+# contrato del API, labels); aqui van sus disparadores y extractores de slot.
+
+
+@pytest.mark.parametrize(
+    ("message", "flujo", "slot"),
+    [
+        # F-CONS: el verbo disparador debe estar CERCA de "consignar".
+        ("quiero consignar", "CONSIGNMENT", None),
+        ("¿Cómo y cuánto debo consignar para participar?", "CONSIGNMENT", None),
+        ("quiero consignar para una oferta negociable", "CONSIGNMENT", "NEGOTIABLE"),
+        # F-HAB: habilitacion mencionada; el tema puede venir en el mismo texto.
+        ("me habilitaron para comprar, ¿qué hago?", "ENABLEMENT", None),
+        ("me habilitaron, ¿qué documentos debo subir?", "ENABLEMENT", "DOCUMENTS"),
+        ("fui habilitado y quiero pagar la comisión", "ENABLEMENT", "COMMISSION"),
+        # F-NEGO: exige propuesta/contrapropuesta/negociacion en curso.
+        ("el vendedor me mandó una contrapropuesta, ¿qué hago?", "NEGOTIATION_STAGE", "COUNTER"),
+        ("¿cómo va mi negociación?", "NEGOTIATION_STAGE", None),
+        ("no me aceptaron la propuesta", "NEGOTIATION_STAGE", "REJECTED"),
+        # F-LIVE: "en vivo" + duda/etapa, o directamente "gane la oferta".
+        ("gané una oferta en vivo, ¿cuáles son los siguientes pasos?", "LIVE_STAGE", "WINNER"),
+        ("estoy en una oferta en vivo y no sé qué hacer", "LIVE_STAGE", None),
+        ("el proceso en vivo terminó, ¿qué sigue?", "LIVE_STAGE", "FINISHED"),
+    ],
+)
+def test_los_flujos_nuevos_disparan_y_extraen_su_slot(message, flujo, slot):
+    assert detect_flow_start(message) == flujo
+    step = FLOWS[flujo].steps[0]
+    assert extract_slot_value(step, message) == slot
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # FAQ planas vecinas que NO deben caer en los flujos nuevos (MAPEO.md §4.2).
+        "¿cuándo me devuelven la consignación?",  # devolucion, no consignar (F-CONS)
+        "¿cómo funciona la oferta Negociable?",  # concepto, no negociacion en curso (F-NEGO)
+        "¿qué es el precio base?",  # concepto En Vivo, sin etapa ni duda (F-LIVE)
+        "¿cómo se paga la comisión?",  # comision a secas, sin habilitacion (F-HAB)
+        "no quiero consignar",  # negacion cerca del verbo (misma regla que participar)
+    ],
+)
+def test_faq_vecinas_no_disparan_los_flujos_nuevos(message):
+    assert detect_flow_start(message) is None
+
+
+def test_consignar_gana_a_participar_cuando_vienen_juntos():
+    # "consignar para participar" es F-CONS: el disparador mas especifico manda (orden
+    # deliberado de _TRIGGERS). Si F-PART ganara, la respuesta hablaria de participar y no
+    # de cuanto consignar, que es lo que se pregunto.
+    assert detect_flow_start("quiero consignar para participar en una subasta") == "CONSIGNMENT"
+
+
+@pytest.mark.parametrize(
+    "flujo", ["LIVE_STAGE", "NEGOTIATION_STAGE", "ENABLEMENT", "CONSIGNMENT", "PARTICIPATION"]
+)
+def test_el_label_de_cada_boton_se_resuelve_igual_que_su_click(flujo):
+    """Teclear el texto del boton debe valer lo mismo que clickearlo: si un label no lo
+    reconoce su propio extractor, el usuario que escribe en vez de clickear se queda
+    esperando botones que ya tenia delante."""
+    step = FLOWS[flujo].steps[0]
+    for option in step.options:
+        assert extract_slot_value(step, option.label) == option.value, option.label
+
+
+def test_no_me_aceptaron_es_rechazo_no_aceptacion():
+    # "no me aceptaron" contiene "aceptaron": sin la regla de negacion, ACCEPTED ganaria y
+    # la respuesta hablaria de como pagar una propuesta aceptada — lo contrario de lo que
+    # el usuario vive.
+    step = FLOWS["NEGOTIATION_STAGE"].steps[0]
+    assert extract_slot_value(step, "no me aceptaron la propuesta") == "REJECTED"
+    assert extract_slot_value(step, "me aceptaron la propuesta") == "ACCEPTED"
+
+
+def test_ambiguedad_en_slots_nuevos_devuelve_none():
+    # Dos etapas mencionadas a la vez: que desambiguen los botones, no una adivinanza.
+    live = FLOWS["LIVE_STAGE"].steps[0]
+    assert extract_slot_value(live, "termino la puja y gane") is None
+    hab = FLOWS["ENABLEMENT"].steps[0]
+    assert extract_slot_value(hab, "ya pagué la comisión y subí los documentos") is None

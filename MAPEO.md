@@ -123,7 +123,7 @@ estado ahí es burocracia. De las 111 preguntas, **~90 son FAQ planas**.
   Vivo: aquí está la información", "La oferta En Vivo: es hora de participar", "La oferta
   Negociable: ¿cómo funciona?".
 
-**F-CONS · CONSIGNMENT — "quiero consignar / cómo consigno"** 🔜 *mapeado, NO activado*
+**F-CONS · CONSIGNMENT — "quiero consignar / cómo consigno"** ✅ *activado 2026-09-01*
 
 | Paso | Espera | Botones |
 |---|---|---|
@@ -133,7 +133,7 @@ El corpus separa la consignación "En Vivo" de la "Negociable" (dos preguntas di
 "¡Consignar es necesario para participar!"). Mismo esqueleto que F-PART con otras consultas
 canónicas. Se activa agregando una entrada en `agent/flows.py`, sin tocar el motor.
 
-**F-LIVE · LIVE_STAGE — "¿y ahora qué?" dentro de una oferta En Vivo** 🔜 *mapeado, NO activado*
+**F-LIVE · LIVE_STAGE — "¿y ahora qué?" dentro de una oferta En Vivo** ✅ *activado 2026-09-01*
 
 | Paso | Espera | Botones |
 |---|---|---|
@@ -143,7 +143,7 @@ Cobertura: "Es hora de participar" (durante), "El proceso terminó" (después), 
 oferta En Vivo" (ganador — distingue Ganador Directo vs Mejor Postor, que podría ser un
 segundo slot si los datos lo piden).
 
-**F-NEGO · NEGOTIATION_STAGE — estado de una negociación** 🔜 *mapeado, NO activado*
+**F-NEGO · NEGOTIATION_STAGE — estado de una negociación** ✅ *activado 2026-09-01*
 
 | Paso | Espera | Botones |
 |---|---|---|
@@ -151,7 +151,7 @@ segundo slot si los datos lo piden).
 
 Cobertura: "La oferta Negociable: ¿cómo funciona?" (aceptación, contrapropuesta, rechazo).
 
-**F-HAB · ENABLEMENT — "me habilitaron, ¿qué hago?"** 🔜 *mapeado, NO activado*
+**F-HAB · ENABLEMENT — "me habilitaron, ¿qué hago?"** ✅ *activado 2026-09-01*
 
 | Paso | Espera | Botones |
 |---|---|---|
@@ -216,7 +216,7 @@ handoff sigue las reglas de D-002.
 | Campos de flujo en `Conversations` + transición atómica | ✅ esta fase |
 | Quick replies en `metadata` + validación servidor | ✅ esta fase |
 | Render de botones en el widget + evento de clic | ✅ esta fase |
-| F-CONS · F-LIVE · F-NEGO · F-HAB | 🔜 mapeados arriba, activar uno por uno |
+| F-CONS · F-LIVE · F-NEGO · F-HAB | ✅ activados 2026-09-01 — 16 consultas canónicas verificadas contra el índice (todas con 4 fragmentos sobre el umbral, scores 0.885–0.935) |
 | HERALD en el paso resuelto | ⛔ bloqueado por D-011 |
 
 ---
