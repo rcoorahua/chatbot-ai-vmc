@@ -11,7 +11,9 @@ Contrato con la app del asesor (frontend/):
                                                         otro la tiene, con el estado actual
   POST /advisor/conversations/{id}/messages           → 201, idempotente por client_message_id
                                                         (RF-034 / RF-038 / AC-006); 409 si no es mia
-  POST /advisor/conversations/{id}/close              → cierre minimo del caso (RF-031, sin ticket)
+  POST /advisor/conversations/{id}/close              → cierre (RF-031): un caso o la conversacion
+                                                        anonima quedan CLOSED (D-029); el hilo del
+                                                        autenticado vuelve al bot (D-023)
 
 Autenticacion (T1): el JWT de Cognito lo valida el authorizer del API Gateway; aqui solo se
 leen los claims del evento (core/auth.py) y se resuelve el asesor (advisors/service.py). En
@@ -77,6 +79,7 @@ class ConversationDetail(BaseModel):
 
     conversation_id: str
     user_type: str
+    kind: str
     status: str
     channel: str
     bot_enabled: bool
@@ -84,6 +87,12 @@ class ConversationDetail(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
     user_company: str | None = None
+    # D-029: asunto del caso, contacto que dejo el anonimo (RF-003) y de que hilo salio.
+    title: str | None = None
+    contact_name: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    source_conversation_id: str | None = None
     assigned_advisor_id: str | None = None
     summary: str | None = None
     message_count: int
@@ -95,6 +104,7 @@ class ConversationDetail(BaseModel):
     created_at: str
     updated_at: str
     closed_at: str | None = None
+    closed_by: str | None = None
 
     @classmethod
     def from_model(cls, conversation: Conversation) -> "ConversationDetail":

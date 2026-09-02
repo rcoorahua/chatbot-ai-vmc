@@ -122,6 +122,33 @@ def exhausted(*, anonymous: bool, user_id: str | None, conversation_id: str,
     return False
 
 
+def take_daily_slot(key: str, *, limit: int) -> bool:
+    """Contador diario generico sobre la misma tabla (D-029: handoffs anonimos por IP).
+
+    Incrementa y compara en UN update atomico; devuelve False si el actor ya paso el tope
+    hoy. `limit <= 0` = sin tope, sin tocar la tabla. La clave lleva su propio prefijo
+    (`HANDOFF#IP#...`) para no compartir el atributo `calls` con la cuota de IA.
+    """
+    if limit <= 0:
+        return True
+    window = _windows()[1][0]  # la ventana diaria
+    try:
+        response = _table().update_item(
+            Key={"limit_key": key, "window": window},
+            UpdateExpression="ADD calls :one SET expires_at = :ttl",
+            ExpressionAttributeValues={":one": 1, ":ttl": epoch_seconds() + _TTL_SECONDS},
+            ReturnValues="UPDATED_NEW",
+        )
+    except Exception:  # noqa: BLE001 — el contador nunca bloquea (docstring del modulo)
+        logger.exception("No se pudo contar el handoff; se deja pasar")
+        return True
+    calls = int(response.get("Attributes", {}).get("calls", 0))
+    if calls > limit:
+        logger.info("handoff.quota.exhausted", extra={"limit_key": key, "limit": limit})
+        return False
+    return True
+
+
 def spend(*, anonymous: bool, user_id: str | None, conversation_id: str,
           ip_hash: str | None) -> None:
     """Registra UNA ejecucion de IA en todas las ventanas del actor (ADD atomico)."""

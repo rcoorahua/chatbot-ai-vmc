@@ -12,7 +12,10 @@ Patrones que viven aqui y en ningun otro sitio:
 - bandeja por estado (GSI2) y casos de un asesor (GSI3) para RF-032;
 - toma ATOMICA de la conversacion (AC-005) y cierre del caso: un UpdateItem condicional sobre
   la conversacion + la nota SYSTEM en el hilo, en una sola transaccion;
-- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`.
+- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`;
+- D-029: casos abiertos de un usuario (GSI1 + filtro), creacion de un caso con sus primeros
+  mensajes en UNA transaccion, y cierre definitivo (CLOSED) de un caso o de la conversacion
+  anonima.
 
 Los tests de este modulo corren contra dynamodb-local real: un GSI mal usado falla aqui.
 """
@@ -76,6 +79,25 @@ def find_conversations_by_user(user_id: str, *, limit: int = 10) -> list[Convers
     return [Conversation.from_item(item) for item in response["Items"]]
 
 
+def list_open_cases(user_id: str) -> list[Conversation]:
+    """Casos del usuario que siguen abiertos (D-029: tope de N). Consulta GSI1 con filtro y
+    paginando hasta el final: el filtro se aplica DESPUES del Limit, asi que una sola pagina
+    podria dejar fuera un caso abierto detras de muchos cerrados."""
+    kwargs: dict[str, Any] = {
+        "IndexName": "gsi1_user",
+        "KeyConditionExpression": Key("user_id").eq(user_id),
+        "FilterExpression": Attr("kind").eq("CASE") & Attr("status").ne("CLOSED"),
+    }
+    found: list[Conversation] = []
+    while True:
+        response = _conversations().query(**kwargs)
+        found.extend(Conversation.from_item(item) for item in response["Items"])
+        last = response.get("LastEvaluatedKey")
+        if not last:
+            return found
+        kwargs["ExclusiveStartKey"] = last
+
+
 def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> list[Conversation]:
     """Bandeja por estado (GSI2, RF-032). Los pendientes salen del mas antiguo al mas nuevo:
     el que mas espera va primero."""
@@ -108,6 +130,35 @@ def create_conversation(conversation: Conversation) -> bool:
         )
     except ClientError as exc:
         if _is_condition_failure(exc):
+            return False
+        raise
+    return True
+
+
+def create_conversation_with_messages(conversation: Conversation, messages: list[Message]) -> bool:
+    """Crea un caso (D-029) con sus primeros mensajes, todo o nada. La conversacion llega
+    con sus campos desnormalizados YA calculados (message_count, preview, no leidos): aqui no
+    se suma nada, solo se escribe. Devuelve False si el id ya existia."""
+    table_messages = get_settings().table_messages
+    client = dynamodb_resource().meta.client
+    try:
+        client.transact_write_items(
+            TransactItems=[
+                {
+                    "Put": {
+                        "TableName": get_settings().table_conversations,
+                        "Item": conversation.to_item(),
+                        "ConditionExpression": "attribute_not_exists(conversation_id)",
+                    }
+                },
+                *({"Put": {"TableName": table_messages, "Item": m.to_item()}} for m in messages),
+            ]
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
+        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
+        if reasons and reasons[0] == "ConditionalCheckFailed":
             return False
         raise
     return True
@@ -192,30 +243,66 @@ def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> 
     return _transact_note(update, note)
 
 
-def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
-    """Handoff minimo (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el bot
-    atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma transaccion.
-    `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
-    Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
+def close_conversation(
+    conversation_id: str, advisor_id: str, *, note: Message, closed_by: str
+) -> bool:
+    """Cierre definitivo (D-029): un caso, o la conversacion anonima. Queda CLOSED, con el
+    bot apagado y de solo lectura; `assigned_advisor_id` se conserva como historial de quien
+    lo atendio. La nota SYSTEM `CONVERSATION_CLOSED` va en la misma transaccion. Solo el
+    asesor asignado cierra: devuelve False si no lo es."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :closed, bot_enabled = :off, wait_message_sent = :off, "
+        "unread_count = :zero, closed_at = :at, closed_by = :closed_by"
+    )
+    update["ConditionExpression"] = "assigned_advisor_id = :advisor AND #status <> :closed"
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {":advisor": advisor_id, ":closed": "CLOSED", ":off": False, ":zero": 0,
+         ":closed_by": closed_by}
+    )
+    return _transact_note(update, note)
+
+
+def start_handoff(
+    conversation_id: str,
+    *,
+    reason: str,
+    at: str,
+    note: Message,
+    title: str | None = None,
+    contact: dict[str, str] | None = None,
+) -> bool:
+    """Handoff en el sitio (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el
+    bot atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma
+    transaccion. `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
+    `title` y `contact` (D-029: asunto y datos del anonimo, RF-003) se guardan en el mismo
+    update. Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
     update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
     update["UpdateExpression"] += (
         ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
         "handoff_requested_at = :requested_at, handoff_reason = :reason"
     )
+    values: dict[str, Any] = {
+        ":pending": "PENDING_ADVISOR",
+        ":bot_attending": "BOT_ATTENDING",
+        ":off": False,
+        ":requested_at": at,
+        ":reason": reason,
+    }
+    if title:
+        update["UpdateExpression"] += ", title = :title"
+        values[":title"] = title
+    for field, value in (contact or {}).items():
+        if value:
+            update["UpdateExpression"] += f", {field} = :{field}"
+            values[f":{field}"] = value
     update["ConditionExpression"] = (
         "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
         "AND #status = :bot_attending"
     )
     update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(
-        {
-            ":pending": "PENDING_ADVISOR",
-            ":bot_attending": "BOT_ATTENDING",
-            ":off": False,
-            ":requested_at": at,
-            ":reason": reason,
-        }
-    )
+    update["ExpressionAttributeValues"].update(values)
     return _transact_note(update, note)
 
 

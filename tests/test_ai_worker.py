@@ -5,10 +5,11 @@ Criterios:
          el aviso de repeticion sale una vez y a la siguiente el bot calla
   AC-W2  debounce (D-020): el job de un mensaje con otro mas nuevo detras se salta, y el job
          del ultimo responde la rafaga completa en UNA llamada
-  AC-W3  FAQ con evidencia responde con el redactor; sin evidencia NO inventa: autenticado
-         deriva (AC-002) y anonimo recibe invitacion a iniciar sesion (D-002)
-  AC-W4  pedir asesor deriva: PENDING_ADVISOR, bot apagado (RF-025), nota SYSTEM en el hilo;
-         el anonimo no deriva (D-002)
+  AC-W3  FAQ con evidencia responde con el redactor; sin evidencia NO inventa: ofrece el
+         formulario de asesor (AC-002 con D-029) y el bot sigue encendido hasta que lo envien
+  AC-W4  pedir asesor ofrece el formulario (tarjeta HANDOFF_FORM): al anonimo le pide nombre
+         y correo (RF-003), al autenticado solo asunto y detalle (y correo si el JWT no lo
+         trajo). La derivacion real la hace POST /chat/.../handoff, no el worker
   AC-W5  con el caso en espera, los mensajes se guardan, la IA no responde y el aviso de
          espera sale UNA sola vez (RF-026/RF-027 / AC-004)
   AC-W6  toda decision queda en AIUsage, tambien las gratuitas (llm-cost-optimizer)
@@ -24,7 +25,7 @@ import pytest
 from boto3.dynamodb.conditions import Key
 
 from backend.agent import prompts
-from backend.conversations import repository, service
+from backend.conversations import forms, repository, service
 from backend.conversations.models import MessageStatus, SenderType
 from backend.core import llm
 from backend.core.auth import VmcIdentity
@@ -296,17 +297,28 @@ def test_faq_con_evidencia_responde_con_el_redactor(limpiar, tablas, fake_llm, c
     assert float(respuesta["rag_min_score"]) == pytest.approx(0.84)
 
 
-def test_faq_sin_evidencia_deriva_en_vez_de_inventar(limpiar, tablas, fake_llm, sin_rag):
-    """AC-002: la recuperacion no trae nada → handoff, nunca una respuesta generada."""
+def _formulario_ofrecido(conversation_id):
+    """La ultima respuesta del bot trae la tarjeta HANDOFF_FORM; devuelve sus campos."""
+    ultima = _respuestas_bot(conversation_id)[-1]
+    interaction = (ultima.metadata or {}).get("interaction") or {}
+    assert interaction.get("type") == forms.HANDOFF_FORM, ultima.metadata
+    return ultima, [f["name"] for f in interaction["fields"]]
+
+
+def test_faq_sin_evidencia_ofrece_el_formulario_en_vez_de_inventar(
+    limpiar, tablas, fake_llm, sin_rag
+):
+    """AC-002 con D-029: la recuperacion no trae nada → se ofrece el asesor (tarjeta), nunca
+    una respuesta generada; el bot sigue encendido hasta que el usuario envie el formulario."""
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "PENDING_ADVISOR" and actual.bot_enabled is False
-    assert actual.handoff_reason == "faq_no_evidence"
-    contenidos = [m.content for m in _hilo(conversation.conversation_id)]
-    assert prompts.FAQ_NO_EVIDENCE_HANDOFF_RESPONSE in contenidos
-    assert "HANDOFF_REQUESTED" in contenidos, "la nota SYSTEM queda en el hilo"
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
+    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
+    # La identidad de prueba no trae correo: el formulario lo pide ademas de asunto y detalle.
+    assert campos == ["email", "subject", "detail"]
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)
 
     respuesta = next(
@@ -321,28 +333,34 @@ def test_faq_sin_evidencia_deriva_en_vez_de_inventar(limpiar, tablas, fake_llm, 
     assert descartado["topic"] == "Retiro de saldo" and descartado["relevant"] is False
 
 
-def test_faq_sin_evidencia_del_anonimo_invita_a_iniciar_sesion(limpiar, fake_llm, sin_rag):
+def test_faq_sin_evidencia_del_anonimo_ofrece_el_formulario_con_contacto(
+    limpiar, fake_llm, sin_rag
+):
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, "D-002: no deriva"
-    assert [r.content for r in _respuestas_bot(conversation.conversation_id)] == [
-        prompts.FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE
-    ]
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
+    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
+    assert campos == ["name", "email", "phone", "subject", "detail"], "RF-003: contacto"
 
 
 # ───────────────────────────── AC-W4: pedir asesor ─────────────────────────────
 
 
-def test_pedir_asesor_deriva_por_regla_sin_modelo(limpiar, tablas, sin_llm, sin_rag):
+def test_pedir_asesor_ofrece_el_formulario_por_regla_sin_modelo(
+    limpiar, tablas, sin_llm, sin_rag
+):
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "quiero hablar con un asesor por favor"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "PENDING_ADVISOR" and actual.bot_enabled is False
-    contenidos = [m.content for m in _hilo(conversation.conversation_id)]
-    assert prompts.HANDOFF_STARTED_RESPONSE in contenidos
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, (
+        "D-029: derivar es cosa del formulario; el worker solo lo ofrece"
+    )
+    ultima, _campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
 
     clasificacion = next(
         u for u in _usos(tablas, conversation.conversation_id)
@@ -351,15 +369,15 @@ def test_pedir_asesor_deriva_por_regla_sin_modelo(limpiar, tablas, sin_llm, sin_
     assert clasificacion["provider"] == "NONE", "lo resolvio la regla, no el modelo"
 
 
-def test_el_anonimo_que_pide_asesor_recibe_invitacion_a_login(limpiar, sin_llm, sin_rag):
+def test_el_anonimo_que_pide_asesor_recibe_el_formulario_con_correo(limpiar, sin_llm, sin_rag):
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "quiero hablar con un asesor"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "BOT_ATTENDING", "D-002: el anonimo no deriva"
-    assert [r.content for r in _respuestas_bot(conversation.conversation_id)] == [
-        prompts.ANONYMOUS_ADVISOR_RESPONSE
-    ]
+    assert actual.status == "BOT_ATTENDING"
+    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
+    assert "email" in campos and "name" in campos
 
 
 def test_catalogo_responde_fijo_mientras_herald_no_exista(limpiar, sin_llm, sin_rag):
@@ -385,7 +403,7 @@ def test_other_redirige_fijo(limpiar, fake_llm, sin_rag):
 def test_en_espera_los_mensajes_se_guardan_y_el_aviso_sale_una_vez(limpiar, sin_llm, sin_rag):
     """AC-004 completo: IA callada, mensajes conservados, aviso fijo sin repetirse."""
     conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "necesito hablar con una persona"))  # handoff por regla
+    assert service.start_handoff(conversation, reason="test") is True
 
     conversation = repository.get_conversation(conversation.conversation_id)
     _atiende(_escribe(conversation, "hola? sigues ahi?"))
@@ -394,7 +412,7 @@ def test_en_espera_los_mensajes_se_guardan_y_el_aviso_sale_una_vez(limpiar, sin_
 
     hilo = _hilo(conversation.conversation_id)
     del_usuario = [m for m in hilo if m.sender_type == SenderType.USER]
-    assert len(del_usuario) == 3, "RF-026: todo se conserva"
+    assert len(del_usuario) == 2, "RF-026: todo lo escrito en espera se conserva"
     avisos = [m for m in hilo if m.content == prompts.HANDOFF_WAIT_RESPONSE]
     assert len(avisos) == 1, "RF-027: el aviso de espera no se repite"
     assert repository.get_conversation(conversation.conversation_id).wait_message_sent is True
@@ -494,19 +512,19 @@ def test_preguntar_si_es_un_bot_se_responde_fijo(limpiar, sin_llm, sin_rag):
     ]
 
 
-def test_una_cifra_sin_respaldo_no_llega_al_usuario_y_deriva(
+def test_una_cifra_sin_respaldo_no_llega_al_usuario_y_ofrece_asesor(
     limpiar, tablas, fake_llm, con_rag
 ):
     """Guardrail de salida (RF-018 verificado): el modelo inventa una cifra -> se descarta la
-    respuesta, se deriva como si no hubiera evidencia y AIUsage registra el motivo."""
+    respuesta, se ofrece el asesor como si no hubiera evidencia y AIUsage registra el motivo."""
     fake_llm.answer = "La comision es 4.5% y te devuelven el saldo en 10 dias."
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "cuanto es la comision?"))
 
     contenidos = [m.content for m in _hilo(conversation.conversation_id)]
     assert fake_llm.answer not in contenidos
-    assert prompts.FAQ_NO_EVIDENCE_HANDOFF_RESPONSE in contenidos
-    assert repository.get_conversation(conversation.conversation_id).status == "PENDING_ADVISOR"
+    assert prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE in contenidos
+    assert repository.get_conversation(conversation.conversation_id).status == "BOT_ATTENDING"
     respuesta = next(
         u for u in _usos(tablas, conversation.conversation_id)
         if u["execution_type"] == "RESPONSE"

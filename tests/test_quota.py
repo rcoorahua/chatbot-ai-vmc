@@ -215,17 +215,22 @@ def test_el_autenticado_usa_su_cuota_y_su_mensaje(limpiar, fake_llm, con_rag, cu
 # ──────────────── AC-Q4: lo gratuito sigue vivo con la cuota agotada ────────────────
 
 
-def test_pedir_asesor_deriva_incluso_agotado(limpiar, fake_llm, con_rag, cuotas):
+def test_pedir_asesor_ofrece_el_formulario_incluso_agotado(limpiar, fake_llm, con_rag, cuotas):
     """El mensaje fijo de cuota PROMETE que pedir asesor funciona: esa ruta la deciden las
-    reglas (sin modelo), asi que no puede quedar detras del tope."""
+    reglas (sin modelo), asi que no puede quedar detras del tope. Con D-029 "funciona"
+    significa que el bot ofrece la tarjeta de formulario."""
     cuotas(auth_day=1)
     conversation = _conversacion(limpiar, autenticada=True)
     _atiende(conversation, _PREGUNTAS[0])  # gasta la unica ejecucion
 
     _atiende(conversation, "quiero hablar con un asesor")
 
-    actual = repository.get_conversation(conversation.conversation_id)
-    assert str(actual.status) == "PENDING_ADVISOR" and actual.bot_enabled is False
+    del_bot = [
+        m for m in repository.list_messages(conversation.conversation_id)
+        if m.sender_type == SenderType.BOT
+    ]
+    assert del_bot[-1].content == prompts.HANDOFF_OFFER_RESPONSE
+    assert (del_bot[-1].metadata or {}).get("interaction", {}).get("type") == "HANDOFF_FORM"
 
 
 def test_un_trivial_no_gasta_cuota(limpiar, fake_llm, con_rag, cuotas):

@@ -34,7 +34,7 @@ from backend.agent import flows, guardrails, prompts, quota, rag, trivial, usage
 from backend.agent.classifier import ClassificationResult, classify
 from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
-from backend.conversations import repository, service
+from backend.conversations import forms, repository, service
 from backend.conversations.models import (
     Conversation,
     ConversationStatus,
@@ -216,13 +216,11 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         _reply_fixed(conversation, message, prompts.CATALOG_FALLBACK_RESPONSE, "fixed_catalog",
                      intent=classification.intent)
     elif classification.intent == Intent.ADVISOR:
-        if anonymous:
-            # D-002: el anonimo no deriva; se le invita a iniciar sesion.
-            _reply_fixed(conversation, message, prompts.ANONYMOUS_ADVISOR_RESPONSE,
-                         "fixed_anonymous_advisor", intent=classification.intent)
-        else:
-            _handoff(conversation, message, reason=classification.rule or "advisor_intent",
-                     intent=classification.intent, response=prompts.HANDOFF_STARTED_RESPONSE)
+        # D-029: anonimo y autenticado derivan por formulario (RF-003 pide el correo al
+        # anonimo); el bot ofrece la tarjeta y sigue atendiendo hasta que la envien.
+        _offer_handoff_form(conversation, message,
+                            reason=classification.rule or "advisor_intent",
+                            intent=classification.intent, response=prompts.HANDOFF_OFFER_RESPONSE)
     else:
         _answer_faq(conversation, message, text, window, block_keys, anonymous)
 
@@ -302,20 +300,16 @@ def _answer_faq(
             for f in retrieved.all_fragments
         ],
         rag_min_score=retrieved.threshold,
-        handoff_triggered=not result.has_evidence and not anonymous,
+        handoff_triggered=not result.has_evidence,
     )
     if result.has_evidence:
-        service.post_bot_message(conversation.conversation_id, result.text)
-    elif anonymous:
-        service.post_bot_message(
-            conversation.conversation_id, prompts.FAQ_NO_EVIDENCE_ANONYMOUS_RESPONSE
-        )
+        _bot_says(conversation, result.text)
     else:
-        _handoff(conversation, message, reason="faq_no_evidence", intent=Intent.FAQ,
-                 response=prompts.FAQ_NO_EVIDENCE_HANDOFF_RESPONSE, record=False)
+        _offer_handoff_form(conversation, message, reason="faq_no_evidence", intent=Intent.FAQ,
+                            response=prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE, record=False)
 
 
-def _handoff(
+def _offer_handoff_form(
     conversation: Conversation,
     message: Message,
     *,
@@ -324,30 +318,31 @@ def _handoff(
     response: str,
     record: bool = True,
 ) -> None:
-    """Handoff minimo (RF-022): sin ticket (F5) y sin Slack (D-016) todavia."""
+    """D-029: pedir asesor ya no deriva de inmediato. El bot ofrece la TARJETA de formulario
+    (asunto y detalle; nombre, correo y telefono si es anonimo — RF-003) y la derivacion la
+    hace `POST /chat/.../handoff` cuando el usuario la envia. Hasta entonces el bot sigue
+    encendido: quien ignora la tarjeta puede seguir preguntando. Sin ticket (F5) ni Slack
+    (D-016) todavia."""
     # Con un humano en camino, ningun flujo guiado sigue esperando datos (MAPEO.md §4.2).
     _clear_flow_if_active(conversation)
-    started = service.start_handoff(conversation, reason=reason)
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    spec = forms.handoff_form_spec(
+        anonymous=anonymous, needs_email=not anonymous and not conversation.user_email
+    )
+    _bot_says(conversation, response, metadata=spec)
     logger.info(
-        "ai.handoff",
+        "ai.handoff.offer",
         extra={
             "conversation_id": conversation.conversation_id,
             "message_id": message.message_id,
             "reason": reason,
             "intent": str(intent),
-            "started": started,
+            "anonymous": anonymous,
         },
     )
-    if started:
-        service.post_bot_message(conversation.conversation_id, response)
-    else:
-        # Otro job gano la carrera y la conversacion ya espera asesor: aplica RF-027.
-        current = repository.get_conversation(conversation.conversation_id)
-        if current is not None:
-            _while_bot_off(current)
     if record:
-        _record_free(conversation, message, source=f"handoff:{reason}", intent=str(intent),
-                     handoff=True)
+        _record_free(conversation, message, source=f"handoff_offer:{reason}",
+                     intent=str(intent), handoff=True)
 
 
 def _reply_fixed(
@@ -358,9 +353,17 @@ def _reply_fixed(
     *,
     intent: Intent | None = None,
 ) -> None:
-    service.post_bot_message(conversation.conversation_id, text)
+    _bot_says(conversation, text)
     _record_free(conversation, message, source=source,
                  intent=str(intent) if intent else None)
+
+
+def _bot_says(conversation: Conversation, text: str, *, metadata: dict | None = None) -> None:
+    """Toda respuesta del bot sale por aqui: arrastra el TTL de la conversacion anonima
+    (D-029) para que sus mensajes caduquen con ella."""
+    service.post_bot_message(
+        conversation.conversation_id, text, metadata=metadata, expires_at=conversation.expires_at
+    )
 
 
 # ───────────────────────── Flujos guiados (D-028, mapeo en MAPEO.md) ─────────────────────────
@@ -474,10 +477,8 @@ def _offer_flow_step(
         # Otro job gano la transicion (rafaga D-020): ese publico los botones, aqui silencio.
         _log_skip(conversation, message, "flow_race")
         return
-    service.post_bot_message(
-        conversation.conversation_id,
-        step.prompt,
-        metadata=flows.quick_replies_metadata(definition, step, version),
+    _bot_says(
+        conversation, step.prompt, metadata=flows.quick_replies_metadata(definition, step, version)
     )
     _record_free(conversation, message, source=f"flow:{definition.name}:offered")
 
