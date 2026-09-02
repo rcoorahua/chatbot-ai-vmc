@@ -71,8 +71,8 @@
     brand: "VMC Subastas",
     brandSub: "powered by SUBASTOP Co.",
     agent: "Subastín",
-    // El saludo entra como mensaje nuevo en CADA apertura del panel (ver renderMessages):
-    // el salto de linea separa el "hola" de la pregunta, como dos frases de un chat real.
+    // Abre la conversacion UNA vez (ver renderMessages): es el inicio del hilo, no un mensaje
+    // que llega. El salto de linea separa el "hola" de la pregunta, como dos frases reales.
     greetingAuth: (name) =>
       `¡Hola! 👋 ${name}.\n\nAhora estás hablando con Subastín. ¿Cómo puedo ayudarte?`,
     greetingAnon:
@@ -173,15 +173,10 @@
     open: false,
     // Arranca (y re-abre) SIEMPRE en mensajes: el home queda para quien navegue a el.
     view: "messages", // home | messages | help
-    // Ancla del saludo local: `greetingNonce` cambia en cada apertura para que la burbuja
-    // vuelva a entrar animada, y `greetingAt` (hora de la apertura) decide DONDE va en el
-    // hilo: el historial (timestamps anteriores) queda arriba y lo que llegue en esta sesion
-    // queda debajo. Por conteo fallaria: el historial carga async DESPUES de abrir.
-    greetingNonce: 0,
-    greetingAt: null,
-    // El saludo NO entra junto con el panel: primero abre el panel (su propia transicion) y
-    // ~400 ms despues "llega" el saludo con su fade — como un mensaje de verdad. Sin esta
-    // espera las dos animaciones se pisan y el saludo parece parte del panel.
+    // El saludo de una conversacion RECIEN abierta no aparece junto con el panel: primero
+    // abre el panel (su propia transicion) y ~400 ms despues "llega" con su fade, como un
+    // mensaje de verdad. Sin esa espera las dos animaciones se pisan y parece parte del
+    // panel. Solo aplica al hilo vacio: con historial el saludo ya esta arriba y no "llega".
     greetingVisible: false,
     greetingTimer: null,
     // Tope de caracteres del compositor. Se reemplaza con el que informa la sesion; este valor
@@ -1505,25 +1500,32 @@
     // de sistema o un separador de dia rompen el grupo, porque visualmente ya lo separan.
     let previo = null;
 
-    // Saludo local (no persistido) que entra como mensaje nuevo en CADA apertura del panel:
-    // el nonce de la apertura le da una clave fresca, asi firstRenderOf vuelve a animarlo.
-    // Se inserta despues del historial (timestamps anteriores a la apertura) y antes de lo
-    // que llegue en esta sesion, como la nota de "ahora hablas con..." de Intercom.
-    let saludoPendiente =
-      isThread(state.conversation) &&
-      (state.greetingVisible || (!state.open && state.messages.length === 0));
-    const saludo = {
-      sender_type: "BOT",
-      content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
-      created_at: null,
-      client_message_id: "greeting:" + state.greetingNonce,
-      isGreeting: true,
-    };
-    const pushSaludo = () => {
-      saludoPendiente = false;
-      items.push(renderBubble(saludo, true));
-      previo = saludo;
-    };
+    // Saludo local (no persistido): es el INICIO de la conversacion, asi que va ARRIBA del
+    // todo y una sola vez. Antes se re-inyectaba al final en cada apertura del panel y, a
+    // mitad de una charla, se leia como si el bot volviera a saludar de la nada.
+    // Dos condiciones:
+    //   - solo en el hilo del bot (un caso con asesor no se presenta como Subastin);
+    //   - solo con el historial COMPLETO cargado (`!state.hasMore`): encima de una pagina
+    //     parcial estaria mintiendo sobre donde empezo la conversacion.
+    // Con el hilo vacio espera al fade de la apertura (`greetingVisible`); con historial ya
+    // es contenido viejo y se dibuja de una.
+    const hayHistorial = state.messages.length > 0;
+    if (isThread(state.conversation) && !state.hasMore && (hayHistorial || state.greetingVisible)) {
+      items.push(
+        renderBubble(
+          {
+            sender_type: "BOT",
+            content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
+            created_at: null,
+            // Clave estable: `firstRenderOf` lo anima UNA vez por carga de pagina, no en
+            // cada render ni en cada apertura del panel.
+            client_message_id: "greeting",
+            isGreeting: true,
+          },
+          true
+        )
+      );
+    }
 
     if (state.hasMore) {
       items.push(
@@ -1537,9 +1539,6 @@
     }
     const ultimo = state.messages[state.messages.length - 1] || null;
     for (const message of state.messages) {
-      if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
-        pushSaludo();
-      }
       const diaAntes = lastDay;
       pushDay(message.created_at);
       if (message.sender_type === "SYSTEM" || message.message_type === "SYSTEM") {
@@ -1557,7 +1556,6 @@
         if (botones) items.push(botones);
       }
     }
-    if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
       if (draft.conversationId && draft.conversationId !== state.activeId) continue;
       pushDay(draft.createdAt);
@@ -2112,22 +2110,22 @@
     // con su animacion, en lugar de aparecer de golpe.
     if (!open) lastViewKey = null;
     if (open) {
-      // Directo a mensajes (sin pasar por el home) y con el saludo entrando como mensaje
-      // nuevo: nonce fresco = la burbuja se anima en CADA apertura, no solo la primera.
-      // Si un caso avanzo mientras estaba cerrado, se abre en la lista para que se vea.
+      // Directo a mensajes (sin pasar por el home). Si un caso avanzo mientras estaba
+      // cerrado, se abre en la lista para que se vea.
       state.view = !isAnonymous() && state.unread > 0 && hasOpenCase() ? "inbox" : "messages";
       state.unread = 0;
-      state.greetingNonce = Date.now();
-      state.greetingAt = new Date().toISOString();
       state.stickToBottom = true;
-      // El saludo llega DESPUES de que el panel termino de abrir (transicion de .38s):
-      // asi su fade se percibe como un mensaje entrante y no como parte de la apertura.
-      state.greetingVisible = false;
-      clearTimeout(state.greetingTimer);
-      state.greetingTimer = setTimeout(() => {
-        state.greetingVisible = true;
-        render();
-      }, 420);
+      // Conversacion recien empezada: el saludo entra DESPUES de que el panel termino de
+      // abrir (transicion de .38s), asi su fade se percibe como un mensaje y no como parte
+      // del panel. Con historial el saludo ya esta arriba y esto no cambia nada.
+      if (state.messages.length === 0) {
+        state.greetingVisible = false;
+        clearTimeout(state.greetingTimer);
+        state.greetingTimer = setTimeout(() => {
+          state.greetingVisible = true;
+          render();
+        }, 420);
+      }
       // Precarga del orbe WebGPU: compilar el shader recien cuando el usuario envia su primer
       // mensaje hacia que el indicador de "escribiendo" tardara en aparecer.
       ensureOrbGpu();

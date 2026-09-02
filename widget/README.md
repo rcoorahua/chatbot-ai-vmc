@@ -61,6 +61,10 @@ Qué verificar:
   "Volver a Subastín" (el visitante ve "Nueva conversación", que abre otra sesión).
 - **Historial largo**: el hilo abre en los últimos 50 mensajes y arriba aparece "Ver mensajes
   anteriores" mientras quede historia.
+- **El saludo abre el hilo, no se repite**: "¡Hola! 👋..." es la primera burbuja de la
+  conversación. Minimizar y volver a abrir el panel **no** lo reinyecta al final: si ya
+  conversaste, el saludo sigue arriba (y con el historial paginado no se dibuja hasta cargarlo
+  entero, porque encima de una página parcial mentiría sobre dónde empezó la conversación).
 
 - **El bot responde** cuando corre el worker en otra terminal (`python -m scripts.run_ai_worker`,
   con `GEMINI_API_KEY`, `PINECONE_API_KEY` y `AI_JOBS_QUEUE_URL` en `.env`). Sin el worker, los
