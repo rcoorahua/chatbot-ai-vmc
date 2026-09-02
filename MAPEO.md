@@ -261,6 +261,18 @@ con fecha límite), `RECURRENTE` (mismo usuario, mismo problema, segunda vez).
 - `PLATFORM_BUG` durante un En Vivo es el más urgente del mapa: el proceso corre en tiempo
   real y una falla de sala equivale a un `SANCTION_APPEAL` seguro después.
 
+**Estado (2026-09-02): esta propuesta está IMPLEMENTADA** en
+[`backend/tickets/taxonomy.py`](backend/tickets/taxonomy.py) — los 12 tipos con su categoría,
+su prioridad y sus datos mínimos, más las etiquetas de D-009 y las reglas por palabras clave
+que sugieren el tipo sin llamar a ningún modelo. **Eso NO cierra D-008.** Se implementó para
+que la decisión se tome con datos en vez de en abstracto: cada ticket guarda si el tipo lo
+puso la regla o lo corrigió una persona (`classification_source`), así que a la vuelta de unas
+semanas de uso se puede ver qué tipos sobran, cuáles faltan y cuántos casos caen en `OTHER`.
+La prioridad sube un escalón cuando algo corre (`EN_VIVO`, `PLAZO_CORRIENDO`), que es como se
+implementó el "Alta durante un proceso En Vivo" de la tabla.
+
 **Qué falta para cerrar D-008 de verdad (decisión de Silvana + Julio):** validar esta lista
 contra los motivos reales de contacto que hoy ve el equipo en Intercom, definir los campos
-obligatorios por tipo, y decidir la prioridad operativa (SLA) de cada uno.
+obligatorios por tipo, y decidir la prioridad operativa (SLA) de cada uno. Cerrarla con otra
+lista es editar `backend/tickets/taxonomy.py` y sus tests: la taxonomía no está repartida por
+el backend.

@@ -137,15 +137,17 @@ Qué incluye: crear conversación, enviar mensaje (responde 202 y encola), lista
 sondeo del frontend, y la dependencia de identidad — que jamás confía en un `user_id` del
 frontend (RNF-005).
 
-**T-07 · Handoff y tickets**
-Requerimientos: RF-022..RF-028 · Depende de: T-05, T-03, T-30
-**Bloqueado por: D-008** (taxonomía), D-016 (formato
-Slack). D-017 y D-019 quedaron cerradas el 2026-08-27: N tickets por conversación (máx. 5
-activos), cerrar un ticket no cierra la conversación, y el anónimo no deriva (RF-003 sin efecto).
-Archivos: `backend/tickets/*`
-Qué incluye: criterios de derivación, creación del ticket (tope de 5 activos por usuario), apagado
-de la IA, mensaje de espera una sola vez, encolado de la notificación a Slack, y al cerrar: mensaje
-SYSTEM `TICKET_CLOSED` en el hilo + conversación de vuelta a `BOT_ATTENDING`.
+**T-07 · Handoff y tickets** — ✅ hecho 2026-09-02 (`tests/test_tickets_api.py`,
+`tests/test_tickets_taxonomy.py`)
+Requerimientos: RF-022..RF-028, RF-031 · Depende de: T-05, T-03
+Hecho: handoff con formulario y casos (D-029), y el módulo `backend/tickets/*` completo —
+taxonomía del corpus (12 `problem_type` con categoría, prioridad y datos mínimos), sugerencia
+por reglas sin modelo, ciclo PENDING → IN_PROGRESS → CLOSED pegado a la conversación escalada,
+reclasificación del asesor y cierre con resolución. El apagado de la IA, el mensaje de espera
+una sola vez y las notas SYSTEM ya venían de F2/D-029.
+⚠️ **La taxonomía es la PROPUESTA de Aaron: D-008 sigue abierta** y la cierran Silvana + Julio;
+cerrarla es editar `backend/tickets/taxonomy.py`.
+**Pendiente:** encolar la notificación a Slack (T-30 / **D-016**).
 
 **T-08 · Endpoints del asesor** — ✅ mensajería hecha 2026-08-27 (`tests/test_advisor_api.py`)
 Requerimientos: RF-029..RF-039 · Depende de: T-07, T-03
