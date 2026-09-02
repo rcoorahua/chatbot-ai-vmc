@@ -43,8 +43,19 @@
   }
 
   const CONFIG = {
-    pollOpenMs: 2500,
-    pollClosedMs: 15000,
+    // Cadencias del sondeo (TD-001, revisado 2026-09-02): se sondea SOLO cuando algo puede
+    // llegar. Esperando al bot: rapido; caso con asesor: medio; hilo del bot en reposo: lento
+    // (cubre la intervencion proactiva de D-022); panel cerrado: la lista de casos o nada.
+    pollWaitingMs: 2000,
+    pollAdvisorMs: 5000,
+    pollOpenMs: 15000,
+    pollClosedMs: 60000,
+    pollAnonPendingClosedMs: 30000,
+    listEveryMs: 30000,
+    // Backoff exponencial con jitter ante error de red o 5xx: una API caida no recibe un
+    // martillo de 2,5 s por pestaña, y al volver no vuelven todas sincronizadas.
+    backoffBaseMs: 5000,
+    backoffMaxMs: 60000,
     requestTimeoutMs: 15000,
     storageKey: "subastin.session.v1",
     pageSize: 100,
@@ -106,6 +117,26 @@
     attach: "Adjuntar archivo",
     emoji: "Insertar emoji",
     soon: "Muy pronto",
+    // D-029: casos, lista de conversaciones y formulario de asesor.
+    inboxTitle: "Mensajes",
+    threadName: "Subastín",
+    statusPending: "Esperando asesor",
+    statusAttending: "Un asesor te atiende",
+    statusClosed: "Cerrada",
+    waitingBanner: "Un asesor te responderá aquí. Puedes seguir escribiendo detalles mientras tanto.",
+    closedCase: "Este caso está cerrado.",
+    closedAnon: "Esta conversación se cerró.",
+    newConversation: "Nueva conversación",
+    backToBot: "Volver a Subastín",
+    olderMessages: "Ver mensajes anteriores",
+    formSending: "Enviando…",
+    formFailed: "No se pudo enviar. Inténtalo de nuevo.",
+    formRequired: "Completa este campo",
+    noCases: "Cuando pidas un asesor, tu caso aparecerá aquí.",
+    offlineStatus: "Sin conexión",
+    caseOpenedFrom: (title) => (title ? `Abriste el caso «${title}»` : "Abriste un caso para un asesor"),
+    caseOpenedHere: "Caso abierto desde tu chat con Subastín",
+    openCase: "Ver caso",
   };
 
   // Eventos de auditoria que llegan como mensajes SYSTEM (conversations/models.py SystemEvent)
@@ -114,10 +145,11 @@
     HANDOFF_REQUESTED: "Solicitaste hablar con un asesor",
     ADVISOR_ASSIGNED: "Un asesor se unió a la conversación",
     TICKET_OPENED: "Ticket abierto",
-    TICKET_CLOSED: "Ticket cerrado",
+    TICKET_CLOSED: "El asesor cerró la atención. Subastín vuelve a responder",
     BOT_DISABLED: "Subastín dejó de responder mientras un asesor atiende tu caso",
     BOT_ENABLED: "Subastín vuelve a atenderte",
     CONVERSATION_CLOSED: "Conversación cerrada",
+    CASE_OPENED: "Caso abierto",
   };
 
   // TODO: el contenido real del centro de ayuda lo entrega VMC; por ahora solo la estructura
@@ -177,6 +209,27 @@
     // ventana se muestra el indicador de "escribiendo"; lo apaga la respuesta o el vencimiento.
     typingSince: null,
     typingTimer: null,
+    // D-029: hilo del bot + casos. `activeId` es la conversacion abierta en la vista de
+    // mensajes; `conversation` su estado vigente (llega en cada sondeo) y `threads` guarda
+    // los mensajes ya cargados de las demas para no volver a pedirlos al cambiar.
+    conversations: [],
+    activeId: null,
+    conversation: null,
+    threads: new Map(),
+    firstKey: null,
+    hasMore: false,
+    loadingOlder: false,
+    pollAgain: false,
+    // Fallos seguidos del sondeo (backoff) y ultima carga de la lista.
+    failures: 0,
+    lastListAt: 0,
+    // Ultimo `last_message_at` visto por conversacion: con el panel cerrado, un caso que
+    // avanzo desde entonces suma al contador del boton flotante.
+    seenAt: {},
+    // Formulario de asesor en curso: borrador (sobrevive al re-render), error y envio.
+    formDraft: {},
+    formError: null,
+    formBusy: false,
   };
 
   // ───────────────────────────────── Utilidades DOM ─────────────────────────────────
@@ -704,8 +757,10 @@
       });
       const data = response.status === 204 ? null : await response.json().catch(() => null);
       if (!response.ok) {
-        const error = new Error((data && data.detail) || `HTTP ${response.status}`);
+        const detail = data && data.detail;
+        const error = new Error(typeof detail === "string" ? detail : `HTTP ${response.status}`);
         error.status = response.status;
+        error.detail = detail;
         throw error;
       }
       state.offline = false;
@@ -730,6 +785,7 @@
       (!wantAuth || stored.userId === wantedUser);
     if (stillValid) {
       state.session = stored;
+      if (!state.activeId) state.activeId = stored.conversationId;
       return stored;
     }
 
@@ -757,6 +813,7 @@
       conversationId: data.conversation.conversation_id,
     };
     state.session = session;
+    state.activeId = session.conversationId;
     state.identityError = false;
     storeSession(session);
     return session;
@@ -767,6 +824,17 @@
     state.messages = [];
     state.pending.clear();
     state.lastKey = null;
+    state.firstKey = null;
+    state.hasMore = false;
+    state.conversations = [];
+    state.activeId = null;
+    state.conversation = null;
+    state.threads = new Map();
+    state.lastListAt = 0;
+    state.seenAt = {};
+    state.formDraft = {};
+    state.formError = null;
+    state.typingSince = null;
     storeSession(null);
   }
 
@@ -803,49 +871,289 @@
       if (message.sender_type !== "USER") state.typingSince = null;
       if (message.client_message_id) state.pending.delete(message.client_message_id);
       if (!state.lastKey || message.message_key > state.lastKey) state.lastKey = message.message_key;
+      if (!state.firstKey || message.message_key < state.firstKey) state.firstKey = message.message_key;
     }
     if (added) state.messages.sort((a, b) => (a.message_key < b.message_key ? -1 : 1));
     return added;
   }
 
+  // ───────────────────────── Conversaciones: hilo del bot + casos (D-029) ─────────────────────────
+
+  function isAnonymous() {
+    return !state.session || state.session.userType !== "AUTHENTICATED";
+  }
+
+  function threadId() {
+    return state.session ? state.session.conversationId : null;
+  }
+
+  function isThread(conv) {
+    return !conv || conv.kind !== "CASE";
+  }
+
+  function waitingAdvisor(conv) {
+    return Boolean(conv) && (conv.status === "PENDING_ADVISOR" || conv.status === "IN_ATTENTION");
+  }
+
+  function hasOpenCase() {
+    return state.conversations.some((c) => c.kind === "CASE" && c.status !== "CLOSED");
+  }
+
+  /** Estado fresco de una conversacion (viene en cada sondeo): se refleja en la lista. */
+  function applyConversation(conv) {
+    if (!conv) return;
+    if (conv.conversation_id === state.activeId) state.conversation = conv;
+    const i = state.conversations.findIndex((c) => c.conversation_id === conv.conversation_id);
+    if (i >= 0) state.conversations[i] = conv;
+    else if (conv.kind === "CASE") state.conversations.push(conv);
+    else state.conversations.unshift(conv);
+  }
+
+  async function fetchConversations() {
+    const data = await withSession((session) =>
+      request("GET", "/chat/conversations", undefined, session.token)
+    );
+    const primera = !state.lastListAt;
+    state.lastListAt = Date.now();
+    for (const conv of data.conversations) {
+      const seen = state.seenAt[conv.conversation_id];
+      // Con el panel cerrado, un caso que avanzo desde la ultima lista es una novedad para
+      // el contador del boton. La primera carga solo toma la foto.
+      if (!primera && !state.open && seen && conv.last_message_at > seen) state.unread += 1;
+      state.seenAt[conv.conversation_id] = conv.last_message_at;
+    }
+    state.conversations = data.conversations;
+    const active = data.conversations.find((c) => c.conversation_id === state.activeId);
+    if (active) state.conversation = active;
+    return data.conversations;
+  }
+
+  function refreshList() {
+    if (isAnonymous()) return;
+    fetchConversations().then(render, render);
+  }
+
+  /** Guarda los mensajes de la conversacion activa y carga (o estrena) otra. */
+  function switchConversation(id) {
+    if (!id || id === state.activeId) {
+      if (state.view !== "messages") setView("messages");
+      return;
+    }
+    if (state.activeId) {
+      state.threads.set(state.activeId, {
+        messages: state.messages,
+        lastKey: state.lastKey,
+        firstKey: state.firstKey,
+        hasMore: state.hasMore,
+        conversation: state.conversation,
+      });
+    }
+    const saved = state.threads.get(id);
+    state.activeId = id;
+    state.messages = saved ? saved.messages : [];
+    state.lastKey = saved ? saved.lastKey : null;
+    state.firstKey = saved ? saved.firstKey : null;
+    state.hasMore = saved ? saved.hasMore : false;
+    state.conversation = saved
+      ? saved.conversation
+      : state.conversations.find((c) => c.conversation_id === id) || null;
+    state.typingSince = null;
+    state.unseenBelow = 0;
+    state.stickToBottom = true;
+    state.formError = null;
+    state.view = "messages";
+    state.unread = 0;
+    render();
+    if (state.loading) state.pollAgain = true; // el sondeo en vuelo era de la otra
+    else poll();
+  }
+
+  function openThread() {
+    switchConversation(threadId());
+  }
+
+  function openMessagesTab() {
+    if (isAnonymous()) openThread();
+    else setView("inbox");
+  }
+
+  /** Anonimo con la conversacion cerrada: otra sesion es otra conversacion (D-002/D-018). */
+  function startNewConversation() {
+    dropSession();
+    state.view = "messages";
+    render();
+    boot();
+  }
+
+  // ───────────────────────────────── Sondeo (TD-001) ─────────────────────────────────
+
   async function poll() {
     if (state.loading) return;
+    // El anonimo no tiene sesion hasta que abre el chat: sin sesion no hay fila que sondear
+    // (y crearla desde aqui haria una conversacion por cada visitante de VMC).
+    if (!state.session && !wantsAuthenticated()) return;
     state.loading = true;
+    try {
+      await ensureSession();
+      const listDue = !isAnonymous() && Date.now() - state.lastListAt > CONFIG.listEveryMs;
+      if (listDue) await fetchConversations();
+      // Cerrado y autenticado: la lista ya cubrio todos los casos en UNA llamada.
+      if (state.open || isAnonymous()) await pollActive();
+      state.failures = 0;
+      if (!state.open) updateLauncher();
+    } catch (_) {
+      state.failures += 1;
+      render(); // muestra el aviso de sin conexion si aplica
+    } finally {
+      state.loading = false;
+      if (state.pollAgain) {
+        state.pollAgain = false;
+        poll();
+      } else {
+        schedulePoll();
+      }
+    }
+  }
+
+  async function pollActive() {
+    const id = state.activeId;
+    if (!id) return;
+    const query =
+      `?limit=${CONFIG.pageSize}` +
+      (state.lastKey ? `&after=${encodeURIComponent(state.lastKey)}` : "");
+    const data = await withSession((session) =>
+      request("GET", `/chat/conversations/${id}/messages${query}`, undefined, session.token)
+    );
+    if (id !== state.activeId) return; // el usuario cambio de conversacion mientras tanto
+    const initial = !state.lastKey;
+    const before = state.messages.length;
+    const added = upsertMessages(data.messages);
+    if (initial) {
+      state.hasMore = Boolean(data.has_more);
+      if (data.next_before) state.firstKey = data.next_before;
+    }
+    const statusChanged =
+      !state.conversation || state.conversation.status !== data.conversation.status;
+    applyConversation(data.conversation);
+    if (state.conversation && !state.conversation.bot_enabled) state.typingSince = null;
+    const ajenos = data.messages.filter((m) => m.sender_type !== "USER").length;
+    if (added && before > 0 && !(state.open && state.view === "messages")) {
+      state.unread += ajenos;
+    }
+    // Con el hilo abierto pero el usuario leyendo mas arriba: no se le mueve la vista, se le
+    // avisa con la pildora de "hay mensajes abajo".
+    if (added && ajenos && state.open && state.view === "messages" && !state.stickToBottom) {
+      state.unseenBelow += ajenos;
+    }
+    if (added || statusChanged || state.offline) render();
+  }
+
+  async function loadOlder() {
+    if (!state.hasMore || !state.firstKey || state.loadingOlder) return;
+    state.loadingOlder = true;
+    const id = state.activeId;
     try {
       const data = await withSession((session) =>
         request(
           "GET",
-          `/chat/conversations/${session.conversationId}/messages?limit=${CONFIG.pageSize}` +
-            (state.lastKey ? `&after=${encodeURIComponent(state.lastKey)}` : ""),
+          `/chat/conversations/${id}/messages?limit=${CONFIG.pageSize}` +
+            `&before=${encodeURIComponent(state.firstKey)}`,
           undefined,
           session.token
         )
       );
-      const before = state.messages.length;
-      const added = upsertMessages(data.messages);
-      const ajenos = data.messages.filter((m) => m.sender_type !== "USER").length;
-      if (added && before > 0 && !(state.open && state.view === "messages")) {
-        state.unread += ajenos;
-      }
-      // Con el hilo abierto pero el usuario leyendo mas arriba: no se le mueve la vista, se le
-      // avisa con la pildora de "hay mensajes abajo".
-      if (added && ajenos && state.open && state.view === "messages" && !state.stickToBottom) {
-        state.unseenBelow += ajenos;
-      }
-      if (added || state.offline) render();
+      if (id !== state.activeId) return;
+      state.stickToBottom = false;
+      upsertMessages(data.messages);
+      state.hasMore = Boolean(data.has_more);
+      if (data.next_before) state.firstKey = data.next_before;
     } catch (_) {
-      render(); // muestra el aviso de sin conexion si aplica
+      /* el boton sigue ahi para reintentar */
     } finally {
-      state.loading = false;
-      schedulePoll();
+      state.loadingOlder = false;
+      render();
     }
+  }
+
+  function jitter(ms) {
+    return Math.round(ms * (0.85 + Math.random() * 0.3));
+  }
+
+  /** Cuanto esperar hasta el proximo sondeo; 0 = nada puede llegar, no se sondea. */
+  function pollDelay() {
+    if (state.failures) {
+      const factor = Math.pow(2, state.failures - 1);
+      return jitter(Math.min(CONFIG.backoffMaxMs, CONFIG.backoffBaseMs * factor));
+    }
+    const conv = state.conversation;
+    if (state.open) {
+      if (conv && conv.status === "CLOSED") return isAnonymous() ? 0 : jitter(CONFIG.listEveryMs);
+      if (state.typingSince && (!conv || conv.bot_enabled)) return jitter(CONFIG.pollWaitingMs);
+      if (waitingAdvisor(conv)) return jitter(CONFIG.pollAdvisorMs);
+      return jitter(CONFIG.pollOpenMs);
+    }
+    if (isAnonymous()) return waitingAdvisor(conv) ? jitter(CONFIG.pollAnonPendingClosedMs) : 0;
+    return hasOpenCase() ? jitter(CONFIG.pollClosedMs) : 0;
   }
 
   function schedulePoll() {
     clearTimeout(state.pollTimer);
     if (document.visibilityState === "hidden") return; // se reanuda en visibilitychange
-    const delay = state.open ? CONFIG.pollOpenMs : CONFIG.pollClosedMs;
+    if (!state.session) return;
+    const delay = pollDelay();
+    if (!delay) return;
     state.pollTimer = setTimeout(poll, delay);
+  }
+
+  // ───────────────────────── Formulario de asesor (D-029) ─────────────────────────
+
+  async function submitHandoff(spec) {
+    if (state.formBusy) return;
+    const values = {};
+    for (const field of spec.fields) {
+      const value = String(state.formDraft[field.name] || "").trim();
+      if (value) values[field.name] = value;
+      else if (field.required) {
+        state.formError = { field: field.name, message: TEXT.formRequired };
+        render();
+        return;
+      }
+    }
+    state.formBusy = true;
+    state.formError = null;
+    render();
+    const id = state.activeId;
+    try {
+      const data = await withSession((session) =>
+        request("POST", `/chat/conversations/${id}/handoff`, values, session.token)
+      );
+      state.formBusy = false;
+      state.formDraft = {};
+      const conv = data.conversation;
+      if (conv.conversation_id === id) {
+        // Anonimo: su misma conversacion ya espera al asesor; el sondeo trae lo nuevo.
+        applyConversation(conv);
+        state.typingSince = null;
+        await pollActive();
+        render();
+      } else {
+        // Autenticado: se abrio un caso aparte; se entra a el y el hilo sigue con el bot.
+        applyConversation(conv);
+        await fetchConversations().catch(() => null);
+        switchConversation(conv.conversation_id);
+      }
+    } catch (error) {
+      state.formBusy = false;
+      const detail = error.detail;
+      state.formError = {
+        field: detail && typeof detail === "object" ? detail.field : null,
+        message:
+          (detail && typeof detail === "object" && detail.detail) ||
+          (typeof detail === "string" ? detail : null) ||
+          TEXT.formFailed,
+      };
+      render();
+    }
   }
 
   function sendMessage(text, interaction) {
@@ -861,6 +1169,7 @@
       interaction: interaction || null,
       status: "sending",
       createdAt: new Date().toISOString(),
+      conversationId: state.activeId,
     });
     render();
     deliver(clientMessageId);
@@ -875,7 +1184,7 @@
       const data = await withSession((session) =>
         request(
           "POST",
-          `/chat/conversations/${session.conversationId}/messages`,
+          `/chat/conversations/${draft.conversationId || session.conversationId}/messages`,
           Object.assign(
             { client_message_id: clientMessageId, content: draft.content },
             draft.interaction ? { interaction: draft.interaction } : null
@@ -884,13 +1193,16 @@
         )
       );
       state.pending.delete(clientMessageId);
-      upsertMessages([data.message]);
-      // El mensaje quedo durable (202): a partir de aqui se espera respuesta.
-      state.typingSince = Date.now();
+      if (draft.conversationId === state.activeId) upsertMessages([data.message]);
+      // El mensaje quedo durable (202): a partir de aqui se espera respuesta — del bot. Con
+      // un asesor en el caso la espera es de una persona y no se promete "escribiendo".
+      if (!state.conversation || state.conversation.bot_enabled) state.typingSince = Date.now();
+      schedulePoll(); // cadencia rapida mientras se espera
     } catch (error) {
       draft.status = "failed";
       draft.error = error.message;
       draft.rateLimited = error.status === 429;
+      if (error.status === 409) poll(); // cerrada mientras escribia: refrescar el estado
     }
     render();
   }
@@ -905,7 +1217,7 @@
   let lastViewKey = null; // vista dibujada por ultima vez, para animar solo los cambios reales
   let lastViewDepth = 0; // posicion de esa vista, para saber hacia donde cruzar
 
-  const VIEW_ORDER = { home: 0, messages: 1, help: 2 };
+  const VIEW_ORDER = { home: 0, inbox: 1, messages: 1.3, help: 2 };
 
   function viewDepth(view, article) {
     return (VIEW_ORDER[view] || 0) + (article ? 0.5 : 0);
@@ -936,7 +1248,13 @@
     ensureLottie();
     ensureOrbGpu(); // el orbe WebGPU calienta desde que se abre el panel
     const view =
-      state.view === "messages" ? renderMessages() : state.view === "help" ? renderHelp() : renderHome();
+      state.view === "messages"
+        ? renderMessages()
+        : state.view === "inbox"
+          ? renderInbox()
+          : state.view === "help"
+            ? renderHelp()
+            : renderHome();
     // La pantalla entra animada SOLO al cambiar de vista (o al abrir el panel). Si se animara
     // en cada render, la pantalla entera parpadearia cada vez que llega un mensaje.
     const viewKey = state.view + (state.helpArticle ? ":" + (state.helpArticle.id || "") : "");
@@ -1051,6 +1369,7 @@
   /** El bot esta callado si el ultimo evento de sistema fue un handoff o la toma de un asesor
    *  (D-007: no se re-enciende solo). Ahi no se promete "escribiendo": responde una persona. */
   function botSilent() {
+    if (state.conversation) return !state.conversation.bot_enabled;
     for (let i = state.messages.length - 1; i >= 0; i -= 1) {
       const message = state.messages[i];
       if (message.sender_type !== "SYSTEM" && message.message_type !== "SYSTEM") continue;
@@ -1064,13 +1383,14 @@
   }
 
   function renderNav() {
+    const activo = (key) => state.view === key || (key === "messages" && state.view === "inbox");
     const item = (key, label, icon) =>
       h(
         "button",
         {
-          class: "nav-item" + (state.view === key ? " is-active" : ""),
+          class: "nav-item" + (activo(key) ? " is-active" : ""),
           type: "button",
-          onclick: () => setView(key),
+          onclick: () => (key === "messages" ? openMessagesTab() : setView(key)),
         },
         icon,
         h("span", { text: label })
@@ -1131,7 +1451,7 @@
         renderBanner(),
         h(
           "button",
-          { class: "card card-cta", type: "button", onclick: () => setView("messages") },
+          { class: "card card-cta", type: "button", onclick: openThread },
           h("div", {}, h("strong", { text: TEXT.sendUs }), h("small", { text: TEXT.sendUsSub })),
           h("span", { class: "cta-icon" }, ICON.send())
         ),
@@ -1189,7 +1509,9 @@
     // el nonce de la apertura le da una clave fresca, asi firstRenderOf vuelve a animarlo.
     // Se inserta despues del historial (timestamps anteriores a la apertura) y antes de lo
     // que llegue en esta sesion, como la nota de "ahora hablas con..." de Intercom.
-    let saludoPendiente = state.greetingVisible || (!state.open && state.messages.length === 0);
+    let saludoPendiente =
+      isThread(state.conversation) &&
+      (state.greetingVisible || (!state.open && state.messages.length === 0));
     const saludo = {
       sender_type: "BOT",
       content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
@@ -1203,6 +1525,16 @@
       previo = saludo;
     };
 
+    if (state.hasMore) {
+      items.push(
+        h("button", {
+          class: "link older",
+          type: "button",
+          text: state.loadingOlder ? TEXT.sending : TEXT.olderMessages,
+          onclick: loadOlder,
+        })
+      );
+    }
     const ultimo = state.messages[state.messages.length - 1] || null;
     for (const message of state.messages) {
       if (saludoPendiente && state.greetingAt && message.created_at > state.greetingAt) {
@@ -1221,12 +1553,13 @@
       // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
       // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
       if (message === ultimo && state.pending.size === 0) {
-        const botones = renderQuickReplies(message);
+        const botones = renderQuickReplies(message) || renderHandoffForm(message);
         if (botones) items.push(botones);
       }
     }
     if (saludoPendiente) pushSaludo();
     for (const [clientMessageId, draft] of state.pending) {
+      if (draft.conversationId && draft.conversationId !== state.activeId) continue;
       pushDay(draft.createdAt);
       const propio = { sender_type: "USER", created_at: draft.createdAt };
       items.push(renderPending(clientMessageId, draft, !sameGroup(previo, propio)));
@@ -1238,20 +1571,9 @@
     return h(
       "div",
       { class: "screen messages" },
-      h(
-        "header",
-        { class: "bar" },
-        h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.back, onclick: () => setView("home") }, ICON.back()),
-        botAvatar("avatar", true),
-        h(
-          "div",
-          { class: "bar-title" },
-          h("strong", { text: TEXT.agent }),
-          h("small", { class: "status-line" }, h("i", { class: "status-dot", "aria-hidden": "true" }), TEXT.agentStatus)
-        ),
-        h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
-      ),
+      renderThreadHeader(),
       renderBanner(),
+      renderStatusBanner(),
       h(
         "div",
         { class: "thread-wrap" },
@@ -1284,7 +1606,181 @@
             )
           : null
       ),
-      renderComposer()
+      state.conversation && state.conversation.status === "CLOSED"
+        ? renderClosedBar()
+        : renderComposer()
+    );
+  }
+
+  function statusLabel(conv) {
+    if (!conv) return null;
+    if (conv.status === "PENDING_ADVISOR") return TEXT.statusPending;
+    if (conv.status === "IN_ATTENTION") return TEXT.statusAttending;
+    if (conv.status === "CLOSED") return TEXT.statusClosed;
+    return null;
+  }
+
+  function conversationLabel(conv) {
+    if (isThread(conv)) return TEXT.threadName;
+    return conv.title || TEXT.navMessages;
+  }
+
+  /** Cabecera del hilo: Subastín "en linea" en el hilo del bot (gris si no hay conexion);
+   *  en un caso, su asunto y en que esta (esperando asesor, atendido, cerrado). */
+  function renderThreadHeader() {
+    const conv = state.conversation;
+    const caso = !isThread(conv);
+    const estado = statusLabel(conv);
+    const back = () => (isAnonymous() ? setView("home") : setView("inbox"));
+    const subtitulo = estado
+      ? h("small", { class: "status-line", text: estado })
+      : h(
+          "small",
+          { class: "status-line" },
+          h("i", { class: "status-dot" + (state.offline ? " is-off" : ""), "aria-hidden": "true" }),
+          state.offline ? TEXT.offlineStatus : TEXT.agentStatus
+        );
+    return h(
+      "header",
+      { class: "bar" },
+      h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.back, onclick: back }, ICON.back()),
+      caso ? null : botAvatar("avatar", true),
+      h("div", { class: "bar-title" }, h("strong", { text: conversationLabel(conv) }), subtitulo),
+      h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+    );
+  }
+
+  function renderStatusBanner() {
+    if (!waitingAdvisor(state.conversation)) return null;
+    return h("div", { class: "banner banner-info", text: TEXT.waitingBanner });
+  }
+
+  /** Conversacion cerrada (D-029): de solo lectura. El anonimo abre otra sesion; el
+   *  autenticado vuelve a su hilo con Subastín. */
+  function renderClosedBar() {
+    const anon = isAnonymous();
+    return h(
+      "div",
+      { class: "closed-bar" },
+      h("span", { text: anon ? TEXT.closedAnon : TEXT.closedCase }),
+      h("button", {
+        class: "qr",
+        type: "button",
+        text: anon ? TEXT.newConversation : TEXT.backToBot,
+        onclick: () => (anon ? startNewConversation() : openThread()),
+      })
+    );
+  }
+
+  function shortWhen(iso) {
+    const label = dayLabel(iso);
+    return label === TEXT.today ? formatTime(iso) : label;
+  }
+
+  /** Lista de conversaciones del autenticado (D-029): el hilo con Subastín arriba y debajo
+   *  los casos con asesor, el mas reciente primero, con su estado. */
+  function renderInbox() {
+    const thread = state.conversations.find((c) => c.kind !== "CASE") || null;
+    const cases = state.conversations.filter((c) => c.kind === "CASE");
+    const row = (conv, primary, secondary, avatar) =>
+      h(
+        "li",
+        {},
+        h(
+          "button",
+          { type: "button", class: "inbox-row", onclick: () => switchConversation(conv.conversation_id) },
+          avatar,
+          h(
+            "div",
+            { class: "inbox-meta" },
+            h(
+              "div",
+              { class: "inbox-top" },
+              h("span", { class: "inbox-title", text: primary }),
+              conv.last_message_at ? h("small", { class: "inbox-time", text: shortWhen(conv.last_message_at) }) : null
+            ),
+            h("span", { class: "inbox-preview", text: secondary || "" })
+          ),
+          statusLabel(conv)
+            ? h("span", {
+                class:
+                  "chip" +
+                  (conv.status === "CLOSED" ? " chip-closed" : conv.status === "IN_ATTENTION" ? " chip-live" : ""),
+                text: statusLabel(conv),
+              })
+            : ICON.chevron()
+        )
+      );
+    return h(
+      "div",
+      { class: "screen inbox" },
+      h(
+        "header",
+        { class: "bar bar-plain" },
+        h("div", { class: "bar-title" }, h("strong", { text: TEXT.inboxTitle })),
+        h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+      ),
+      h(
+        "div",
+        { class: "help-body" },
+        renderBanner(),
+        h(
+          "ul",
+          { class: "list list-inbox" },
+          thread ? row(thread, TEXT.threadName, thread.last_message_preview || TEXT.sendUsSub, botAvatar("avatar", false)) : null,
+          cases.map((c) => row(c, c.title || TEXT.navMessages, c.last_message_preview, h("span", { class: "inbox-icon" }, ICON.messages())))
+        ),
+        cases.length ? null : h("p", { class: "muted", text: TEXT.noCases })
+      ),
+      renderNav()
+    );
+  }
+
+  /** Tarjeta de formulario de asesor (D-029) bajo el mensaje del bot que la trae en metadata.
+   *  Los campos vienen del servidor (nombre/correo/telefono para el anonimo, RF-003); aqui
+   *  solo se dibujan y se envian: la validacion real vive en conversations/forms.py. */
+  function renderHandoffForm(message) {
+    const interaction = message.metadata && message.metadata.interaction;
+    if (!interaction || interaction.type !== "HANDOFF_FORM" || !Array.isArray(interaction.fields)) return null;
+    if (message.sender_type !== "BOT") return null;
+    if (state.conversation && state.conversation.status !== "BOT_ATTENDING") return null;
+    const error = state.formError;
+    const fields = interaction.fields.map((field) => {
+      const invalid = error && error.field === field.name;
+      const attrs = {
+        name: field.name,
+        required: field.required ? "" : null,
+        maxlength: String(field.max || state.maxChars),
+        class: invalid ? "is-invalid" : null,
+        autocomplete: field.type === "email" ? "email" : field.type === "tel" ? "tel" : field.name === "name" ? "name" : "off",
+        oninput: (event) => {
+          state.formDraft[field.name] = event.target.value;
+        },
+      };
+      const input =
+        field.type === "textarea"
+          ? h("textarea", Object.assign({ rows: "3" }, attrs))
+          : h("input", Object.assign({ type: field.type || "text" }, attrs));
+      input.value = state.formDraft[field.name] || "";
+      return h("label", {}, h("span", { text: field.label }), input);
+    });
+    return h(
+      "form",
+      {
+        class: "form-card" + (firstRenderOf("form:" + message.message_id) ? " is-new" : ""),
+        onsubmit: (event) => {
+          event.preventDefault();
+          submitHandoff(interaction);
+        },
+      },
+      fields,
+      error ? h("p", { class: "form-error", text: error.message }) : null,
+      h("button", {
+        class: "qr qr-solid",
+        type: "submit",
+        disabled: state.formBusy ? "" : null,
+        text: state.formBusy ? TEXT.formSending : interaction.submit || TEXT.send,
+      })
     );
   }
 
@@ -1432,14 +1928,25 @@
   }
 
   function renderSystemEvent(message) {
-    const label = SYSTEM_EVENTS[message.content] || message.content || "";
+    const meta = message.metadata || {};
+    let label = SYSTEM_EVENTS[message.content] || message.content || "";
+    let action = null;
+    if (message.content === "CASE_OPENED") {
+      if (meta.case_id) {
+        label = TEXT.caseOpenedFrom(meta.title);
+        action = h("button", { class: "link", type: "button", text: TEXT.openCase, onclick: () => switchConversation(meta.case_id) });
+      } else {
+        label = TEXT.caseOpenedHere;
+      }
+    }
     return h(
       "div",
       {
         class: "system" + (firstRenderOf(message.message_id) ? " is-new" : ""),
         title: message.created_at ? formatTime(message.created_at) : "",
       },
-      h("span", { text: label })
+      h("span", { text: label }),
+      action
     );
   }
 
@@ -1607,7 +2114,8 @@
     if (open) {
       // Directo a mensajes (sin pasar por el home) y con el saludo entrando como mensaje
       // nuevo: nonce fresco = la burbuja se anima en CADA apertura, no solo la primera.
-      state.view = "messages";
+      // Si un caso avanzo mientras estaba cerrado, se abre en la lista para que se vea.
+      state.view = !isAnonymous() && state.unread > 0 && hasOpenCase() ? "inbox" : "messages";
       state.unread = 0;
       state.greetingNonce = Date.now();
       state.greetingAt = new Date().toISOString();
@@ -1632,9 +2140,10 @@
   function setView(view) {
     state.view = view;
     state.helpArticle = null;
-    if (view === "messages") state.unread = 0;
+    if (view === "messages" || view === "inbox") state.unread = 0;
     render();
     if (view === "messages") boot();
+    if (view === "inbox") refreshList();
   }
 
   let booting = false;
@@ -1643,6 +2152,7 @@
     booting = true;
     try {
       await ensureSession();
+      if (!isAnonymous() && !state.lastListAt) await fetchConversations();
       await poll();
     } catch (_) {
       render();
@@ -1943,6 +2453,50 @@
     }
     .qr:hover { background: var(--vault-500); color: #fff; transform: translateY(-1px); }
     .qr:active { transform: none; }
+    .qr-solid { background: var(--vault-500); color: #fff; }
+    .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
+    /* ── Formulario de asesor (D-029): tarjeta bajo el mensaje del bot ── */
+    .form-card {
+      display: flex; flex-direction: column; gap: 10px; margin: 8px 0 2px; max-width: 92%;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px;
+      box-shadow: var(--shadow-card);
+    }
+    .form-card.is-new { animation: greeting-in .4s var(--ease-soft) both; }
+    .form-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
+    .form-card input, .form-card textarea {
+      font: inherit; font-size: 14px; color: inherit; background: var(--surface); width: 100%;
+      border: 1.5px solid var(--line-strong); border-radius: 12px; padding: 9px 11px;
+    }
+    .form-card input:focus, .form-card textarea:focus { outline: none; border-color: var(--vault-500); }
+    .form-card .is-invalid { border-color: #d64545; }
+    .form-card textarea { min-height: 72px; resize: vertical; }
+    .form-card .qr { align-self: flex-end; }
+    .form-error { margin: 0; color: #8a1c12; font-size: 12.5px; }
+    .banner-info { background: rgba(132, 96, 229, .08); color: var(--vault-700); }
+    .status-dot.is-off { background: #b3b3b3; animation: none; box-shadow: none; }
+    .older { align-self: center; margin: 0 0 10px; font-size: 13px; }
+    .closed-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px 16px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-soft);
+    }
+    .system .link { font-size: inherit; margin-left: 4px; }
+    /* ── Lista de conversaciones (D-029): el hilo con Subastín y los casos ── */
+    .inbox-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+    .inbox-icon {
+      display: inline-flex; width: 40px; height: 40px; border-radius: 50%; flex: none;
+      align-items: center; justify-content: center; background: rgba(132, 96, 229, .1); color: var(--vault-600);
+    }
+    .inbox-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+    .inbox-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .inbox-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .inbox-time { color: var(--ink-faint); font-size: 12px; flex: none; }
+    .inbox-preview { color: var(--ink-soft); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chip {
+      flex: none; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill);
+      background: rgba(237, 137, 54, .15); color: var(--orange-700);
+    }
+    .chip-live { background: rgba(20, 160, 130, .15); color: #0f6f5c; }
+    .chip-closed { background: rgba(0, 0, 0, .07); color: var(--ink-faint); }
     .row-typing { animation: fade-in .2s var(--ease) both; }
     .bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
     .row-mine .bubble-wrap { align-items: flex-end; }
@@ -2224,7 +2778,9 @@
     });
 
     render();
-    boot();
+    // El autenticado arranca al cargar (lista de casos para el contador del boton); el
+    // anonimo recien al abrir el chat: sin sesion no hay fila en la tabla ni sondeo.
+    if (wantsAuthenticated()) boot();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);

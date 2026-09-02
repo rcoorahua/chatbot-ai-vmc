@@ -50,8 +50,17 @@ Qué verificar:
 - **Envío**: el mensaje aparece como "Enviando…" y pasa a confirmado solo con el 202 del backend
   (RNF-003). Apagar la API y enviar deja el mensaje con "Reintentar"; al volver la API, el reintento
   usa el mismo `client_message_id` y no duplica (RF-037/RF-038).
-- **Eventos del sistema**: un mensaje `sender_type=SYSTEM` con contenido `TICKET_CLOSED` se dibuja
-  como separador "Ticket cerrado" en el hilo (D-003, estilo nota de sistema de Intercom).
+- **Eventos del sistema**: un mensaje `sender_type=SYSTEM` (`TICKET_CLOSED`, `CASE_OPENED`,
+  `CONVERSATION_CLOSED`…) se dibuja como nota de sistema en el hilo, estilo Intercom.
+- **Pedir asesor (D-029)**: "quiero hablar con un asesor" hace que Subastín ofrezca una
+  **tarjeta de formulario** debajo de su mensaje (asunto y detalle; al visitante le pide además
+  nombre, correo y teléfono opcional). Al enviarla: el visitante ve su misma conversación en
+  "Esperando asesor" con la invitación a crear cuenta; el usuario autenticado entra a un **caso
+  nuevo** y su hilo con Subastín sigue respondiendo. La pestaña **Mensajes** del autenticado
+  lista el hilo y sus casos con estado; un caso cerrado por el asesor queda de solo lectura con
+  "Volver a Subastín" (el visitante ve "Nueva conversación", que abre otra sesión).
+- **Historial largo**: el hilo abre en los últimos 50 mensajes y arriba aparece "Ver mensajes
+  anteriores" mientras quede historia.
 
 - **El bot responde** cuando corre el worker en otra terminal (`python -m scripts.run_ai_worker`,
   con `GEMINI_API_KEY`, `PINECONE_API_KEY` y `AI_JOBS_QUEUE_URL` en `.env`). Sin el worker, los
@@ -109,13 +118,22 @@ Por qué no se lee la cookie `subastop_jwt`: es **HttpOnly** (ningún script pue
 firmada con el secreto de sesión de VMC, que Subastín no debe conocer. Un JWT aparte con un
 secreto aparte solo sirve para el chat; si se filtra, no compromete la sesión de VMC.
 
-## Flujo de sesión
+## Flujo de sesión y sondeo
 
 1. `POST /chat/sessions` con `{ user_jwt }` (o `{}` si es anónimo) → token de sesión de Subastín
-   + la conversación del usuario.
-2. El token viaja como `Authorization: Bearer` en `GET/POST /chat/conversations/{id}/messages`.
-3. El widget sondea mensajes nuevos cada 2,5 s con el panel abierto (`?after=<message_key>`).
-4. Ante un 401 (sesión caducada) el widget abre otra sesión y reintenta una vez.
+   + el hilo del bot del usuario. El visitante recién crea su sesión **al abrir el chat**: una
+   pestaña de VMC que nunca lo abre no deja fila ni sondea.
+2. El token viaja como `Authorization: Bearer` en `/chat/conversations`,
+   `/chat/conversations/{id}/messages` y `/chat/conversations/{id}/handoff`. El autenticado ve
+   su hilo y sus casos; el visitante solo la conversación de su token.
+3. El primer `GET …/messages` sin cursor trae los **últimos** 50 y el estado de la conversación;
+   después `?after=<message_key>` trae solo lo nuevo y `?before=` pagina hacia atrás.
+4. Cadencia del sondeo (TD-001): 2 s mientras se espera al bot, 5 s en un caso con asesor,
+   15 s con el hilo en reposo, 60 s con el panel cerrado y casos abiertos (una llamada a la
+   lista), 30 s para el visitante cerrado que espera asesor, y nada en el resto. Ante un error
+   de red o 5xx, backoff exponencial con jitter hasta 60 s. Con la pestaña oculta no se sondea.
+5. Ante un 401 (sesión caducada) el widget abre otra sesión y reintenta una vez.
 
 La sesión vive en `sessionStorage`: sobrevive a la navegación dentro de la pestaña y muere al
-cerrarla. Para el anónimo esa es la regla de negocio; para el autenticado es solo caché.
+cerrarla. Para el anónimo esa es la regla de negocio (D-018: nada en `localStorage`); para el
+autenticado es solo caché.
