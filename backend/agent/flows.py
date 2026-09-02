@@ -85,10 +85,101 @@ _SELECT_OFFER_TYPE = FlowStep(
     },
 )
 
-# F-PART es el unico flujo ACTIVO. F-CONS / F-LIVE / F-NEGO / F-HAB estan mapeados en
-# MAPEO.md §4.1 y se activan agregando su FlowDefinition aqui — el motor no cambia.
+_CONS_SELECT_OFFER_TYPE = FlowStep(
+    action_id="SELECT_OFFER_TYPE",
+    slot="offer_type",
+    prompt="¿Para qué tipo de oferta quieres consignar?",
+    options=(
+        QuickReply(label="Oferta En Vivo", value="LIVE"),
+        QuickReply(label="Oferta Negociable", value="NEGOTIABLE"),
+    ),
+    canonical_queries={
+        "LIVE": "¿Cómo y cuánto debo consignar para poder participar en una oferta En Vivo?",
+        "NEGOTIABLE": (
+            "¿Cómo y cuánto debo consignar para poder participar en una oferta Negociable?"
+        ),
+    },
+)
+
+_SELECT_LIVE_STAGE = FlowStep(
+    action_id="SELECT_LIVE_STAGE",
+    slot="live_stage",
+    prompt="¿En qué parte del proceso En Vivo estás?",
+    options=(
+        QuickReply(label="Antes de empezar", value="BEFORE"),
+        QuickReply(label="Durante la puja", value="DURING"),
+        QuickReply(label="Terminó el proceso", value="FINISHED"),
+        QuickReply(label="Resulté ganador", value="WINNER"),
+    ),
+    canonical_queries={
+        "BEFORE": (
+            "Si quiero participar en una oferta En Vivo hoy, ¿qué tengo que hacer y cómo "
+            "ingreso a la Sala?"
+        ),
+        "DURING": "¿Cómo envío mis bids durante el proceso En Vivo y cuántos bids puedo hacer?",
+        "FINISHED": (
+            "La oferta En Vivo terminó, ¿ahora qué sigue y cuándo me devuelven la consignación?"
+        ),
+        "WINNER": "Gané una oferta En Vivo, ¿cuáles son los siguientes pasos como ganador?",
+    },
+)
+
+_SELECT_NEGO_STAGE = FlowStep(
+    action_id="SELECT_NEGO_STAGE",
+    slot="nego_stage",
+    prompt="¿En qué punto está tu negociación?",
+    options=(
+        QuickReply(label="Envié mi propuesta", value="PROPOSAL_SENT"),
+        QuickReply(label="Me aceptaron", value="ACCEPTED"),
+        QuickReply(label="Contrapropuesta", value="COUNTER"),
+        QuickReply(label="Rechazada", value="REJECTED"),
+    ),
+    canonical_queries={
+        "PROPOSAL_SENT": (
+            "Ya envié mi propuesta en una oferta Negociable, ¿dónde veo la respuesta del "
+            "vendedor y el estado de la negociación?"
+        ),
+        "ACCEPTED": "El vendedor ha aceptado mi propuesta en la oferta Negociable, ¿qué hago?",
+        "COUNTER": "El vendedor me ha enviado una contrapropuesta, ¿qué hago?",
+        "REJECTED": "¿Qué pasa si el vendedor rechaza mi propuesta o yo rechazo la suya?",
+    },
+)
+
+_SELECT_HAB_TOPIC = FlowStep(
+    action_id="SELECT_HAB_TOPIC",
+    slot="hab_topic",
+    prompt="¡Felicitaciones! ¿Con qué parte del proceso te ayudo?",
+    options=(
+        QuickReply(label="Pagar la comisión", value="COMMISSION"),
+        QuickReply(label="Subir documentos", value="DOCUMENTS"),
+        QuickReply(label="Pagar la oferta", value="PAYMENT"),
+        QuickReply(label="Mi comprobante", value="RECEIPT"),
+    ),
+    canonical_queries={
+        "COMMISSION": (
+            "Fui habilitado para comprar, ¿cómo se paga la comisión y dónde veo el porcentaje?"
+        ),
+        "DOCUMENTS": "¿Qué documentos debo adjuntar después de ser habilitado?",
+        "PAYMENT": (
+            "Ya pagué la comisión y subí los documentos, ¿cómo hago el pago de la oferta y "
+            "qué sigue?"
+        ),
+        "RECEIPT": (
+            "Terminé el proceso de compra de la oferta y necesito mi comprobante de pago "
+            "(boleta o factura), ¿a quién y cómo lo solicito?"
+        ),
+    },
+)
+
+# Los 5 flujos de MAPEO.md §4.1, todos ACTIVOS (F-CONS/F-LIVE/F-NEGO/F-HAB activados
+# 2026-09-01 por pedido de Aaron). Las consultas canonicas de cada valor estan verificadas
+# contra el indice real — ver el bloque de verificacion en MAPEO.md.
 FLOWS: dict[str, FlowDefinition] = {
     "PARTICIPATION": FlowDefinition(name="PARTICIPATION", steps=(_SELECT_OFFER_TYPE,)),
+    "CONSIGNMENT": FlowDefinition(name="CONSIGNMENT", steps=(_CONS_SELECT_OFFER_TYPE,)),
+    "LIVE_STAGE": FlowDefinition(name="LIVE_STAGE", steps=(_SELECT_LIVE_STAGE,)),
+    "NEGOTIATION_STAGE": FlowDefinition(name="NEGOTIATION_STAGE", steps=(_SELECT_NEGO_STAGE,)),
+    "ENABLEMENT": FlowDefinition(name="ENABLEMENT", steps=(_SELECT_HAB_TOPIC,)),
 }
 
 
@@ -110,28 +201,75 @@ _PARTICIPATION_PATTERN = re.compile(
 _LIVE_PATTERN = re.compile(r"\ben\s*vivo\b")
 _NEGOTIABLE_PATTERN = re.compile(r"\bnegociabl\w*\b")
 
-# Negacion cerca de "participar": "no quiero participar", "ya no deseo participar", "nunca
-# voy a participar", "no puedo participar". Hasta dos palabras entre la negacion y el verbo
-# cubre las formas reales sin bloquear frases donde el "no" queda lejos y no niega la
-# intencion. Hallado por los tests del motor (PR #79): sin esto, "no quiero participar"
-# abria el flujo igual que "quiero participar".
-_NEGATION_PATTERN = re.compile(
-    r"\b(?:no|tampoco|nunca|jamas)\b(?:\s+\w+){0,2}\s+participar"
+# "quiero consignar", "como consigno", "cuanto debo consignar". El verbo disparador tiene que
+# estar CERCA de "consign": "cuando me devuelven la consignacion" (FAQ de devolucion) no
+# lleva ninguno y no dispara.
+_CONSIGNMENT_PATTERN = re.compile(
+    r"\b(?:quiero|quisiera|deseo|necesito|debo|tengo\s+que|como|cuanto)\b"
+    r"(?:\s+\w+){0,2}\s+consign\w+"
+    r"|\bcomo\s+consigno\b"
+)
+
+# "me habilitaron", "fui habilitado", "que hago despues de la habilitacion".
+_ENABLEMENT_PATTERN = re.compile(
+    r"\b(?:me\s+habilitaron|(?:fui|he\s+sido|estoy|soy)\s+(?:un\s+)?"
+    r"(?:ganador\s+)?habilitad[oa]|despues\s+de\s+la\s+habilitacion)\b"
+)
+
+# Negociacion EN CURSO: exige propuesta/contrapropuesta/negociacion — "como funciona la
+# oferta negociable" es FAQ plana (o slot de F-PART) y no debe caer aqui.
+_NEGOTIATION_PATTERN = re.compile(
+    r"\bcontrapropuesta\b"
+    r"|\b(?:mi|la)\s+negociacion\b"
+    r"|\bpropuesta\b.{0,60}\b(?:acept\w+|rechaz\w+|respuesta|vendedor|estado)\b"
+    r"|\b(?:acept\w+|rechaz\w+|envie|mande)\b.{0,40}\bpropuesta\b"
+)
+
+# Proceso En Vivo en curso: "en vivo" + señal de etapa o duda, o directamente "gane la
+# oferta/subasta". "quiero participar en una en vivo" NO cae aqui (eso es F-PART y se
+# chequea despues, pero este patron exige duda/etapa que ese texto no tiene).
+_LIVE_STAGE_PATTERN = re.compile(
+    r"\ben\s*vivo\b.{0,60}\b(?:que\s+hago|que\s+sigue|no\s+se\s+que|ayuda|como\s+va"
+    r"|ya\s+empezo|por\s+empezar|termino|finalizo|cerro|gane|ganador)\b"
+    r"|\b(?:que\s+hago|que\s+sigue|como\s+va)\b.{0,60}\ben\s*vivo\b"
+    r"|\bgane\b.{0,40}\b(?:oferta|subasta|proceso)\b"
+    r"|\b(?:resulte|sali|quede)\s+ganador\b|\bsoy\s+(?:el\s+)?ganador\b"
+    r"|\bmejor\s+postor\b|\bganador\s+directo\b"
+)
+
+
+def _negated(keyword: str) -> re.Pattern:
+    """Negacion hasta dos palabras antes del verbo clave: "no quiero participar", "ya no
+    deseo consignar", "nunca voy a participar". Un "no" lejano no apaga la intencion.
+    Hallado por los tests del motor (PR #79)."""
+    return re.compile(rf"\b(?:no|tampoco|nunca|jamas)\b(?:\s+\w+){{0,2}}\s+{keyword}")
+
+
+# Orden DELIBERADO, del disparador mas especifico al mas amplio: "quiero consignar para
+# participar" es F-CONS (consignar manda), y F-PART va al final porque su patron es el mas
+# generico. Cada entrada: (flujo, patron, palabra clave de negacion o None).
+_TRIGGERS: tuple[tuple[str, re.Pattern, str | None], ...] = (
+    ("CONSIGNMENT", _CONSIGNMENT_PATTERN, r"consign\w+"),
+    ("ENABLEMENT", _ENABLEMENT_PATTERN, None),
+    ("NEGOTIATION_STAGE", _NEGOTIATION_PATTERN, None),
+    ("LIVE_STAGE", _LIVE_STAGE_PATTERN, None),
+    ("PARTICIPATION", _PARTICIPATION_PATTERN, "participar"),
 )
 
 
 def detect_flow_start(text: str) -> str | None:
     """Nombre del flujo que el texto dispara, o None. Reglas, nunca un modelo.
 
-    Una negacion cerca del verbo apaga el disparador: quien dice "no quiero participar" no
+    Una negacion cerca del verbo apaga ese disparador: quien dice "no quiero participar" no
     debe recibir botones de participacion — que lo atienda el pipeline normal (clasificador),
     donde "no puedo participar" ademas suele ser una FAQ legitima de problemas de acceso.
     """
     normalized = normalize(text or "")
-    if _NEGATION_PATTERN.search(normalized):
-        return None
-    if _PARTICIPATION_PATTERN.search(normalized):
-        return "PARTICIPATION"
+    for flow_name, pattern, negation_keyword in _TRIGGERS:
+        if negation_keyword and _negated(negation_keyword).search(normalized):
+            continue
+        if pattern.search(normalized):
+            return flow_name
     return None
 
 
@@ -146,12 +284,70 @@ def extract_offer_type(text: str) -> str | None:
     return "LIVE" if live else "NEGOTIABLE"
 
 
+def _single_match(candidates: dict[str, bool]) -> str | None:
+    """El unico valor que matcheo, o None (cero o varios): la ambiguedad la desambiguan los
+    botones, no una adivinanza — misma regla que extract_offer_type."""
+    matched = [value for value, hit in candidates.items() if hit]
+    return matched[0] if len(matched) == 1 else None
+
+
+def _extract_live_stage(text: str) -> str | None:
+    """Etapa del proceso En Vivo. Cada categoria reconoce ademas el LABEL de su boton
+    ("Durante la puja" → durante/puja), para que el texto tecleado equivalga al click."""
+    t = normalize(text or "")
+    return _single_match({
+        "BEFORE": bool(re.search(
+            r"\bantes\b|\bpor\s+empezar\b|\bcuando\s+(?:empieza|inicia)\b|\btodavia\s+no\b",
+            t)),
+        "DURING": bool(re.search(
+            r"\bdurante\b|\bpuja\w*\b|\bbid\w*\b|\bya\s+empezo\b|\ben\s+curso\b", t)),
+        "FINISHED": bool(re.search(r"\btermino\b|\bfinalizo\b|\bcerro\b|\bacabo\b", t)),
+        "WINNER": bool(re.search(r"\bgane\b|\bganador\w*\b|\bmejor\s+postor\b", t)),
+    })
+
+
+def _extract_nego_stage(text: str) -> str | None:
+    """Etapa de la negociacion. OJO: "no me aceptaron" es un rechazo, no una aceptacion —
+    por eso REJECTED absorbe el "acept" negado antes de que ACCEPTED lo cuente."""
+    t = normalize(text or "")
+    rejected = bool(re.search(
+        r"\brechaz\w+\b|\bno\b(?:\s+\w+){0,2}\s+acept\w+", t))
+    accepted = (not rejected) and bool(re.search(r"\bacept\w+\b", t))
+    return _single_match({
+        "COUNTER": bool(re.search(r"\bcontrapropuesta\b|\bcontraoferta\b", t)),
+        "REJECTED": rejected,
+        "ACCEPTED": accepted,
+        "PROPOSAL_SENT": bool(re.search(
+            r"\benvie\b|\bmande\b|\besperando\b|\ben\s+espera\b|\bsin\s+respuesta\b", t)),
+    })
+
+
+def _extract_hab_topic(text: str) -> str | None:
+    """Tema de la habilitacion. PAYMENT exige "oferta" cerca del pago para no chocar con
+    "pagar la comision" (que es COMMISSION)."""
+    t = normalize(text or "")
+    return _single_match({
+        "COMMISSION": bool(re.search(r"\bcomision\b", t)),
+        "DOCUMENTS": bool(re.search(r"\bdocumento\w*\b", t)),
+        "PAYMENT": bool(re.search(r"\bpag\w+\b.{0,30}\boferta\b|\boferta\b.{0,30}\bpag\w+\b", t)),
+        "RECEIPT": bool(re.search(r"\bcomprobante\b|\bboleta\b|\bfactura\b", t)),
+    })
+
+
+_SLOT_EXTRACTORS = {
+    "offer_type": extract_offer_type,
+    "live_stage": _extract_live_stage,
+    "nego_stage": _extract_nego_stage,
+    "hab_topic": _extract_hab_topic,
+}
+
+
 def extract_slot_value(step: FlowStep, text: str) -> str | None:
     """El valor del slot del paso si el TEXTO lo resuelve (el usuario escribio en vez de
-    clickear). Hoy todos los pasos activos usan offer_type."""
-    if step.slot == "offer_type":
-        return extract_offer_type(text)
-    return None
+    clickear). Cada slot tiene su extractor; un slot sin extractor nunca se resuelve por
+    texto (solo por boton)."""
+    extractor = _SLOT_EXTRACTORS.get(step.slot)
+    return extractor(text) if extractor else None
 
 
 def validate_interaction(
