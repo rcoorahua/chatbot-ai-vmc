@@ -188,6 +188,14 @@ def create_session(body: SessionIn) -> SessionOut:
         except auth.IdentityConfigurationError as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    # DETAILS.md §4.2: falla ANTES de abrir la conversacion si falta la clave de sesion — si no,
+    # un anonimo sin SESSION_SIGNING_KEY dejaba una fila huerfana en cada intento (el 503 llegaba
+    # recien al firmar el token, con la conversacion ya creada).
+    try:
+        auth.ensure_session_signing_configured()
+    except auth.IdentityConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
     conversation, created = service.open_conversation(identity)
     session = auth.new_session(
         user_type=str(conversation.user_type),
@@ -195,10 +203,7 @@ def create_session(body: SessionIn) -> SessionOut:
         user_id=conversation.user_id,
         user_name=conversation.user_name,
     )
-    try:
-        token = auth.issue_session_token(session)
-    except auth.IdentityConfigurationError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    token = auth.issue_session_token(session)  # ya validado arriba: no puede fallar por config
 
     return SessionOut(
         token=token,

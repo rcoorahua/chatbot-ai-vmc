@@ -173,6 +173,21 @@ def test_sin_secreto_de_vmc_configurado_responde_503(client, monkeypatch):
     assert response.status_code == 503
 
 
+def test_sin_session_signing_key_responde_503_y_no_crea_conversacion(client, monkeypatch, tablas):
+    # DETAILS.md §4.2: el chequeo debe correr ANTES de abrir la conversacion (tambien la del
+    # anonimo, que no manda user_jwt) — si no, cada intento sin la clave deja una fila huerfana.
+    antes = tablas["conversations"].scan()["Count"]
+    monkeypatch.setenv("SESSION_SIGNING_KEY", "")
+    reset_settings()
+    try:
+        response = client.post("/chat/sessions", json={})
+    finally:
+        reset_settings()
+
+    assert response.status_code == 503
+    assert tablas["conversations"].scan()["Count"] == antes
+
+
 # ───────────────────────────── AC-P4: cada sesion, su conversacion ─────────────────────────────
 
 
