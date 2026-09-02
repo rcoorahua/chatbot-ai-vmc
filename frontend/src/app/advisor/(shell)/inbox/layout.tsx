@@ -8,8 +8,13 @@ import { apiErrorMessage, getConversations } from "@/lib/api";
 import { useAdvisor } from "@/lib/advisor-context";
 import type { Conversation, ConversationStatus } from "@/lib/types";
 
-const FILTERS: Array<{ label: string; statuses: ConversationStatus[] | null; param: string | null }> = [
-  { label: "Todas", statuses: null, param: null },
+/**
+ * `statuses` siempre trae los estados a pedir: `GET /advisor/conversations` sin `status` NO es
+ * "todas" — es la bandeja (`service.list_inbox`), que sin filtro solo trae PENDING_ADVISOR +
+ * IN_ATTENTION. "Todas" pide los 4 estados y los mezcla (ver el efecto de abajo).
+ */
+const FILTERS: Array<{ label: string; statuses: ConversationStatus[]; param: string | null }> = [
+  { label: "Todas", statuses: ["PENDING_ADVISOR", "IN_ATTENTION", "BOT_ATTENDING", "CLOSED"], param: null },
   { label: "Pendientes", statuses: ["PENDING_ADVISOR"], param: "pendientes" },
   { label: "En atención", statuses: ["IN_ATTENTION"], param: "atencion" },
   { label: "Cerradas", statuses: ["CLOSED"], param: "cerradas" },
@@ -66,9 +71,12 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    getConversations({ status: FILTERS[filterIndex].statuses?.[0], limit: 100 })
-      .then((found) => {
+    Promise.all(
+      FILTERS[filterIndex].statuses.map((status) => getConversations({ status, limit: 100 })),
+    )
+      .then((byStatus) => {
         if (cancelled) return;
+        const found = byStatus.flat();
         // El backend no promete un orden total entre estados abiertos y cerrados — el mismo
         // criterio que ya usaba el mock: abiertos primero (más reciente arriba), cerrados
         // después (más reciente arriba también, no al revés).

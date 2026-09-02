@@ -152,12 +152,3 @@ export interface Advisor {
   status: "INVITED" | "ACTIVE" | "DISABLED";
   last_login_at: string | null;
 }
-
-/**
- * Sesión mock (pre-integración): se usa hoy para el saludo del header sin llamar a la API.
- * Se reemplaza por `Advisor` (arriba) al conectar `GET /advisor/me` a las páginas.
- */
-export interface AdvisorSession {
-  advisor_id: string;
-  display_name: string;
-}
