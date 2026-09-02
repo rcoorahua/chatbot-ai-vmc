@@ -264,7 +264,7 @@ Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
-| D-008 | Taxonomía de problemas/tickets y campos | Alta | F5, tabla Tickets (`problem_type`, `category`, `tags`) |
+| D-008 | Taxonomía de problemas/tickets y campos | Alta | Campos definitivos y SLA por tipo. **Propuesta de Aaron IMPLEMENTADA** (2026-09-02) en `backend/tickets/taxonomy.py`: 12 `problem_type` del corpus con categoría, prioridad y datos mínimos (MAPEO.md §8). El módulo Tickets ya corre con ella; cerrar la decisión = editar ESE archivo. **Sigue abierta**: la validan Silvana + Julio contra los motivos reales de Intercom |
 | D-009 | Tags de negocio | Media | Tickets |
 | D-010 | Campos de usuario VMC visibles/usables | Alta | F5, vista asesor |
 | D-011 | Contrato HERALD (endpoints, auth, filtros) | Alta | F4 |
@@ -319,9 +319,12 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `agent/guardrails.py` (entrada y salida), `tests/golden/intents.jsonl`, `scripts/eval_intents.py`.
   `RAG_MIN_SCORE` calibrado en `0.84` (2026-08-28, ver "RAG" abajo). **Casos y handoff con
   formulario (D-029, 2026-09-02)**: `conversations/forms.py`, `POST /chat/…/handoff`,
-  `GET /chat/conversations`, lista y tarjeta en el widget. Falta correr la eval real
-  de intents y anotar el score base, la notificación Slack (D-016) y la taxonomía del asunto
-  del formulario (D-008; hoy texto libre). El resto (`tickets`, `catalog`,
+  `GET /chat/conversations`, lista y tarjeta en el widget. **Módulo `tickets` implementado
+  (2026-09-02)**: `tickets/taxonomy.py` (⚠️ propuesta de Aaron para D-008, que sigue abierta),
+  `tickets/{models,repository,service}.py`, y en `/advisor`: `GET /taxonomy`, `GET /tickets`,
+  `GET /conversations/{id}/ticket`, `PATCH /tickets/{id}` y el cierre con resolución. Falta
+  correr la eval real de intents y anotar el score base, y la notificación Slack (D-016).
+  El resto (`catalog`,
   `images`, `notifications`, `routers/dashboard.py`, `workers/notify_worker.py`) son stubs con
   docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
   el usuario lo pida, no por adelantado.
@@ -372,6 +375,21 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   en AIUsage se calcula con el precio del modelo que REALMENTE respondió (`llm.cost_for`),
   nunca con el del principal. Al agregar un modelo o tier nuevo, no asumir que le sirve la
   config de otro — probarlo aparte. Modelos vigentes: ver TD-008.
+- **La taxonomía de tickets es una PROPUESTA, no la decisión.** D-008 sigue abierta y la
+  cierran Silvana + Julio. Toda la taxonomía (los 12 `problem_type`, su categoría, su
+  prioridad y sus datos mínimos) vive SOLO en `backend/tickets/taxonomy.py`, y el enum de
+  Pydantic es lo único que la valida: cerrar D-008 con otra lista es editar ese archivo y sus
+  tests, no rastrear literales por el backend. El `problem_type` que ponen las reglas es una
+  sugerencia gratuita (sin modelo, no gasta cuota D-027); el ticket guarda en
+  `classification_source` si lo decidió la regla o una persona, y esa corrección del asesor
+  es la medida con la que se evaluará la propuesta antes de cerrarla. No copiar la lista al
+  frontend: se lee de `GET /advisor/taxonomy`, que la publica con `proposal: true`.
+- El ticket es 1:1 con la conversación escalada (D-029) y **nace en la entrada, no en el
+  dominio**: `conversations` no puede importar `tickets` (regla de `backend/__init__.py`), así
+  que quien compone "derivar + abrir ticket" es `api/routers/chat.py`. Si esa creación falla,
+  el handoff NO se rompe (la conversación ya es durable y el usuario ya vio su confirmación):
+  la red de seguridad es `tickets.ensure_ticket`, que corre cuando el asesor abre o toma el
+  caso. Por eso ningún caso llega a la bandeja sin registro.
 - Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
   nunca como variables de entorno del stack. Hoy `core/config.py` y `core/llm.py` los leen del
   entorno (dev); al desplegar hay que resolverlos desde el secreto antes de construir `Settings`.
