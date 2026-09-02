@@ -265,7 +265,7 @@ def _answer_faq(
     consulta = followups.build_query(
         text,
         previous_question=followups.last_user_question(_previous_user_texts(window, block_keys)),
-        last_bot_message=_last_bot_message(window),
+        last_bot_message=_last_bot_open_question(window),
     )
     retrieved = rag.retrieve(consulta.text)
     fragments = retrieved.relevant
@@ -699,6 +699,25 @@ def _last_bot_message(window: list[Message]) -> str | None:
     for item in reversed(window):
         if item.sender_type == SenderType.BOT and item.content:
             return item.content
+    return None
+
+
+def _last_bot_open_question(window: list[Message]) -> str | None:
+    """El último mensaje del bot, SOLO si era una pregunta abierta.
+
+    Un mensaje con `interaction` (los botones de un flujo, el sí/no del asesor, el formulario)
+    tambien termina en "?", pero es una pregunta ESTRUCTURADA: sus respuestas validas las
+    resuelve la maquinaria de flujos, y cualquier otra cosa que escriba el usuario es un tema
+    nuevo, no la continuacion del anterior. Devolverla aqui hacia que "mejor dime cuanto es la
+    comision", escrito despues de "¿quieres un asesor?", heredara el tema viejo y se buscara
+    la pregunta equivocada.
+    """
+    for item in reversed(window):
+        if item.sender_type != SenderType.BOT or not item.content:
+            continue
+        if (item.metadata or {}).get("interaction"):
+            return None
+        return item.content
     return None
 
 
