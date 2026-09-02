@@ -32,6 +32,7 @@ from backend.conversations.models import Conversation, Message, MessageStatus, U
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
+from backend.tickets import service as tickets
 
 logger = logging.getLogger(__name__)
 
@@ -305,11 +306,24 @@ def request_handoff(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Esta conversacion ya esta con el equipo o cerrada"
         ) from exc
+    # RF-023: el trabajo humano se registra como ticket. Va DESPUES de derivar y fuera de la
+    # transaccion a proposito: la conversacion ya es durable y el usuario ya vio su
+    # confirmacion, asi que un fallo aqui no puede convertirse en un error para el. La red de
+    # seguridad es `tickets.ensure_ticket`, que corre cuando un asesor abre o toma el caso.
+    ticket_id = None
+    try:
+        ticket_id = tickets.open_ticket(waiting, description=body.detail).ticket_id
+    except Exception:  # noqa: BLE001 — ver comentario: nunca rompe el handoff del usuario
+        logger.exception(
+            "No se pudo abrir el ticket del caso",
+            extra={"conversation_id": waiting.conversation_id},
+        )
     logger.info(
         "chat.handoff",
         extra={
             "conversation_id": conversation.conversation_id,
             "case_id": waiting.conversation_id,
+            "ticket_id": ticket_id,
             "anonymous": anonymous,
         },
     )

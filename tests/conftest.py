@@ -14,7 +14,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from backend.core.aws import reset_clients
 from backend.core.config import reset_settings
 from scripts.local_setup import cliente_dynamo, crear_tablas, nombres_de_tabla, recurso_dynamo
-from scripts.seed_data import cargar
+from scripts.seed_data import TICKETS, cargar
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -84,10 +84,13 @@ def entorno_dynamo():
 
 
 def _purgar_restos_de_pruebas() -> None:
-    """Borra items `conv_test_*` que hayan quedado de una corrida interrumpida.
+    """Borra restos de una corrida interrumpida: conversaciones `conv_test_*` y cualquier
+    ticket que no sea del dataset base.
 
-    Sin esto, una conversacion de prueba abandonada aparece en los GSIs y rompe las
-    aserciones de las consultas de lectura.
+    Sin esto, una entidad de prueba abandonada aparece en los GSIs y rompe las aserciones de
+    las consultas de lectura. Los tickets se filtran por id contra el seed (y no por prefijo)
+    porque los que crea el backend llevan uuid: lo unico que se sabe de ellos es que no son
+    del dataset.
     """
     dynamo = recurso_dynamo()
     nombres = nombres_de_tabla()
@@ -95,6 +98,11 @@ def _purgar_restos_de_pruebas() -> None:
     for item in conversaciones.scan().get("Items", []):
         if item["conversation_id"].startswith("conv_test_"):
             conversaciones.delete_item(Key={"conversation_id": item["conversation_id"]})
+    tickets = dynamo.Table(nombres["tickets"])
+    del_seed = {t["ticket_id"] for t in TICKETS}
+    for item in tickets.scan().get("Items", []):
+        if item["ticket_id"] not in del_seed:
+            tickets.delete_item(Key={"ticket_id": item["ticket_id"]})
 
 
 @pytest.fixture
