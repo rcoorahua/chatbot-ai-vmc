@@ -30,7 +30,17 @@ el timeout de esta funcion.
 import logging
 from datetime import timedelta
 
-from backend.agent import flows, guardrails, prompts, quota, rag, trivial, usage, writer
+from backend.agent import (
+    flows,
+    followups,
+    guardrails,
+    prompts,
+    quota,
+    rag,
+    trivial,
+    usage,
+    writer,
+)
 from backend.agent.classifier import ClassificationResult, classify
 from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
@@ -244,8 +254,20 @@ def _answer_faq(
     usuario; para un paso de flujo resuelto (D-028) es la consulta canonica, que si recupera
     evidencia donde "En Vivo" a secas no lo haria. `source_prefix` deja el rastro del flujo
     en AIUsage ("flow:PARTICIPATION:LIVE:model") sin perder la capa que decidio.
+
+    Lo que se BUSCA no siempre es lo que se REDACTA: si el mensaje es una continuacion ("ya
+    estoy ahi", "y luego?"), la consulta al indice se arma con la pregunta previa del usuario
+    (`agent/followups.py`). Sin eso, un mensaje que solo tiene sentido pegado al anterior no
+    se parece a nada del corpus y el caso derivaba por "falta de evidencia" teniendo el
+    articulo correcto entre los descartados. El redactor sigue recibiendo el texto original
+    mas el historial, que es lo que necesita para contestar con naturalidad.
     """
-    retrieved = rag.retrieve(text)
+    consulta = followups.build_query(
+        text,
+        previous_question=followups.last_user_question(_previous_user_texts(window, block_keys)),
+        last_bot_message=_last_bot_message(window),
+    )
+    retrieved = rag.retrieve(consulta.text)
     fragments = retrieved.relevant
     logger.debug(
         "ai.rag",
@@ -255,6 +277,9 @@ def _answer_faq(
             "results": len(fragments),
             "discarded": len(retrieved.discarded),
             "threshold": retrieved.threshold,
+            # Si la regla de continuidad intervino, se ve aqui sin reproducir la charla.
+            "contextualized": consulta.contextualized,
+            "followup_rule": consulta.rule,
             "best_score": round(
                 max((f.score for f in retrieved.all_fragments), default=0.0), 3
             ),
@@ -305,8 +330,7 @@ def _answer_faq(
     if result.has_evidence:
         _bot_says(conversation, result.text)
     else:
-        _offer_handoff_form(conversation, message, reason="faq_no_evidence", intent=Intent.FAQ,
-                            response=prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE, record=False)
+        _offer_handoff_confirm(conversation, message)
 
 
 def _offer_handoff_form(
@@ -343,6 +367,29 @@ def _offer_handoff_form(
     if record:
         _record_free(conversation, message, source=f"handoff_offer:{reason}",
                      intent=str(intent), handoff=True)
+
+
+def _offer_handoff_confirm(conversation: Conversation, message: Message) -> None:
+    """Sin evidencia (RF-018): se reconoce el limite y se PREGUNTA si quiere un asesor.
+
+    Revision de D-029 (2026-09-02, Aaron): antes esto publicaba el formulario de una, y el
+    usuario terminaba con una tarjeta de datos delante sin haber pedido nada. Ahora sale la
+    pregunta con botones si/no y el formulario espera a que conteste que si.
+
+    Ojo con lo que NO cambia: cuando el usuario PIDE un asesor (intent ADVISOR), el formulario
+    sigue saliendo directo — volver a preguntarle "¿quieres un asesor?" a quien acaba de
+    pedirlo es un turno de mas por nada.
+    """
+    # Se RELEE la conversacion: si en este mismo job se limpio un flujo guiado (un paso que se
+    # resolvio y no trajo evidencia), `conversation.flow_version` quedo viejo y la transicion
+    # fallaria por condicion — dejando al usuario sin pregunta y sin respuesta. Lo encontro
+    # tests/test_ai_worker_flows.py::...sin_evidencia_al_resolver...
+    current = repository.get_conversation(conversation.conversation_id) or conversation
+    definition = flows.FLOWS[flows.HANDOFF_CONFIRM]
+    _offer_flow_step(
+        current, message, definition, definition.steps[0],
+        text=prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE,
+    )
 
 
 def _reply_fixed(
@@ -425,6 +472,15 @@ def _handle_flow(
             ) if interaction is not None else None
             if value is None:
                 value = flows.extract_slot_value(step, text)
+            if definition.name == flows.HANDOFF_CONFIRM:
+                # Una pregunta de si/no vale para el turno siguiente y nada mas: si el usuario
+                # la ignora y pregunta otra cosa, se limpia. Dejarla viva 24 h como a un flujo
+                # del corpus haria que un "si" de mañana derivara por un tema ya olvidado.
+                _clear_flow_if_active(conversation)
+                if value is None:
+                    return False  # sigue el pipeline normal con su pregunta nueva
+                _resolve_handoff_confirm(conversation, message, value)
+                return True
             if value is None:
                 return False  # interrupcion: el flujo espera hasta resolverse o vencer
             # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota agotada
@@ -462,8 +518,15 @@ def _offer_flow_step(
     message: Message,
     definition: flows.FlowDefinition,
     step: flows.FlowStep,
+    *,
+    text: str | None = None,
 ) -> None:
-    """Persiste el paso y publica la pregunta con quick replies. Cero llamadas IA."""
+    """Persiste el paso y publica la pregunta con quick replies. Cero llamadas IA.
+
+    `text` reemplaza al del paso cuando quien ofrece ya tiene su propio mensaje (la
+    confirmacion de asesor lo usa para no partir "no tengo el dato" y "¿quieres un asesor?"
+    en dos burbujas seguidas del bot).
+    """
     expires_at = to_iso(utc_now() + timedelta(hours=flows.FLOW_TTL_HOURS))
     version = repository.set_flow_state(
         conversation.conversation_id,
@@ -478,9 +541,36 @@ def _offer_flow_step(
         _log_skip(conversation, message, "flow_race")
         return
     _bot_says(
-        conversation, step.prompt, metadata=flows.quick_replies_metadata(definition, step, version)
+        conversation,
+        text or step.prompt,
+        metadata=flows.quick_replies_metadata(definition, step, version),
     )
     _record_free(conversation, message, source=f"flow:{definition.name}:offered")
+
+
+def _resolve_handoff_confirm(
+    conversation: Conversation, message: Message, value: str
+) -> None:
+    """El usuario contesto la pregunta de "¿te conecto con un asesor?". Gratis en los dos
+    caminos: publicar el formulario o despedirse no cuesta ninguna llamada a modelo."""
+    logger.info(
+        "ai.handoff.confirm",
+        extra={
+            "conversation_id": conversation.conversation_id,
+            "message_id": message.message_id,
+            "value": value,
+        },
+    )
+    if value == "YES":
+        _offer_handoff_form(
+            conversation, message, reason="faq_no_evidence", intent=Intent.ADVISOR,
+            response=prompts.HANDOFF_OFFER_RESPONSE,
+        )
+        return
+    _reply_fixed(
+        conversation, message, prompts.HANDOFF_DECLINED_RESPONSE, "handoff_declined",
+        intent=Intent.ADVISOR,
+    )
 
 
 def _answer_flow_step(
@@ -610,6 +700,18 @@ def _last_bot_message(window: list[Message]) -> str | None:
         if item.sender_type == SenderType.BOT and item.content:
             return item.content
     return None
+
+
+def _previous_user_texts(window: list[Message], block_keys: list[str]) -> list[str]:
+    """Lo que el usuario escribio ANTES de la rafaga actual, en orden cronologico. Es de donde
+    `followups` saca la pregunta que da tema a una continuacion."""
+    return [
+        item.content
+        for item in window
+        if item.sender_type == SenderType.USER
+        and item.message_key not in block_keys
+        and item.content
+    ]
 
 
 def _history(window: list[Message], block_keys: list[str]) -> list[dict[str, str]]:

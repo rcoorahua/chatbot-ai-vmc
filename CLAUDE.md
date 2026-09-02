@@ -257,6 +257,14 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   `repository.create_conversation_with_messages`/`close_conversation`/`list_open_cases`,
   `api/routers/chat.py`, `workers/ai_worker._offer_handoff_form`. Tests:
   `tests/test_chat_cases.py`, `tests/test_forms.py`.
+  **Revisión del 2026-09-02 (Aaron), tras ver el flujo real en la consola de dev:** cuando el
+  bot se queda **sin evidencia** ya no publica el formulario de una — **pregunta** "¿quieres
+  que te conecte con un asesor?" con botones sí/no (flujo `HANDOFF_CONFIRM` en `agent/flows.py`,
+  misma maquinaria de D-028) y el formulario sale solo con el "sí". Cuando el usuario **pide**
+  un asesor (intent ADVISOR) el formulario sigue saliendo directo: volver a preguntárselo a
+  quien acaba de pedirlo es un turno de más. La confirmación **vale solo para el turno
+  siguiente**: si el usuario la ignora y pregunta otra cosa, se descarta (a diferencia de un
+  flujo del corpus, que espera 24 h) — un "sí" de mañana no puede derivar por un tema olvidado.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
@@ -375,6 +383,18 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   en AIUsage se calcula con el precio del modelo que REALMENTE respondió (`llm.cost_for`),
   nunca con el del principal. Al agregar un modelo o tier nuevo, no asumir que le sirve la
   config de otro — probarlo aparte. Modelos vigentes: ver TD-008.
+- **Lo que se BUSCA en el RAG no siempre es lo que el usuario escribió** (`agent/followups.py`,
+  2026-09-02). El prompt del redactor promete continuidad ("un paso a la vez, pregunta si
+  continuar") y la recuperación era de un solo turno: "Ya estoy ahí" no se parece a nada del
+  corpus, así que un usuario a mitad de una explicación terminaba derivado por "falta de
+  evidencia" **con el artículo correcto entre los descartados** (0.789 contra el umbral 0.84;
+  medido en el índice real). Ahora, si el mensaje es una continuación (acuse, pedido de seguir,
+  o respuesta corta a una pregunta del bot que no sea a su vez una pregunta), la consulta se
+  arma con la **pregunta previa del usuario**. Verificado contra Pinecone: los cuatro
+  seguimientos probados pasan de 0/4 fragmentos sobre el umbral a 4/4. Reglas deterministas,
+  sin llamada a modelo (no gasta cuota D-027). El redactor sigue recibiendo el texto original
+  más el historial. **No confundir con D-028**: `flows.py` es estado persistido con botones;
+  esto solo cambia la consulta y no guarda nada.
 - **La taxonomía de tickets es una PROPUESTA, no la decisión.** D-008 sigue abierta y la
   cierran Silvana + Julio. Toda la taxonomía (los 12 `problem_type`, su categoría, su
   prioridad y sus datos mínimos) vive SOLO en `backend/tickets/taxonomy.py`, y el enum de

@@ -613,9 +613,12 @@ def test_el_anonimo_sin_evidencia_al_resolver_recibe_el_formulario_no_deriva(
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, "no deriva solo"
-    assert actual.active_flow is None, "se limpio igual al resolver el paso"
+    # El flujo del corpus se cerro al resolver el paso; lo que queda pendiente es la pregunta
+    # de "¿te conecto con un asesor?" (revision de D-029), no el paso guiado.
+    assert actual.active_flow == "HANDOFF_CONFIRM"
 
     respuestas = _respuestas_bot(conversation.conversation_id)
-    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_OFFER_RESPONSE
-    assert (respuestas[-1].metadata or {}).get("interaction", {}).get("type") == "HANDOFF_FORM"
+    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
+    interaction = (respuestas[-1].metadata or {}).get("interaction") or {}
+    assert interaction.get("action_id") == "CONFIRM_HANDOFF", "pregunta antes de derivar"
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)

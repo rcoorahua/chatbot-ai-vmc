@@ -309,8 +309,16 @@ _WIRE_PATTERN = re.compile(r"^[A-Z0-9_]+$")
 _ALL_STEPS = [(nombre, step) for nombre, flujo in FLOWS.items() for step in flujo.steps]
 _ALL_STEP_IDS = [f"{nombre}:{step.action_id}" for nombre, step in _ALL_STEPS]
 
+# Los flujos del CORPUS resuelven consultando el indice, asi que cada boton necesita su
+# consulta canonica. HANDOFF_CONFIRM no: es la pregunta de "¿te conecto con un asesor?"
+# (revision de D-029) y su si/no lo resuelve el worker publicando el formulario o
+# despidiendose — no toca el RAG. El resto de invariantes (contrato del API, etiquetas
+# unicas) si le aplica, porque sus botones viajan por el mismo camino.
+_RAG_STEPS = [(nombre, step) for nombre, step in _ALL_STEPS if nombre != "HANDOFF_CONFIRM"]
+_RAG_STEP_IDS = [f"{nombre}:{step.action_id}" for nombre, step in _RAG_STEPS]
 
-@pytest.mark.parametrize(("nombre_flujo", "step"), _ALL_STEPS, ids=_ALL_STEP_IDS)
+
+@pytest.mark.parametrize(("nombre_flujo", "step"), _RAG_STEPS, ids=_RAG_STEP_IDS)
 def test_todo_option_value_tiene_consulta_canonica(nombre_flujo, step):
     # Una definicion incompleta no falla ruidosamente: silenciosamente manda al RAG una
     # consulta canonica vacia/faltante y degrada la respuesta del paso resuelto a algo pobre.
