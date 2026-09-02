@@ -415,6 +415,9 @@ def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.active_flow is None, "la confirmacion se descarto"
+    # Y el tema NO se heredó: una pregunta con botones es estructurada, así que lo que no la
+    # responde es un tema nuevo. Si se hubiera heredado, se habría buscado lo de Marte otra vez
+    # y el bot habría vuelto a ofrecer el asesor en lugar de responder de la comisión.
     assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
 
 
@@ -648,7 +651,8 @@ def test_una_continuacion_se_busca_con_la_pregunta_previa(limpiar, fake_llm, con
 
     _atiende(_escribe(conversation, "ya estoy ahi"))
 
-    assert consultas_rag[-1] == "como me registro en VMC? ya estoy ahi"
+    # Se busca la pregunta previa SOLA: "ya estoy ahi" no describe nada del corpus.
+    assert consultas_rag[-1] == "como me registro en VMC?"
     # Y con evidencia, responde el redactor en vez de proponer un asesor.
     assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
 

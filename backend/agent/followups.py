@@ -37,8 +37,8 @@ from dataclasses import dataclass
 # Un mensaje más largo que esto ya se sostiene solo: aunque siga la conversación, tiene
 # suficiente contenido para recuperar por sí mismo y mezclarlo solo agregaría ruido.
 MAX_CONTINUATION_CHARS = 60
-# Tope de la consulta combinada: el embedding de `multilingual-e5-large` trabaja con textos
-# cortos, y pegar párrafos enteros dispersa la similitud en vez de concentrarla.
+# Tope de la consulta: el embedding de `multilingual-e5-large` trabaja con textos cortos, y un
+# párrafo entero dispersa la similitud en vez de concentrarla.
 MAX_QUERY_CHARS = 300
 # Cuántos mensajes atrás se busca la pregunta del usuario. Más allá, la conversación ya cambió
 # de tema y arrastrarla sería peor que no hacer nada.
@@ -130,35 +130,62 @@ def is_continuation(text: str, *, bot_asked: bool = False) -> tuple[bool, str | 
     return False, None
 
 
+# Categorías Unicode que se descartan al buscar el signo de cierre: símbolos (los emoji son
+# `So`), modificadores de símbolo (los tonos de piel), marcas sin espaciado (los selectores de
+# variación) y los invisibles de formato (el ZWJ que une emoji compuestos).
+_TRAILING_DECORATION = frozenset({"So", "Sk", "Sm", "Mn", "Cf", "Zs"})
+
+
 def bot_asked_something(last_bot_message: str | None) -> bool:
     """El último mensaje del bot terminó preguntando algo.
 
     Se mira el final y no todo el texto porque una explicación puede contener una pregunta
     retórica en medio ("¿qué necesitas para participar? Necesitas..."); lo que abre turno es
     la pregunta con la que se cierra.
+
+    Y se ignora el emoji final, que es lo que hacía inútil esta función: D-025 permite UN emoji
+    al final del mensaje, así que casi toda pregunta real del bot llega como
+    "¿Deseas que te explique el siguiente paso? 🚚" y un `endswith("?")` a secas daba False
+    (visto en una conversación real el 2026-09-02). Solo se descarta decoración: si el mensaje
+    termina en punto o en cifra, sigue sin ser una pregunta.
     """
-    limpio = (last_bot_message or "").strip()
-    return limpio.endswith("?")
+    texto = (last_bot_message or "").rstrip()
+    while texto and unicodedata.category(texto[-1]) in _TRAILING_DECORATION:
+        texto = texto[:-1].rstrip()
+    return texto.endswith("?")
 
 
 def build_query(
     text: str, *, previous_question: str | None, last_bot_message: str | None = None
 ) -> Query:
-    """La consulta para el RAG: el texto tal cual, o la pregunta previa del usuario más él.
+    """La consulta para el RAG: el texto tal cual, o la pregunta previa del usuario si esto es
+    una continuación.
 
-    Se combina con la pregunta del USUARIO y no con la respuesta del bot a propósito: la
-    respuesta del bot está redactada con el corpus, así que meterla en la consulta la acerca
-    a los fragmentos que ya se usaron en vez de a los que faltan (se realimenta a sí misma).
-    La pregunta original es lo que fija el tema.
+    Se busca la pregunta previa **SOLA**, sin pegarle lo que el usuario acaba de escribir.
+    Medido contra el índice real (2026-09-02), con "Hola como me registro" de tema:
+
+        consulta                                sobre el umbral   mejor
+        "Hola como me registro"                      4/4          0.859
+        "Hola como me registro sí"                   1/4          0.841
+        "Hola como me registro y luego?"             4/4          0.849
+        "Hola como me registro ya le di clic"        1/4          0.843
+
+    Una continuación no cambia el tema, así que tampoco debe cambiar la evidencia: sus
+    palabras ("sí", "listo", "ya le di clic") no describen nada del corpus y solo dispersan el
+    embedding. Lo que cambia entre turnos es lo que el REDACTOR dice sobre esa misma
+    evidencia, y para eso recibe el texto original más el historial.
+
+    Tampoco se usa la respuesta del bot: está redactada con el corpus, así que meterla acerca
+    la consulta a los fragmentos ya usados en vez de a los que faltan.
     """
     original = (text or "").strip()
     continuacion, rule = is_continuation(
         original, bot_asked=bot_asked_something(last_bot_message)
     )
-    if not continuacion or not (previous_question or "").strip():
+    anterior = (previous_question or "").strip()
+    if not continuacion or not anterior:
         return Query(text=original, contextualized=False)
-    combinada = f"{previous_question.strip()} {original}".strip()
-    return Query(text=combinada[:MAX_QUERY_CHARS], contextualized=True, rule=rule)
+    return Query(text=anterior[:MAX_QUERY_CHARS], contextualized=True, rule=rule)
 
 
 def last_user_question(previous_texts: list[str]) -> str | None:

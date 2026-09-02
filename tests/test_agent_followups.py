@@ -82,15 +82,60 @@ def test_solo_cuenta_la_pregunta_con_la_que_el_bot_cierra():
     assert followups.bot_asked_something(None) is False
 
 
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "¿Deseas que te explique el siguiente paso? 🚚",
+        "¿En qué te ayudo? 😊",
+        "¿Quieres que te conecte con un asesor del equipo? 🙏  ",
+    ],
+)
+def test_el_emoji_final_no_esconde_la_pregunta(mensaje):
+    """D-025 permite UN emoji al cierre, así que casi toda pregunta real del bot llega con uno
+    detrás del signo. Mirando solo el último carácter, esta regla no se activaba nunca — se vio
+    en una conversación real el 2026-09-02."""
+    assert followups.bot_asked_something(mensaje) is True
+
+
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "La comisión es del 3.9% sobre el valor de la oferta.",
+        "Listo, lo dejamos ahí 🙂",
+        "Tu saldo se devuelve en 5 días 💰",
+    ],
+)
+def test_quitar_el_emoji_no_convierte_una_afirmacion_en_pregunta(mensaje):
+    """Solo se descarta decoración: si debajo del emoji hay un punto o una cifra, sigue sin
+    ser una pregunta y el turno del usuario no depende de ella."""
+    assert followups.bot_asked_something(mensaje) is False
+
+
+def test_la_respuesta_corta_a_una_pregunta_con_emoji_si_se_contextualiza():
+    """El caso que quedaba fuera: contestar algo corto que NO es un "sí" ni un "listo"."""
+    consulta = followups.build_query(
+        "en la web",
+        previous_question="Hola como me registro",
+        last_bot_message=(
+            "El primer paso es ingresar. ¿Deseas que te explique el siguiente paso? 🚚"
+        ),
+    )
+    assert consulta.contextualized is True and consulta.rule == "responde_al_bot"
+    assert consulta.text == "Hola como me registro"
+
+
 # ───────────────────────── AC-S3 y AC-S4: la consulta que se arma ─────────────────────────
 
 
-def test_la_continuacion_se_pega_a_la_pregunta_previa_del_usuario():
+def test_la_continuacion_se_busca_con_la_pregunta_previa_sola():
+    """Sin pegarle el texto del seguimiento: medido contra el índice real, "¿Cómo me
+    registro?" recupera 4/4 fragmentos y "¿Cómo me registro? sí" solo 1/4 — las palabras de un
+    acuse no describen nada del corpus y dispersan el embedding."""
     consulta = followups.build_query(
         "Ya estoy ahi", previous_question=PREGUNTA, last_bot_message=BOT_PREGUNTA
     )
     assert consulta.contextualized is True and consulta.rule == "acuse"
-    assert consulta.text == f"{PREGUNTA} Ya estoy ahi"
+    assert consulta.text == PREGUNTA
 
 
 def test_la_respuesta_del_bot_no_entra_en_la_consulta():
@@ -115,7 +160,7 @@ def test_una_pregunta_completa_se_busca_tal_cual():
     assert consulta.text == "¿cuánto es la comisión?"
 
 
-def test_la_consulta_combinada_tiene_tope():
+def test_la_consulta_tiene_tope():
     consulta = followups.build_query(
         "listo", previous_question="a" * 500, last_bot_message=BOT_PREGUNTA
     )
