@@ -20,23 +20,6 @@ function base(props: SVGProps<SVGSVGElement>): SVGProps<SVGSVGElement> {
   };
 }
 
-export function InboxIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
-  return (
-    <svg {...base(props)}>
-      <path d="M4 12h4l1.5 3h5L16 12h4" />
-      <path d="M5.5 6h13L21 12v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6L5.5 6Z" />
-    </svg>
-  );
-}
-
-export function ChartIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
-  return (
-    <svg {...base(props)}>
-      <path d="M4 20V10M12 20V4M20 20v-6" />
-    </svg>
-  );
-}
-
 export function ArrowLeftIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
   return (
     <svg {...base(props)}>
@@ -57,6 +40,15 @@ export function ChevronRightIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
   return (
     <svg {...base(props)}>
       <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+export function LayersIcon(props: SVGProps<SVGSVGElement>): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 3 20 8 12 13 4 8Z" />
+      <path d="M4 13 12 18 20 13" />
     </svg>
   );
 }

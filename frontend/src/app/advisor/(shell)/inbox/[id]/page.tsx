@@ -9,7 +9,7 @@ import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
 import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
 import { CURRENT_ADVISOR, MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
-import { formatWaitTime, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
+import { formatWaitTime, HANDOFF_REASON_LABEL, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
 import type { Conversation, Message } from "@/lib/types";
 
 function senderLabelFor(message: Message, conversation: Conversation): string {
@@ -93,7 +93,7 @@ export default function ConversationDetailPage() {
           )}
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
+        <div className="flex flex-1 flex-col gap-3 px-5 py-4">
           {messages.map((message, i) => {
             const prev = messages[i - 1];
             const showLabel =
@@ -198,7 +198,9 @@ export default function ConversationDetailPage() {
         {conversation.handoff_reason && (
           <div className="rounded-2xl bg-[color:var(--vmc-color-orange-600)]/5 p-3.5">
             <h2 className="text-xs font-bold uppercase tracking-wide text-[#9A4A0F]">Derivación</h2>
-            <p className="mt-2 text-sm text-neutral-700">{conversation.handoff_reason}</p>
+            <p className="mt-2 text-sm text-neutral-700">
+              {HANDOFF_REASON_LABEL[conversation.handoff_reason]}
+            </p>
             {conversation.handoff_requested_at && (
               <p className="mt-1.5 text-xs text-[#9A4A0F]/70">
                 Esperando hace {formatWaitTime(conversation.handoff_requested_at, MOCK_NOW_MS)}
