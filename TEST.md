@@ -182,6 +182,7 @@ artículo correcto entre los descartados.
 | C6b | `quiero registrarme` → `si` → `si` → `y luego?` | **Explicación por pasos** (arreglado el 03/09): cada "sí" trae el paso siguiente. El segundo "sí" NO es "mensaje repetido" ni cae en silencio; en la Consola IA la clasificación sale como `continuation:acuse` / `continuation:pide_seguir` **sin modelo** (solo paga el redactor) y el RAG trae 4/4 con la consulta `quiero registrarme` |
 | C6c | `quiero registrarme` → *(el bot pregunta si sigue)* → `ok` / `listo` / `vale` | Continúan la explicación (no es el "¡Con gusto!" de cierre). Si el bot **no** preguntó nada (cerró con punto), "ok" sí es el cierre trivial. `gracias` cierra siempre |
 | C6d | `quiero participar` → `en vivo` → `si` | Continuar un **paso de flujo**: el "sí" busca con la consulta canónica del paso (viaja en `metadata.rag_query` de la respuesta del bot), no con el texto del botón. En el log del worker, `ai.rag` trae `contextualized=true` |
+| C6e | `quiero participar` → `si` / `listo` / `y ahora?` *(con los botones en pantalla, sin elegir)* | El bot **repite los botones** (gratis, `flow:PARTICIPATION:offered` otra vez) en vez de "no tengo ese dato". Luego `en vivo` resuelve el flujo normal |
 
 ### 3.2 · Cambio de tema
 
