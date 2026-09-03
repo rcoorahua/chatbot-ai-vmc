@@ -330,8 +330,19 @@ class SubastinStack(Stack):
             self,
             "HttpApi",
             api_name=f"{prefix}-api",
-            # El preflight CORS lo responde FastAPI (CORSMiddleware con CORS_ALLOWED_ORIGINS):
-            # la ruta $default tambien recibe OPTIONS, asi que no hace falta cors_preflight aqui.
+            # /advisor y /dashboard llevan cognito_authorizer (abajo), que por default cubre TODOS
+            # los metodos incluido OPTIONS: el preflight del navegador no manda Authorization y el
+            # authorizer lo rechazaba con 401 antes de llegar a FastAPI (DETAILS.md §4.3). Nativo
+            # de API Gateway: responde el preflight el gateway mismo, nunca pasa por el authorizer.
+            cors_preflight=apigwv2.CorsPreflightOptions(
+                allow_origins=cfg.cors_allowed_origins.split(","),
+                allow_methods=[
+                    apigwv2.CorsHttpMethod.GET,
+                    apigwv2.CorsHttpMethod.POST,
+                    apigwv2.CorsHttpMethod.PATCH,
+                ],
+                allow_headers=["Authorization", "Content-Type"],
+            ),
         )
         api_integration = integrations.HttpLambdaIntegration("ApiIntegration", api_fn)
         cognito_authorizer = authorizers.HttpJwtAuthorizer(
