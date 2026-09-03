@@ -36,6 +36,9 @@ from aws_cdk import (
     aws_s3 as s3,
 )
 from aws_cdk import (
+    aws_secretsmanager as secretsmanager,
+)
+from aws_cdk import (
     aws_sqs as sqs,
 )
 from aws_cdk.aws_lambda_python_alpha import PythonFunction  # bundling requiere Docker corriendo
@@ -226,6 +229,28 @@ class SubastinStack(Stack):
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=notifications_dlq),
         )
 
+        # ─────────────────── Secretos (Secrets Manager, PLAN.md §3 / DETAILS.md §4.2) ───────────
+        # CDK solo crea el "cascaron" del secreto (valor placeholder autogenerado) y el permiso de
+        # lectura — NUNCA el valor real en el codigo o en la plantilla de CloudFormation. Despues
+        # del primer deploy, alguien con acceso carga el valor real a mano:
+        #   aws secretsmanager put-secret-value --secret-id <arn> --secret-string '{"...": "..."}'
+        # VMC_IDENTITY_SECRET es un secreto COMPARTIDO con VMC (coordinado fuera de este repo);
+        # GEMINI_API_KEY/PINECONE_API_KEY son credenciales de terceros. Ninguno de los dos se
+        # puede autogenerar. Cada Lambda recibe el ARN de SOLO lo que consume (core/config.py
+        # los resuelve en runtime): la api necesita identidad, el worker de IA necesita RAG/LLM.
+        identity_secret = secretsmanager.Secret(
+            self,
+            "IdentitySecret",
+            secret_name=f"{prefix}-identity",
+            description="VMC_IDENTITY_SECRET + SESSION_SIGNING_KEY (D-001) - completar a mano",
+        )
+        ai_secret = secretsmanager.Secret(
+            self,
+            "AiSecret",
+            secret_name=f"{prefix}-ai",
+            description="GEMINI_API_KEY + PINECONE_API_KEY (TD-008/RF-017) - completar a mano",
+        )
+
         # ──────────────────────────────────── Lambdas (T2/T3) ───────────────────────────────────
         # PythonFunction bundlea backend/requirements.txt dentro de Docker (TD-005 si crece >250MB).
         common_env = {
@@ -263,11 +288,6 @@ class SubastinStack(Stack):
             "MAX_IMAGES_PER_MESSAGE": "3",
             "MAX_IMAGES_PER_HOUR": "20",
             "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
-            # Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC): leer de Secrets Manager por
-            # ARN en runtime, NUNCA como variables de entorno en claro (PLAN.md §3). Incluye los
-            # dos de identidad del chat (D-001): VMC_IDENTITY_SECRET (compartido con VMC) y
-            # SESSION_SIGNING_KEY (propio). Hoy backend/core/config.py los lee del entorno; al
-            # desplegar hay que resolverlos desde el secreto antes de construir Settings.
         }
 
         api_fn = PythonFunction(
@@ -279,7 +299,11 @@ class SubastinStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=cfg.api_memory_mb,
             timeout=Duration.seconds(15),  # la API no llama a la IA (T8)
-            environment={**common_env, "AI_JOBS_QUEUE_URL": ai_jobs.queue_url},
+            environment={
+                **common_env,
+                "AI_JOBS_QUEUE_URL": ai_jobs.queue_url,
+                "IDENTITY_SECRET_ARN": identity_secret.secret_arn,
+            },
         )
 
         worker_ai_fn = PythonFunction(
@@ -291,7 +315,11 @@ class SubastinStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=1024,
             timeout=Duration.seconds(cfg.worker_ai_timeout_s),
-            environment={**common_env, "NOTIFICATIONS_QUEUE_URL": notifications.queue_url},
+            environment={
+                **common_env,
+                "NOTIFICATIONS_QUEUE_URL": notifications.queue_url,
+                "AI_SECRET_ARN": ai_secret.secret_arn,
+            },
         )
         worker_ai_fn.add_event_source(
             event_sources.SqsEventSource(ai_jobs, batch_size=5, report_batch_item_failures=True)
@@ -323,7 +351,9 @@ class SubastinStack(Stack):
         images_bucket.grant_read(worker_ai_fn)  # interpretacion de imagenes (D-015)
         ai_jobs.grant_send_messages(api_fn)
         notifications.grant_send_messages(worker_ai_fn)
-        # TODO: grants de Secrets Manager cuando existan los secretos (PLAN.md §6.5).
+        # Solo el secreto que cada Lambda de verdad consume (worker_notify_fn no lee ninguno).
+        identity_secret.grant_read(api_fn)
+        ai_secret.grant_read(worker_ai_fn)
 
         # ──────────────── API Gateway HTTP API — mapa de rutas (T1, PLAN.md §3) ────────────────
         http_api = apigwv2.HttpApi(
