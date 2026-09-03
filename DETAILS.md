@@ -443,6 +443,23 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - JWT inválido -> fallback anónimo sin conservar mensajes previos.
 - Dos llamadas a `reset()` deben ser idempotentes y no dejar timers/listeners duplicados.
 
+### Estado (2026-09-03) — ✅ corregido en `widget/subastin.js`
+
+- El JWT se lee **en vivo** (`currentJwt`) y la sesión guarda con quién es (`identity`,
+  derivado del `sub`; solo invalida caché, la verificación sigue en el backend). Antes de
+  cada request `ensureSession` compara identidades: si cambió, `reset()` corta las requests
+  en vuelo (AbortController + generación: lo que vuelva de la generación anterior se
+  descarta aunque el servidor haya respondido), apaga temporizadores, borra memoria y
+  `sessionStorage`, y programa **un** arranque limpio.
+- API pública nueva: `Subastin.setIdentity(jwt | null)`, `Subastin.reset()`,
+  `Subastin.mount()`, `Subastin.unmount()` (contrato en `widget/README.md`).
+- `__subastinBooted` se marca **después** de validar la configuración; `unmount()` lo libera.
+- Verificado en Chrome headless con `widget/selftest.html` (A → B sin avisar, A → B con
+  `setIdentity`, logout → anónimo, JWT inválido, `reset()` doble = una sola sesión,
+  `unmount()` sin requests, `mount()`). Botones de "cambiar de sesión sin recargar" en
+  `widget/test.html` para probarlo a mano. **Pendiente:** Playwright real (el selftest es
+  un HTML sin dependencias) y que VMC llame a `setIdentity` en su login/logout.
+
 ---
 
 ## 4.9 P1 — Abuso público y cuotas desactivadas en AWS
@@ -780,6 +797,21 @@ a procesarse o cuyos side effects ya ocurrieron.
 - Playwright para teclado, Escape, foco, account switch, panel cerrado y badge.
 - Presupuesto de peso comprimido y medición de trabajo al abrir el panel.
 - CSP de prueba que bloquee cdnjs: el chat debe continuar funcional.
+
+### Estado (2026-09-03) — 🟡 parcial
+
+- ✅ Lottie desde cdnjs con `integrity` (sha384) y `crossorigin="anonymous"`; si el archivo
+  cambia, el navegador lo bloquea y queda el bot SVG estático (el chat nunca dependió de él).
+  Comentario contradictorio corregido: el SVG es el avatar base, el Lottie lo reemplaza en
+  los avatares grandes cuando carga.
+- ✅ Diálogo accesible: `Escape` cierra, `Tab`/`Shift+Tab` circulan dentro del panel, el
+  foco vuelve al botón flotante al cerrar, `aria-expanded`/`aria-controls` en el botón.
+- ✅ Cerrado y esperando al bot se sigue sondeando (2 s, vence sola a los 45 s) y la
+  respuesta llega al contador del botón; antes el sondeo se detenía al cerrar.
+- ✅ Ciclo de vida `mount/unmount/reset` (ver §4.8).
+- ⏳ **No hecho:** separar en módulos con build, decidir si se elimina Lottie (decisión de
+  producto: hoy hay orbe WebGPU/WebGL para "escribiendo" y Lottie para el avatar),
+  Vitest/jsdom, Playwright + axe, presupuesto de peso y prueba con CSP que bloquee cdnjs.
 
 ---
 
@@ -1225,6 +1257,9 @@ npm run build
 
 - Nunca se muestra ni se solicita información con la sesión anterior.
 
+**Estado (2026-09-03): ✅ hecho** — ver §4.8 "Estado". Las cuatro pruebas corren en
+`widget/selftest.html` (Chrome headless, sin dependencias); falta portarlas a Playwright.
+
 ## Paso 11 — Activar controles de abuso
 
 ### Implementación
@@ -1321,6 +1356,11 @@ npm run build
 ### Criterio de salida
 
 - Widget mantenible, accesible y con menor superficie de supply chain.
+
+**Estado (2026-09-03): 🟡 parcial** — hechos el SRI del CDN y la accesibilidad del diálogo
+(ver §4.19 "Estado"). Pendientes: modularizar con build, animación única, unit tests y
+Playwright + axe; la parte de `frontend/` (componentes, Link/Button) no se tocó porque la
+avanzan las ramas `feature/cliente-api-asesor` y `fix/adapt-mobile-y-alerta-magenta`.
 
 ## Paso 16 — Generar contratos y ampliar CI
 
