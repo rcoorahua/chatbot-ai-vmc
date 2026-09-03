@@ -430,7 +430,7 @@ chatbot-ai-vmc/
 ├── .claude/                    # skills (spec-driven, testing, commit, deploy, llm-cost-optimizer,
 │                               #   rag-architect, prompt-governance, ci-cd, docker-dev,
 │                               #   security-guidance, skill-auditor, write-a-skill) + hook de seguridad
-├── pyproject.toml              # entorno local de dev (sync manual con backend/requirements.txt)
+├── pyproject.toml              # entorno local de dev (sync manual con backend/requirements-*.txt)
 ├── REQUERIMENTS.md             # spec del MVP en el repo (RF/RNF/RB/AC/D + modelo DynamoDB v1.0)
 ├── PLAN.md                     # este documento
 ├── CLAUDE.md                   # registro de decisiones (leer SIEMPRE antes de implementar)

@@ -1,0 +1,5 @@
+# Dependencias reales de la Lambda `worker-ai` (backend/workers/ai_worker.py + agent/*, RAG y LLM).
+pydantic-settings
+boto3
+google-genai       # Gemini — clasificacion y redaccion (TD-008)
+pinecone           # RAG del Centro de Ayuda (RF-017); embebe en su propio servicio

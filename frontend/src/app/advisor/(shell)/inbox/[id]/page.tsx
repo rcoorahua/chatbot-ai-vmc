@@ -9,7 +9,7 @@ import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
 import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
 import { CURRENT_ADVISOR, MOCK_CONVERSATIONS, MOCK_MESSAGES } from "@/lib/mock-data";
-import { formatWaitTime, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
+import { formatWaitTime, HANDOFF_REASON_LABEL, MOCK_NOW_MS, SENDER_LABEL } from "@/lib/format";
 import type { Conversation, Message } from "@/lib/types";
 
 function senderLabelFor(message: Message, conversation: Conversation): string {
@@ -68,10 +68,18 @@ export default function ConversationDetailPage() {
               <ArrowLeftIcon width={18} height={18} />
             </Link>
             <AvatarZone size="sm" title={conversation.user_name ?? "Anónimo"} />
-            <p className="min-w-0 flex-1 truncate text-base font-semibold text-[#191C1C]">
-              {conversation.user_name ?? "Usuario anónimo"}
-            </p>
-            <span className="flex-shrink-0">
+            {/* ponytail: el badge de estado (nowrap) le ganaba el espacio al nombre en mobile
+                y lo truncaba a 2-3 letras ("Jorge S…") — bajarlo a su propia línea le devuelve
+                el ancho al nombre, que es el dato que el asesor realmente necesita ver. */}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold text-[#191C1C]">
+                {conversation.user_name ?? "Usuario anónimo"}
+              </p>
+              <span className="mt-0.5 inline-flex sm:hidden">
+                <StatusBadge status={conversation.status} />
+              </span>
+            </div>
+            <span className="hidden flex-shrink-0 sm:inline-flex">
               <StatusBadge status={conversation.status} />
             </span>
           </div>
@@ -85,7 +93,7 @@ export default function ConversationDetailPage() {
           )}
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
+        <div className="flex flex-1 flex-col gap-3 px-5 py-4">
           {messages.map((message, i) => {
             const prev = messages[i - 1];
             const showLabel =
@@ -104,17 +112,17 @@ export default function ConversationDetailPage() {
           })}
 
           {retryFailed && canReply && (
-            <div className="flex flex-col items-end gap-1">
-              <div className="max-w-md rounded-2xl border border-dashed border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-600">
+            <div className="flex justify-end">
+              <div className="alert-card max-w-md rounded-2xl px-4 py-3 text-sm">
                 No se pudo enviar: &quot;Un momento, reviso tu caso&quot;
+                <button
+                  type="button"
+                  onClick={() => setRetryFailed(false)}
+                  className="mt-1 block text-xs font-semibold underline decoration-2 underline-offset-2 transition-opacity hover:opacity-80"
+                >
+                  Reintentar (RF-037/038 · mismo client_message_id, no duplica)
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setRetryFailed(false)}
-                className="px-1 text-xs font-semibold text-red-500 underline"
-              >
-                Reintentar (RF-037/038 · mismo client_message_id, no duplica)
-              </button>
             </div>
           )}
         </div>
@@ -190,7 +198,9 @@ export default function ConversationDetailPage() {
         {conversation.handoff_reason && (
           <div className="rounded-2xl bg-[color:var(--vmc-color-orange-600)]/5 p-3.5">
             <h2 className="text-xs font-bold uppercase tracking-wide text-[#9A4A0F]">Derivación</h2>
-            <p className="mt-2 text-sm text-neutral-700">{conversation.handoff_reason}</p>
+            <p className="mt-2 text-sm text-neutral-700">
+              {HANDOFF_REASON_LABEL[conversation.handoff_reason]}
+            </p>
             {conversation.handoff_requested_at && (
               <p className="mt-1.5 text-xs text-[#9A4A0F]/70">
                 Esperando hace {formatWaitTime(conversation.handoff_requested_at, MOCK_NOW_MS)}

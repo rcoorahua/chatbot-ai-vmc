@@ -37,7 +37,7 @@ export default function StatCard({
     : undefined;
 
   const body = (
-    <div className="flex flex-col gap-0.5">
+    <div className={`flex flex-col ${isHero ? "gap-1.5" : "gap-0.5"}`}>
       <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-neutral-500">
         {dot && (
           <span className="relative flex h-1.5 w-1.5">
@@ -52,7 +52,10 @@ export default function StatCard({
         )}
         {label}
       </p>
-      <p className={`font-bold ${isHero ? "text-2xl" : "text-lg"}`} style={{ color: valueColor ?? "#191C1C" }}>
+      <p
+        className={`font-bold ${isHero ? "text-[2.75rem] leading-none tracking-tight" : "text-lg"}`}
+        style={{ color: valueColor ?? "#191C1C" }}
+      >
         {value}
       </p>
       {hint && <p className="text-xs text-neutral-500">{hint}</p>}
@@ -60,7 +63,7 @@ export default function StatCard({
   );
 
   if (bare) {
-    const cellClass = "flex-1 px-4 py-3 transition hover:bg-black/[0.02]";
+    const cellClass = `flex-1 transition hover:bg-black/[0.02] ${isHero ? "px-5 py-4" : "px-4 py-3"}`;
     return href ? (
       <Link href={href} className={cellClass}>
         {body}

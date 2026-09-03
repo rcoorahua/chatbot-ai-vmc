@@ -263,7 +263,8 @@ este patrón, no forzar `TabSelector`, en cualquier contenedor angosto (rail, si
 ### Inputs / Fields
 - **Style:** 16px de radio, borde gradiente violeta→crema 1px en reposo.
 - **Focus:** borde 2px con gradiente naranja→violeta + sombra de glow naranja sutil.
-- **Error:** borde rojo sólido 1px, sin gradiente, mensaje rojo debajo.
+- **Error:** borde magenta sólido 1px (`#8E0B82`, peligro/atención), sin gradiente, mensaje
+  magenta debajo.
 
 ### Navigation
 - Header con marca + tabs de navegación en pill (activo = fondo violeta al 10% + texto violeta
@@ -278,6 +279,18 @@ placeholder universal para cualquier usuario sin foto (que es el 100% de los cas
 Burbuja de chat: mensaje del asesor = relleno violeta sólido + texto blanco; mensaje del bot =
 gris neutro claro; mensaje del usuario = blanco con sombra ambiental. Eventos de sistema (tomar,
 cerrar ticket) son una pill gris centrada, sin burbuja — nunca se confunden con un mensaje real.
+
+### Alert Card (peligro / llamado de atención)
+Excepción deliberada a la paleta de 3 acentos (`.alert-card` en `globals.css`): fill degradado
+vault→magenta→rosa (`linear-gradient(90deg, vault-500 0%, #cc00ff 55%, #ff0066 100%)`) sin ningún
+tramo claro de por medio, borde degradado a juego y `text-shadow` para legibilidad — texto siempre
+blanco. Es el mismo tratamiento de `.alert-card` en el Centro de Ayuda de VMC
+(`CentroDeAyudaVMC/src/styles/global.css`): mantiene el magenta como el color compartido de
+"peligro/atención" en toda la marca VMC, no una elección local. El error de `Input` (ver
+Inputs/Fields) usa la misma familia magenta — una versión oscura para texto/borde sobre blanco —
+así que ambos ("aviso lleno" y "borde de campo") hablan el mismo idioma de peligro. No cuenta
+contra **The Signal Color Rule**: esa regla gobierna los 3 acentos de *estado de conversación*,
+no los avisos puntuales de peligro.
 
 ## Do's and Don'ts
 

@@ -280,6 +280,22 @@ def request_handoff(
     429 si la IP anonima ya pidio demasiados asesores hoy."""
     conversation = _owned_conversation(session, conversation_id)
     anonymous = conversation.user_type == UserType.ANONYMOUS
+    form = forms.HandoffForm(
+        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
+        phone=body.phone,
+    )
+    # DETAILS.md §4.5 / Paso 6: un formulario invalido no debe quemar el cupo diario de la IP
+    # anonima. Se valida ANTES del 429 — la limpieza real (y su reuso) sigue dentro de
+    # service.request_handoff, esto solo adelanta el 422 para que el rechazo no tenga costo.
+    try:
+        forms.validate_handoff_form(
+            form,
+            anonymous=anonymous,
+            needs_email=not anonymous and not conversation.user_email,
+            max_detail_chars=get_settings().max_message_chars,
+        )
+    except forms.FormValidationError as exc:
+        raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
     if anonymous:
         ip_hash = quota.hash_ip(_client_ip(request))
         limit = get_settings().anon_handoffs_per_ip_per_day
@@ -290,10 +306,6 @@ def request_handoff(
                 "Crea tu cuenta en VMC para continuar.",
                 headers={"Retry-After": "3600"},
             )
-    form = forms.HandoffForm(
-        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
-        phone=body.phone,
-    )
     confirmation = (
         prompts.HANDOFF_ANON_CONFIRMATION if anonymous else prompts.HANDOFF_CASE_CONFIRMATION
     )

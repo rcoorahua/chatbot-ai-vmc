@@ -1,7 +1,9 @@
-"""UNICO lugar que conoce claves/GSI de Advisors: PK `advisor_id`, GSI `gsi_cognito` por
-`cognito_sub` (sin SK: un sub de Cognito es un solo asesor)."""
+"""UNICO lugar que conoce claves/GSI de Advisors: PK `advisor_id` (derivado de `cognito_sub`,
+ver `advisors.service.advisor_id_for_cognito_sub`, DETAILS.md §4.4 / Paso 5). El GSI
+`gsi_cognito` sigue en el esquema (infra/local_setup) para inspeccion manual, pero ningun
+codigo lo consulta: con el id determinista, resolver por PK es directo y fuertemente
+consistente — no hace falta pasar por el GSI."""
 
-from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from backend.advisors.models import Advisor
@@ -14,22 +16,16 @@ def _table():
 
 
 def get_advisor(advisor_id: str) -> Advisor | None:
-    item = _table().get_item(Key={"advisor_id": advisor_id}).get("Item")
+    # ConsistentRead: es el chequeo de existencia en resolve_advisor (DETAILS.md §4.4 / Paso 5)
+    # — tiene que ver la escritura del otro request de la carrera al instante.
+    item = _table().get_item(Key={"advisor_id": advisor_id}, ConsistentRead=True).get("Item")
     return Advisor.from_item(item) if item else None
 
 
-def find_by_cognito_sub(cognito_sub: str) -> Advisor | None:
-    response = _table().query(
-        IndexName="gsi_cognito",
-        KeyConditionExpression=Key("cognito_sub").eq(cognito_sub),
-        Limit=1,
-    )
-    items = response["Items"]
-    return Advisor.from_item(items[0]) if items else None
-
-
 def create_advisor(advisor: Advisor) -> bool:
-    """Alta condicional: dos requests simultaneos del mismo asesor nuevo no crean dos filas."""
+    """Alta condicional. Solo evita dos filas si `advisor.advisor_id` es determinista
+    (`advisor_id_for_cognito_sub`, DETAILS.md §4.4 / Paso 5) — con un id aleatorio, dos
+    intentos concurrentes generan ids distintos y la condicion nunca choca entre ellos."""
     try:
         _table().put_item(
             Item=advisor.to_item(), ConditionExpression="attribute_not_exists(advisor_id)"
