@@ -357,6 +357,28 @@ Recomendación concreta:
 - Ejecutar seis handoffs concurrentes con límite cinco: deben quedar como máximo cinco.
 - Verificar el número físico de Conversations, Messages y Tickets después de cada escenario.
 
+### Estado (2026-09-03) — 🟡 parcial: idempotencia de handoff/casos y límite atómico hechos; toma/cierre queda para Paso 7
+
+- ✅ **Orden de operaciones** (`backend/api/routers/chat.py`, `backend/conversations/service.py`,
+  `backend/conversations/repository.py`): el cupo diario de handoff por IP anónima se validaba
+  el formulario ANTES de consumirlo; el FORM_RESPONSE (PII, RF-003) del anónimo se escribía
+  antes de ganar el CAS de `start_handoff`; la nota que enlaza un caso con su hilo de origen se
+  escribía en una llamada aparte después de confirmar la transacción del caso. Las tres
+  corregidas — la última metiendo `link_message` en la MISMA `TransactWriteItems` que crea el
+  caso.
+- ✅ **Límite de casos abiertos atómico**: contador condicional (`OPEN_CASES#USER#<id>`, tabla
+  RateLimits) en la misma transacción que crea el caso, liberado en la misma transacción que
+  lo cierra. Reemplaza el `list_open_cases` (GSI) check-then-act.
+- ⏳ **No hecho**: `client_handoff_id` + `case_id` determinista (idempotencia real de "reintentar
+  el mismo intento", no solo evitar estados corruptos) — toca el contrato público de
+  `/chat/.../handoff` y requiere que el widget lo mande. Se decidió deliberadamente dejarlo
+  fuera: `widget/subastin.js` tuvo un cambio grande en paralelo (PR #114) y tocarlo ahora es
+  alto riesgo de choque. Retomar cuando se coordine con quien lo tenga.
+- ⏳ **Toma y cierre** (asignación de conversación + ticket, cierre de conversación + ticket) es
+  el Paso 7, todavía sin tocar — el ticket sigue fuera de la transacción del handoff a
+  propósito (`ensure_ticket` como red de seguridad, el patrón outbox que el propio audit ofrece
+  como alternativa), así que ese punto de la Corrección recomendada NO aplica.
+
 ---
 
 ## 4.6 P1 — Escrituras de mensajes con estado obsoleto
@@ -1240,6 +1262,9 @@ supuesto silencioso.
 ### Criterio de salida
 
 - El mismo intento siempre devuelve el mismo caso y consume una sola cuota.
+
+**Estado (2026-09-03): 🟡 parcial** — ver §4.5 "Estado". Orden de operaciones y límite de
+casos atómico hechos (PR #119, #120); `client_handoff_id` pendiente (toca el widget).
 
 ## Paso 7 — Hacer toma y cierre consistentes
 
