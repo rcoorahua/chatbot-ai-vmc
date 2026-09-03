@@ -97,9 +97,6 @@
     // pide esperar y el boton de reintentar sigue disponible por si el usuario insiste.
     tooFast: "Vas muy rapido. Espera un momento",
     retry: "Reintentar",
-    anonHint:
-      "Estás chateando como visitante: tu historial no se conserva al cerrar la pestaña. " +
-      "Inicia sesión en VMC para conservarlo y hablar con un asesor.",
     // D-030: franja del visitante DENTRO del hilo, una vez por sesion. Promete solo lo que
     // hoy es verdad (conversacion guardada, asesor sin llenar datos); "atencion
     // personalizada" llegara con la API de datos del usuario.
@@ -152,7 +149,6 @@
     // D-030: badge permanente junto al compositor. Abre el formulario de asesor sin pasar
     // por el bot ni por ningun modelo (GET /handoff/form).
     advisorBadge: "Asesor humano",
-    advisorBadgeTitle: "Hablar con una persona del equipo",
     // Titulo por paso. El servidor decide QUÉ campos van en cada uno (conversations/forms.py);
     // el encabezado es copy de interfaz y vive aquí, como el resto de los textos.
     formStepTitles: ["Datos de contacto", "Motivo de la consulta"],
@@ -1745,7 +1741,6 @@
 
   function renderHome() {
     const name = displayName();
-    const anonymous = !state.session || state.session.userType !== "AUTHENTICATED";
     const articles = HELP_CENTER.collections.flatMap((c) => c.articles).slice(0, 4);
     return h(
       "div",
@@ -1798,8 +1793,7 @@
                 )
               )
             : h("p", { class: "muted", text: TEXT.noArticles })
-        ),
-        anonymous ? h("p", { class: "hint", text: TEXT.anonHint }) : null
+        )
       ),
       renderNav()
     );
@@ -2673,10 +2667,10 @@
     const advisor = h(
       "button",
       {
+        // Sin `title` ni `aria-label`: el texto visible "Asesor humano" ya es el nombre
+        // accesible del boton, y un tooltip que repite lo mismo solo ensucia (Aaron).
         class: "tool tool-advisor",
         type: "button",
-        title: TEXT.advisorBadgeTitle,
-        "aria-label": TEXT.advisorBadgeTitle,
         disabled: canAskAdvisor() ? null : "",
         onclick: openAdvisorForm,
       },
@@ -3052,10 +3046,6 @@
     .list li > button:hover svg { transform: translateX(4px); }
     .list-nested { margin-left: 14px; }
     .muted { color: var(--ink-faint); margin: 8px 0 0; font-size: 13.5px; }
-    .hint {
-      font-size: 13px; color: var(--vault-700); background: rgba(132, 96, 229, .08);
-      border: 1px solid rgba(132, 96, 229, .22); border-radius: 14px; padding: 11px 13px; margin: 0;
-    }
 
     .banner { padding: 10px 16px; font-size: 13.5px; animation: fade-in .24s var(--ease); }
     .banner p { margin: 0 0 6px; }
@@ -3329,14 +3319,15 @@
     .typing i:nth-child(3) { animation-delay: .36s; }
     /* Carga del hilo (2026-09-03, Aaron): mientras el saludo "llega" (~420 ms) o el primer
        sondeo no volvio, un spinner comun centrado. El margin auto lo centra en la columna
-       flex del hilo. El aro es vault con el cuarto vivo en magenta live, girando. */
+       flex del hilo. El aro es vault del design system (vault-500 sobre vault al 22%): el
+       magenta live es acento del orbe, no de un control de carga. */
     .thread-loading {
       margin: auto; align-self: center; display: grid; place-items: center; padding: 20px;
       animation: fade-in .3s var(--ease) both;
     }
     .spinner {
       display: block; width: 26px; height: 26px; border-radius: 50%;
-      border: 2.5px solid rgba(132, 96, 229, .22); border-top-color: var(--live-500);
+      border: 2.5px solid rgba(132, 96, 229, .22); border-top-color: var(--vault-500);
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
