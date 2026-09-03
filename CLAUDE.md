@@ -341,8 +341,14 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   docstrings que indican qué D-xxx los bloquea; se implementan fase por fase (PLAN.md §8) cuando
   el usuario lo pida, no por adelantado.
 - Python ≥ 3.12. Imágenes nunca en DynamoDB (S3 + metadata). Datos VMC solo lectura (RF-051).
-- Deps: `backend/requirements.txt` es lo que CDK bundlea en las Lambdas; `pyproject.toml` es el
-  entorno local de dev — mantener ambos en sync al agregar una dependencia.
+- Deps: `backend/requirements-{api,worker-ai,worker-notify}.txt` es lo que CDK bundlea por
+  función (separadas para no cargar cada Lambda con lo que no usa — ver infra/stacks/
+  subastin_stack.py); `pyproject.toml` es el entorno local de dev — mantener los cuatro en sync
+  con lo que realmente se importa al agregar una dependencia. `requirements-lock.txt` (raíz)
+  fija las versiones exactas resueltas para `pyproject.toml[dev]`; lo instala el job `test` de
+  CI (DETAILS.md §4 Paso 4) y se regenera con el comando en su propio encabezado tras tocar
+  `dependencies`/`dev` — **no** cubre los `backend/requirements-*.txt` (lo que va a Lambda) ni
+  `infra/requirements.txt` (pineados por versión exacta en el propio archivo, sin lock aparte).
 - Locales y **no versionados** (`.gitignore`): `my-usage.md` (chuleta personal), `REFERENCIA/`
   (proyecto v0 de referencia; su `.cursor/` no aplica a este repo), `data/helpcenter/*.md` y
   `chunks.json` (se regeneran con `helpcenter_fetch`). No enlazarlos desde docs versionadas.
@@ -415,6 +421,17 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
      `interaction` (quick replies, sí/no del asesor, formulario), lo que el usuario escriba y no
      la responda es un tema NUEVO. Sin esto, "mejor dime cuánto es la comisión" escrito tras
      "¿quieres un asesor?" heredaba el tema viejo y buscaba la pregunta equivocada.
+  4. **(2026-09-03) La continuidad se decide ANTES de triviales y repetidos, y la consulta
+     viaja con la respuesta.** En una explicación por pasos el usuario contesta "sí" varias
+     veces: el segundo "sí" caía como *mensaje repetido* (D-006) y el tercero en silencio; y
+     "ok"/"listo" tras una pregunta del bot caían como el "¡Con gusto!" de cierre. Ahora
+     `_attend` calcula `is_continuation` primero y solo un acuse sin pregunta abierta es
+     cierre. Además, cada respuesta con evidencia guarda en su metadata la consulta que la
+     produjo (`followups.RAG_QUERY_KEY`) y una continuación busca con ESA consulta: así el
+     "sí" tras un paso de flujo (D-028) repite la consulta canónica y no el texto del botón.
+     "sí"/"listo"/"y luego?" ya no llaman al clasificador (`continuation:<regla>` en
+     AIUsage, sin modelo). Medido: "quiero registrarme" 4/4 (0.858) contra "si" 0/4 (0.790).
+     Tests: `tests/test_ai_worker_continuity.py`.
 
   Todo por reglas deterministas, sin llamada a modelo (no gasta cuota D-027). **No confundir con
   D-028**: `flows.py` es estado persistido con botones; esto solo cambia la consulta y no guarda
@@ -434,9 +451,20 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   el handoff NO se rompe (la conversación ya es durable y el usuario ya vio su confirmación):
   la red de seguridad es `tickets.ensure_ticket`, que corre cuando el asesor abre o toma el
   caso. Por eso ningún caso llega a la bandeja sin registro.
-- Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC) se leen de **Secrets Manager en runtime**,
-  nunca como variables de entorno del stack. Hoy `core/config.py` y `core/llm.py` los leen del
-  entorno (dev); al desplegar hay que resolverlos desde el secreto antes de construir `Settings`.
+- Secretos (Gemini/Pinecone/VMC; Slack/HERALD cuando existan) se leen de **Secrets Manager en
+  runtime** (implementado 2026-09-02, DETAILS.md §4.2), nunca como variables de entorno del
+  stack. En AWS cada Lambda recibe el ARN de SOLO lo que consume (`IDENTITY_SECRET_ARN` en
+  `api`, `AI_SECRET_ARN` en `worker-ai`; `worker-notify` no lee ninguno) y
+  `core/config.get_settings()` los resuelve una vez por proceso, ANTES de construir `Settings`,
+  volcandolos a las mismas variables de entorno que ya leia en dev (`_resolve_secrets_into_env`).
+  CDK solo crea el secreto vacio (`GenerateSecretString: {}`) y el permiso de lectura — el valor
+  real (`VMC_IDENTITY_SECRET` es compartido con VMC; las API keys son de terceros) se carga a
+  mano con `aws secretsmanager put-secret-value` despues del primer deploy, nunca en el codigo
+  ni en la plantilla de CloudFormation. `anthropic_api_key` sigue sin secreto: nada lo consume
+  todavia (DETAILS.md §4.23), agregarlo cuando exista el consumidor real.
+- `POST /chat/sessions` valida que exista `SESSION_SIGNING_KEY` ANTES de abrir la conversacion
+  (`auth.ensure_session_signing_configured()`, DETAILS.md §4.2): antes, un anonimo sin la clave
+  dejaba una fila huerfana en cada intento porque el 503 llegaba recien al firmar el token.
 - Dos secretos de identidad y no uno: `VMC_IDENTITY_SECRET` (lo comparte VMC, firma el JWT de
   identidad) y `SESSION_SIGNING_KEY` (propio, firma el token de sesión). Unificarlos permitiría
   presentar un token de sesión como identidad de VMC — `tests/test_core_auth.py` lo cubre.

@@ -33,7 +33,10 @@ def _is_condition_failure(exc: ClientError) -> bool:
 
 
 def get_ticket(ticket_id: str) -> Ticket | None:
-    item = _tickets().get_item(Key={"ticket_id": ticket_id}).get("Item")
+    # ConsistentRead: es el chequeo de existencia en open_ticket (DETAILS.md §4.4 / Paso 5) —
+    # tiene que ver la escritura del otro request de la carrera al instante, no cuando el
+    # default eventualmente consistente decida propagar.
+    item = _tickets().get_item(Key={"ticket_id": ticket_id}, ConsistentRead=True).get("Item")
     return Ticket.from_item(item) if item else None
 
 

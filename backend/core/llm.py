@@ -182,6 +182,13 @@ class LLMClient:
         raise NotImplementedError
 
 
+# Tope por llamada HTTP a Gemini, en milisegundos. Holgado para una redaccion con 600 tokens de
+# salida (las medidas en local van de 1 a 7 s) y bastante menor que el timeout de la Lambda del
+# worker, para que una llamada colgada no se lleve el job entero. Constante y no Settings a
+# proposito: no es una politica de negocio y `core/config.py` lo esta tocando otra rama.
+_HTTP_TIMEOUT_MS = 30_000
+
+
 class GeminiClient(LLMClient):
     """Implementacion sobre el SDK `google-genai`."""
 
@@ -189,8 +196,17 @@ class GeminiClient(LLMClient):
 
     def __init__(self, api_key: str) -> None:
         from google import genai
+        from google.genai import types
 
-        self._client = genai.Client(api_key=api_key)
+        # Timeout EXPLICITO por llamada. El SDK trae `None` por defecto y una conexion que se
+        # queda muda cuelga al worker entero: paso el 2026-09-03 en local (13 minutos sin
+        # respuesta ni error, con todos los jobs siguientes esperando detras) y en Lambda
+        # agotaria el timeout de la funcion sin dejar rastro del motivo (DETAILS.md §4.18).
+        # Con timeout, la llamada muerta se convierte en un LLMError de conexion: cae al
+        # respaldo y, si tambien falla, el redactor responde con el texto fijo.
+        self._client = genai.Client(
+            api_key=api_key, http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_MS)
+        )
 
     def generate(
         self,
@@ -201,7 +217,7 @@ class GeminiClient(LLMClient):
         max_output_tokens: int,
         temperature: float | None = None,
     ) -> LLMResponse:
-        from google.genai import errors, types
+        from google.genai import types
 
         spec = _MODELS[tier]
         config: dict[str, Any] = {"max_output_tokens": max_output_tokens}
@@ -229,13 +245,13 @@ class GeminiClient(LLMClient):
                 contents=contents,
                 config=types.GenerateContentConfig(**config),
             )
-        except errors.APIError as exc:
+        except Exception as exc:  # noqa: BLE001 — APIError y tambien timeouts/red del transporte
             if not spec.fallback:
                 raise self._normalize(exc) from exc
-            # Reintento UNICO con el respaldo. Aplica a cualquier APIError del principal:
-            # si es un error que el respaldo comparte (key invalida), fallara igual y ambos
-            # quedan en el log; si es capacidad del modelo (el caso visto), el respaldo salva
-            # la respuesta en vez de degradar al texto fijo de "sin evidencia".
+            # Reintento UNICO con el respaldo. Aplica a cualquier fallo del principal: si es
+            # un error que el respaldo comparte (key invalida), fallara igual y ambos quedan
+            # en el log; si es capacidad del modelo o una conexion colgada (los dos casos
+            # vistos), el respaldo salva la respuesta en vez de degradar al texto fijo.
             logger.warning(
                 "llm.fallback", extra={"model": model_name, "error": str(self._normalize(exc))}
             )
@@ -250,7 +266,7 @@ class GeminiClient(LLMClient):
                     contents=contents,
                     config=types.GenerateContentConfig(**config),
                 )
-            except errors.APIError as exc2:
+            except Exception as exc2:  # noqa: BLE001 — mismo criterio que el principal
                 raise self._normalize(exc2) from exc2
         latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -315,7 +331,13 @@ class GeminiClient(LLMClient):
 
     def _normalize(self, exc: Any) -> LLMError:
         code = getattr(exc, "code", None)
-        message = str(getattr(exc, "message", "") or exc)
+        message = str(getattr(exc, "message", "") or exc) or type(exc).__name__
+        if code is None:
+            # No vino del API (timeout, conexion cortada, DNS): es un fallo de transporte y se
+            # reintenta como tal. Se deja el tipo en el mensaje para verlo en el log.
+            return LLMError(
+                f"{type(exc).__name__}: {message}", provider=self.provider, is_connection=True
+            )
         lowered = message.lower()
         # Un 429 puede ser un pico de trafico (se reintenta) o la cuota del proyecto agotada
         # (reintentar no la devuelve); solo el mensaje los distingue.

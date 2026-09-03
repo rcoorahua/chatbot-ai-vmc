@@ -188,6 +188,14 @@ def create_session(body: SessionIn) -> SessionOut:
         except auth.IdentityConfigurationError as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    # DETAILS.md §4.2: falla ANTES de abrir la conversacion si falta la clave de sesion — si no,
+    # un anonimo sin SESSION_SIGNING_KEY dejaba una fila huerfana en cada intento (el 503 llegaba
+    # recien al firmar el token, con la conversacion ya creada).
+    try:
+        auth.ensure_session_signing_configured()
+    except auth.IdentityConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
     conversation, created = service.open_conversation(identity)
     session = auth.new_session(
         user_type=str(conversation.user_type),
@@ -195,10 +203,7 @@ def create_session(body: SessionIn) -> SessionOut:
         user_id=conversation.user_id,
         user_name=conversation.user_name,
     )
-    try:
-        token = auth.issue_session_token(session)
-    except auth.IdentityConfigurationError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    token = auth.issue_session_token(session)  # ya validado arriba: no puede fallar por config
 
     return SessionOut(
         token=token,
@@ -275,6 +280,22 @@ def request_handoff(
     429 si la IP anonima ya pidio demasiados asesores hoy."""
     conversation = _owned_conversation(session, conversation_id)
     anonymous = conversation.user_type == UserType.ANONYMOUS
+    form = forms.HandoffForm(
+        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
+        phone=body.phone,
+    )
+    # DETAILS.md §4.5 / Paso 6: un formulario invalido no debe quemar el cupo diario de la IP
+    # anonima. Se valida ANTES del 429 — la limpieza real (y su reuso) sigue dentro de
+    # service.request_handoff, esto solo adelanta el 422 para que el rechazo no tenga costo.
+    try:
+        forms.validate_handoff_form(
+            form,
+            anonymous=anonymous,
+            needs_email=not anonymous and not conversation.user_email,
+            max_detail_chars=get_settings().max_message_chars,
+        )
+    except forms.FormValidationError as exc:
+        raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
     if anonymous:
         ip_hash = quota.hash_ip(_client_ip(request))
         limit = get_settings().anon_handoffs_per_ip_per_day
@@ -285,10 +306,6 @@ def request_handoff(
                 "Crea tu cuenta en VMC para continuar.",
                 headers={"Retry-After": "3600"},
             )
-    form = forms.HandoffForm(
-        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
-        phone=body.phone,
-    )
     confirmation = (
         prompts.HANDOFF_ANON_CONFIRMATION if anonymous else prompts.HANDOFF_CASE_CONFIRMATION
     )
