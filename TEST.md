@@ -179,6 +179,10 @@ artículo correcto entre los descartados.
 | C4 | `¿Cómo me registro?` → `ok` → `¿cuánto es la comisión?` | La tercera es una **pregunta nueva**: NO debe arrastrar el registro. Debe responder de comisión |
 | C5 | *(conversación nueva)* `ya estoy ahi` | Sin nada previo que continuar: no inventa. Pregunta por el asesor o pide precisión |
 | C6 | `¿Cómo me registro?` → `ya estoy ahí pero me sale un error al poner mi documento y no sé si es por el navegador` | Mensaje largo: se busca **tal cual**, no se le pega el tema anterior (ya se sostiene solo) |
+| C6b | `quiero registrarme` → `si` → `si` → `y luego?` | **Explicación por pasos** (arreglado el 03/09): cada "sí" trae el paso siguiente. El segundo "sí" NO es "mensaje repetido" ni cae en silencio; en la Consola IA la clasificación sale como `continuation:acuse` / `continuation:pide_seguir` **sin modelo** (solo paga el redactor) y el RAG trae 4/4 con la consulta `quiero registrarme` |
+| C6c | `quiero registrarme` → *(el bot pregunta si sigue)* → `ok` / `listo` / `vale` | Continúan la explicación (no es el "¡Con gusto!" de cierre). Si el bot **no** preguntó nada (cerró con punto), "ok" sí es el cierre trivial. `gracias` cierra siempre |
+| C6d | `quiero participar` → `en vivo` → `si` | Continuar un **paso de flujo**: el "sí" busca con la consulta canónica del paso (viaja en `metadata.rag_query` de la respuesta del bot), no con el texto del botón. En el log del worker, `ai.rag` trae `contextualized=true` |
+| C6e | `quiero participar` → `si` / `listo` / `y ahora?` *(con los botones en pantalla, sin elegir)* | El bot **repite los botones** (gratis, `flow:PARTICIPATION:offered` otra vez) en vez de "no tengo ese dato". Luego `en vivo` resuelve el flujo normal |
 
 ### 3.2 · Cambio de tema
 
@@ -249,6 +253,12 @@ y usar ese Bearer contra `/advisor/*` (o `http://localhost:8000/docs`).
 | C38 | *(autenticado)* conversar y **recargar** la página | El hilo completo sigue ahí |
 | C39 | *(visitante)* conversar y **cerrar la pestaña**, luego volver | Conversación nueva: el visitante no conserva historial (RF-004) |
 | C40 | Mandar 11 mensajes en menos de un minuto | El 11.º recibe "Vas muy rápido" (429) y **no** se persiste |
+| C41 | *(autenticado)* conversar → botón **Entrar como otro usuario** de `test.html` (sin recargar) | El widget olvida al anterior: saludo y conversación del usuario nuevo, sin mensajes viejos, y en la pestaña Red ninguna request lleva el token anterior (`Subastin.setIdentity`, DETAILS.md §4.8) |
+| C42 | *(autenticado)* conversar → botón **Cerrar sesión** (sin recargar) | Queda como visitante con conversación nueva; **Reset** dos veces seguidas abre UNA sola sesión |
+| C43 | Abrir el chat, enfocar el compositor y pulsar `Escape` | El panel se cierra y el foco vuelve al botón flotante; `Tab` desde el último control vuelve al primero (no se sale del panel) |
+| C44 | Enviar una pregunta y **cerrar el panel** antes de la respuesta | El contador del botón flotante marca **1** cuando el bot contesta (antes el sondeo se detenía al cerrar) |
+
+> Todo lo de C41–C44 corre solo en `widget/selftest.html` (ver `widget/README.md`).
 
 ---
 

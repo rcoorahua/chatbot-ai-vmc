@@ -125,6 +125,44 @@ Por qué no se lee la cookie `subastop_jwt`: es **HttpOnly** (ningún script pue
 firmada con el secreto de sesión de VMC, que Subastín no debe conocer. Un JWT aparte con un
 secreto aparte solo sirve para el chat; si se filtra, no compromete la sesión de VMC.
 
+## Cambios de sesión sin recargar (SPA) — `window.Subastin`
+
+El widget lee el JWT **en vivo** y guarda con quién es la sesión. Si la página cambia de
+usuario sin recargar (login, logout, otra cuenta), antes de cada request compara la identidad
+y, si cambió, corta las requests en vuelo, apaga los temporizadores, borra memoria y
+`sessionStorage` y abre sesión para el usuario nuevo. Nada del anterior vuelve a mostrarse ni
+a viajar en una request. VMC debe **avisar** en su login/logout:
+
+```js
+window.Subastin.setIdentity(userJwt); // inició sesión (o cambió de cuenta)
+window.Subastin.setIdentity(null);    // cerró sesión: el widget queda como visitante
+window.Subastin.reset();              // olvida todo y vuelve a empezar con la identidad vigente
+window.Subastin.unmount();            // retira el widget (sin requests ni temporizadores)
+window.Subastin.mount();              // lo vuelve a montar
+window.Subastin.open(); window.Subastin.close(); window.Subastin.showMessages();
+```
+
+Si VMC no avisa pero reasigna `window.subastinSettings.userJwt`, el widget lo detecta igual en
+la siguiente request. `setIdentity` con la **misma** persona (JWT renovado) no pierde nada.
+`reset()` es idempotente: dos seguidos abren una sola sesión.
+
+**Autoprueba sin dependencias:** `widget/selftest.html` recorre A → B sin avisar, `setIdentity`,
+logout → anónimo, JWT inválido, `reset()` doble, `Escape`/foco, `Tab` dentro del panel y
+`unmount`/`mount` contra la API local, sin mandar mensajes al bot (no gasta IA):
+
+```powershell
+cd widget; python -m http.server 8080
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --disable-gpu `
+  --virtual-time-budget=120000 --dump-dom http://localhost:8080/selftest.html | Select-String '"failed"'
+```
+
+(o abrirlo en el navegador y leer la lista). Escribe `PASS`/`FAIL n` en el `<title>`.
+
+Accesibilidad del panel: `role="dialog"` no modal, `Escape` cierra, `Tab` circula dentro, y el
+foco vuelve al botón flotante al cerrar. El runtime de Lottie se carga desde cdnjs con
+`integrity` (SRI) y `crossorigin`: si el archivo cambia, el navegador lo bloquea y queda el
+avatar SVG estático.
+
 ## Flujo de sesión y sondeo
 
 1. `POST /chat/sessions` con `{ user_jwt }` (o `{}` si es anónimo) → token de sesión de Subastín
@@ -135,10 +173,12 @@ secreto aparte solo sirve para el chat; si se filtra, no compromete la sesión d
    su hilo y sus casos; el visitante solo la conversación de su token.
 3. El primer `GET …/messages` sin cursor trae los **últimos** 50 y el estado de la conversación;
    después `?after=<message_key>` trae solo lo nuevo y `?before=` pagina hacia atrás.
-4. Cadencia del sondeo (TD-001): 2 s mientras se espera al bot, 5 s en un caso con asesor,
-   15 s con el hilo en reposo, 60 s con el panel cerrado y casos abiertos (una llamada a la
-   lista), 30 s para el visitante cerrado que espera asesor, y nada en el resto. Ante un error
-   de red o 5xx, backoff exponencial con jitter hasta 60 s. Con la pestaña oculta no se sondea.
+4. Cadencia del sondeo (TD-001): 2 s mientras se espera al bot (también con el panel
+   cerrado, para que la respuesta llegue al contador del botón; vence sola a los 45 s), 5 s
+   en un caso con asesor, 15 s con el hilo en reposo, 60 s con el panel cerrado y casos
+   abiertos (una llamada a la lista), 30 s para el visitante cerrado que espera asesor, y
+   nada en el resto. Ante un error de red o 5xx, backoff exponencial con jitter hasta 60 s.
+   Con la pestaña oculta no se sondea.
 5. Ante un 401 (sesión caducada) el widget abre otra sesión y reintenta una vez.
 
 La sesión vive en `sessionStorage`: sobrevive a la navegación dentro de la pestaña y muere al

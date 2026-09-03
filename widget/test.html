@@ -361,6 +361,19 @@
         </div>
         <button class="primary" type="submit"><span>Aplicar y cargar el widget</span></button>
         <div id="status" class="form-status"></div>
+        <!-- Cambios de sesion SIN recargar, como los haria la SPA de VMC (DETAILS.md §4.8):
+             el widget debe olvidar por completo al usuario anterior. -->
+        <div class="field" style="margin-top:12px">
+          <label>Cambiar de sesión sin recargar (<code>window.Subastin.setIdentity</code>)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="ghost" type="button" id="switch-user">Entrar como otro usuario</button>
+            <button class="ghost" type="button" id="switch-logout">Cerrar sesión</button>
+            <button class="ghost" type="button" id="switch-reset">Reset</button>
+          </div>
+          <p class="mode-hint" id="switch-hint">Con el widget cargado: «otro usuario» firma un JWT
+            para <code>sub</code> = ID + «-b»; «cerrar sesión» lo deja anónimo; «reset» olvida
+            sesión y mensajes y vuelve a empezar con la identidad vigente.</p>
+        </div>
       </div>
     </form>
 
@@ -1405,6 +1418,39 @@
   renderAll();
   refreshConsole();
   boot();
+
+  // ── Cambios de sesion sin recargar (simulan la SPA de VMC) ──
+  const switchHint = document.getElementById("switch-hint");
+  function requireWidget() {
+    if (window.Subastin && typeof window.Subastin.setIdentity === "function") return true;
+    switchHint.textContent = "Primero carga el widget con «Aplicar».";
+    return false;
+  }
+  document.getElementById("switch-user").addEventListener("click", async () => {
+    if (!requireWidget()) return;
+    const sub = form.elements.id.value.trim() + "-b";
+    const jwt = await signJwt({
+      sub,
+      name: form.elements.name.value.trim() + " (otro)",
+      email: "otro-" + form.elements.email.value.trim(),
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }, form.elements.secret.value);
+    window.Subastin.setIdentity(jwt);
+    window.Subastin.open();
+    switchHint.textContent = `Ahora eres sub=${sub}: la conversación y el saludo deben ser de ese usuario.`;
+  });
+  document.getElementById("switch-logout").addEventListener("click", () => {
+    if (!requireWidget()) return;
+    window.Subastin.setIdentity(null);
+    window.Subastin.open();
+    switchHint.textContent = "Sesión cerrada: el widget debe estar como visitante, sin mensajes previos.";
+  });
+  document.getElementById("switch-reset").addEventListener("click", () => {
+    if (!requireWidget()) return;
+    window.Subastin.reset();
+    switchHint.textContent = "Reset: sesión y mensajes olvidados; vuelve a arrancar con la identidad vigente.";
+  });
 </script>
 </body>
 </html>

@@ -25,7 +25,12 @@ se queda como la escribió el usuario, que es el comportamiento de siempre.
 
 Esto NO es la máquina de estados de D-028 (`agent/flows.py`): aquella son flujos guiados con
 botones y estado persistido en la conversación. Esto es solo la consulta que se le manda a
-Pinecone; no guarda nada.
+Pinecone; lo único que se guarda es la consulta que dio evidencia, en la metadata de la
+respuesta del bot (`RAG_QUERY_KEY`), para que la siguiente continuación la repita tal cual.
+
+Desde el 2026-09-03 el worker decide la continuidad ANTES de los triviales y de la detección
+de repetidos (`ai_worker._attend`): en una explicación por pasos, el segundo "sí" caía como
+mensaje repetido y "ok"/"listo" tras una pregunta del bot caían como el cierre de "gracias".
 """
 
 from __future__ import annotations
@@ -43,6 +48,14 @@ MAX_QUERY_CHARS = 300
 # Cuántos mensajes atrás se busca la pregunta del usuario. Más allá, la conversación ya cambió
 # de tema y arrastrarla sería peor que no hacer nada.
 LOOKBACK_MESSAGES = 6
+
+# Clave de la metadata del mensaje del bot donde el worker deja la consulta que le dio
+# evidencia (`ai_worker._answer_faq`). Es lo que sostiene una continuación (2026-09-03): "sí"
+# tras un paso de flujo (D-028) debe buscar con la consulta canónica que produjo la respuesta,
+# no con el texto del botón ("Oferta En Vivo"); y tras varios "sí" seguidos la cadena ya no
+# depende de cuántos mensajes atrás haya quedado la pregunta original. El historial del
+# usuario (`last_user_question`) queda como respaldo para respuestas que no la traen.
+RAG_QUERY_KEY = "rag_query"
 
 _WHITESPACE = re.compile(r"\s+")
 

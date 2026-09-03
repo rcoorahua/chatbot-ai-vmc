@@ -370,7 +370,8 @@ def test_el_dato_ya_en_el_disparador_responde_directo_sin_persistir_flujo(
     respuestas = _respuestas_bot(conversation.conversation_id)
     assert len(respuestas) == 1
     assert respuestas[0].content == fake_llm.answer
-    assert respuestas[0].metadata is None, "sin botones: el flujo ni se persistio"
+    # Sin botones (la metadata puede traer `rag_query`, la consulta que dio la evidencia).
+    assert not (respuestas[0].metadata or {}).get("interaction"), "sin botones: sin flujo"
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.active_flow is None
