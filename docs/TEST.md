@@ -268,11 +268,13 @@ Regla que se está probando: si el usuario **pide** el asesor, sale el formulari
 | # | Turnos | Qué esperar |
 |---|---|---|
 | C25 | *(visitante)* `quiero un asesor` | **Paso 1 de 2**: nombre, correo, teléfono (opcional). Botón **Siguiente** en gris. La tarjeta va **centrada** |
-| C26 | *(en el paso 1)* dejar el nombre vacío | **Siguiente está apagado** hasta que nombre y correo (los campos con **\***) tengan algo; el teléfono no lo bloquea. La cabecera dice **1/2**, no "Paso 1 de 2" |
+| C26 | *(en el paso 1)* dejar nombre y correo vacíos y pulsar **Siguiente** | No avanza: **los dos** campos ganan a la vez el asterisco rojo y el aviso "Falta llenar este campo" (antes de pulsar no hay asteriscos). Al escribir en uno, su marca se va. El teléfono nunca se marca. La cabecera dice **Datos de contacto · 1/2** |
+| C26b | *(al abrir el formulario, desde el badge o porque el bot lo ofreció)* | Transición con movimiento: los botones de pregunta se **desvanecen**, el compositor **se pliega hacia abajo** (baja su altura, no desaparece de golpe) y el formulario entra con un fade desde arriba **a todo el ancho** del hilo. Con la **x** o al **Contactar**, el compositor **vuelve subiendo** y los botones de pregunta reaparecen con fade |
 | C27 | *(paso 1)* correo `ana-arroba` → Siguiente → completar el paso 2 → Enviar | El servidor rechaza el correo y el widget **vuelve al paso 1** a mostrarlo (no deja un error sobre un campo invisible) |
 | C28 | *(paso 2)* pulsar **Atrás** | Vuelve al paso 1 **con lo escrito intacto** |
-| C29 | *(autenticado)* `quiero un asesor` | **Un solo paso** (el correo ya vino en el JWT): asunto y mensaje con **\***, botón **Enviar al asesor** en color primario apagado hasta llenarlos. Sin "1/2". Mientras el formulario está a la vista **no hay compositor**; la **x** lo cierra y el compositor vuelve |
+| C29 | *(autenticado)* `quiero un asesor` | **Un solo paso** (el correo ya vino en el JWT): cabecera **Motivo de la consulta** sin "1/2", asunto y mensaje, botón **Contactar** en color primario (ya no "Enviar al asesor"). Pulsarlo vacío marca los dos campos con asterisco y aviso. Mientras el formulario está a la vista **no hay compositor ni botones de pregunta**; la **x** lo cierra y el compositor vuelve subiendo |
 | C30 | *(a mitad del formulario)* minimizar el chat y volver a abrirlo | El formulario sigue ahí, en su paso, con lo escrito |
+| C31 | *(hilo largo)* enviar `¿Cómo me registro?` y esperar la respuesta | Al llegar, la vista **se desliza suave** hasta dejar el **inicio** del mensaje del bot en la parte de arriba del hilo (se lee desde el principio, no desde el final). Lo propio y la primera apertura siguen aterrizando abajo. Si el usuario había subido a leer, no se mueve y aparece la píldora de "nuevos abajo" |
 
 ### 3.6 · Casos, bandeja y cierre *(autenticado)*
 

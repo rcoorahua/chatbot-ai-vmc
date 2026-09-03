@@ -142,7 +142,8 @@
     olderMessages: "Ver mensajes anteriores",
     formSending: "Enviando…",
     formFailed: "No se pudo enviar. Inténtalo de nuevo.",
-    formRequired: "Completa este campo",
+    formRequired: "Falta llenar este campo",
+    formSubmit: "Contactar",
     formNext: "Siguiente",
     formBack: "Atrás",
     formStepOf: (actual, total) => `${actual}/${total}`,
@@ -153,7 +154,7 @@
     advisorBadgeTitle: "Hablar con una persona del equipo",
     // Titulo por paso. El servidor decide QUÉ campos van en cada uno (conversations/forms.py);
     // el encabezado es copy de interfaz y vive aquí, como el resto de los textos.
-    formStepTitles: ["¿Con quién hablamos?", "¿En qué te ayudamos?"],
+    formStepTitles: ["Datos de contacto", "Motivo de la consulta"],
     noCases: "Cuando pidas un asesor, tu caso aparecerá aquí.",
     offlineStatus: "Sin conexión",
     caseOpenedFrom: (title) => (title ? `Abriste el caso «${title}»` : "Abriste un caso para un asesor"),
@@ -259,6 +260,17 @@
     localForm: null,
     dismissedForm: null,
     composerReturn: false,
+    // Obligatorios vacios marcados al intentar avanzar (asterisco + aviso); se limpian al
+    // escribir. `formEntering` pospone renders mientras el compositor se pliega;
+    // `repliesReturn` hace que los botones de pregunta vuelvan con fade; `formOpenSeq` da
+    // una clave nueva a cada apertura desde el badge para que anime su entrada.
+    formMissing: new Set(),
+    formEntering: false,
+    repliesReturn: false,
+    formOpenSeq: 0,
+    // Hasta cuando ignorar los eventos de scroll del deslizamiento programado (alinear un
+    // mensaje nuevo arriba), para no confundirlos con el usuario subiendo a leer.
+    autoScrollUntil: 0,
   };
 
   // ───────────────────────────────── Utilidades DOM ─────────────────────────────────
@@ -968,6 +980,7 @@
     state.formStep = 0;
     state.localForm = null;
     state.dismissedForm = null;
+    state.formMissing = new Set();
     state.typingSince = null;
     storeSession(null);
   }
@@ -1334,22 +1347,25 @@
     return spec.fields.filter((field) => (field.step || 1) === paso);
   }
 
-  /** Primer campo obligatorio vacio de la lista, o null si estan todos. */
+  /** Nombres de los obligatorios vacios de la lista (vacia si estan todos). */
   function missingIn(fields) {
-    for (const field of fields) {
-      if (field.required && !String(state.formDraft[field.name] || "").trim()) return field;
-    }
-    return null;
+    return fields
+      .filter((field) => field.required && !String(state.formDraft[field.name] || "").trim())
+      .map((field) => field.name);
   }
 
+  /** Siguiente: si falta un obligatorio del paso, TODOS los que falten ganan asterisco y
+   *  aviso a la vez (marcar uno por click es hacer dar tres clicks por tres campos). */
   function advanceHandoff(spec) {
     const pasos = formSteps(spec);
-    const falta = missingIn(fieldsOfStep(spec, pasos[state.formStep]));
-    if (falta) {
-      state.formError = { field: falta.name, message: TEXT.formRequired };
+    const faltan = missingIn(fieldsOfStep(spec, pasos[state.formStep]));
+    if (faltan.length) {
+      state.formMissing = new Set(faltan);
+      state.formError = null;
       render();
       return;
     }
+    state.formMissing = new Set();
     state.formError = null;
     state.formStep = Math.min(state.formStep + 1, pasos.length - 1);
     render();
@@ -1364,7 +1380,8 @@
       else if (field.required) {
         // Un obligatorio vacio puede estar en un paso anterior (el usuario volvio y lo borro):
         // se salta a SU paso, porque marcar un campo que no se ve no le dice nada a nadie.
-        state.formError = { field: field.name, message: TEXT.formRequired };
+        state.formMissing = new Set([field.name]);
+        state.formError = null;
         state.formStep = formSteps(spec).indexOf(field.step || 1);
         render();
         return;
@@ -1383,7 +1400,7 @@
       state.formStep = 0; // si mas adelante se ofrece otro, empieza por el principio
       state.localForm = null;
       state.dismissedForm = null;
-      state.composerReturn = true;
+      markFormGone();
       const conv = data.conversation;
       if (conv.conversation_id === id) {
         // Anonimo: su misma conversacion ya espera al asesor; el sondeo trae lo nuevo.
@@ -1514,6 +1531,21 @@
     if (!state.open) return;
     ensureLottie();
     ensureOrbGpu(); // el orbe WebGPU calienta desde que se abre el panel
+    // D-030: si va a aparecer un formulario de asesor y el compositor esta en pantalla, el
+    // cambio no es de golpe. Primero, sobre el DOM vivo, los botones de pregunta se van con
+    // un fade y el compositor se pliega hacia abajo (su altura baja a cero, asi el hilo crece
+    // y el formulario "empuja"); recien al terminar se dibuja el estado nuevo. Mientras dura,
+    // cualquier otro render se pospone: reemplazar el DOM a mitad de la animacion la corta.
+    if (state.formEntering) return;
+    if (state.view === "messages" && visibleForm() && panelEl.querySelector(".screen:not(.is-leaving) .composer")) {
+      state.formEntering = true;
+      fadeOutReplies();
+      collapseComposer(() => {
+        state.formEntering = false;
+        render();
+      });
+      return;
+    }
     const view =
       state.view === "messages"
         ? renderMessages()
@@ -1555,9 +1587,18 @@
     if (thread) {
       const primeraVez = previousScroll === null;
       if (primeraVez || wasAtBottom || state.stickToBottom) {
-        // Al abrir el hilo se aterriza abajo sin animacion; ya dentro, cada mensaje nuevo
-        // desliza suave (scroll-behavior del .thread) para que se vea de donde salio.
-        thread.scrollTop = thread.scrollHeight;
+        // Un mensaje que LLEGA (bot o asesor) se lee desde arriba: su inicio se alinea con el
+        // borde superior del hilo, deslizando suave (pedido de Aaron, 2026-09-03). Si es corto
+        // y no hay contenido para llegar ahi, el navegador se queda en el fondo, que es lo
+        // mismo. Lo propio, y la primera apertura, siguen aterrizando abajo.
+        const nuevo = primeraVez ? null : view.querySelector(".row.is-new:not(.row-mine):not(.is-greeting)");
+        if (nuevo) {
+          const top = nuevo.getBoundingClientRect().top - thread.getBoundingClientRect().top + thread.scrollTop - 6;
+          state.autoScrollUntil = Date.now() + 900;
+          thread.scrollTo({ top: Math.max(0, top), behavior: reducedMotion() ? "auto" : "smooth" });
+        } else {
+          thread.scrollTop = thread.scrollHeight;
+        }
         state.stickToBottom = true;
         state.unseenBelow = 0;
       } else {
@@ -1596,6 +1637,9 @@
   /** El usuario esta "abajo" si le faltan menos de 40 px: ahi el hilo sigue cada mensaje nuevo.
    *  Si subio a leer, se respeta su posicion y los mensajes que llegan se cuentan en la pildora. */
   function onThreadScroll(hilo) {
+    // El deslizamiento que alinea un mensaje nuevo arriba no es el usuario leyendo: mientras
+    // dura, no cambia el "sigue abajo" (si lo cambiara, el siguiente mensaje ya no alinearia).
+    if (Date.now() < state.autoScrollUntil) return;
     const abajo = hilo.scrollHeight - hilo.scrollTop - hilo.clientHeight < 40;
     if (abajo === state.stickToBottom) return;
     state.stickToBottom = abajo;
@@ -1811,6 +1855,8 @@
       );
     }
     const ultimo = state.messages[state.messages.length - 1] || null;
+    // D-030: con un formulario a la vista no hay botones de pregunta ni compositor.
+    const form = visibleForm();
     for (const message of state.messages) {
       const diaAntes = lastDay;
       pushDay(message.created_at);
@@ -1824,7 +1870,7 @@
       previo = message;
       // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
       // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
-      if (message === ultimo && state.pending.size === 0) {
+      if (message === ultimo && state.pending.size === 0 && !form) {
         const botones = renderQuickReplies(message) || renderRelatedQuestions(message);
         if (botones) items.push(botones);
       }
@@ -1840,8 +1886,8 @@
     if (typing) items.push(typing);
     // D-030: el formulario de asesor (del bot o del badge) va al final del hilo y, mientras
     // este a la vista, el compositor se retira: lo que se escribe es el formulario.
-    const form = visibleForm();
     if (form) items.push(renderHandoffForm(form.spec, form.key));
+    state.repliesReturn = false; // el fade de vuelta de los botones es de un solo render
 
     return h(
       "div",
@@ -2024,7 +2070,7 @@
     if (state.conversation && state.conversation.status !== "BOT_ATTENDING") return null;
     const local = state.localForm;
     if (local && local.conversationId === state.activeId) {
-      return { spec: local.spec, key: "local:" + state.activeId, local: true };
+      return { spec: local.spec, key: "local:" + (local.seq || 0), local: true };
     }
     const ultimo = state.messages[state.messages.length - 1];
     if (!ultimo || state.pending.size || ultimo.sender_type !== "BOT") return null;
@@ -2034,9 +2080,10 @@
     return { spec: interaction, key: "form:" + ultimo.message_id, local: false };
   }
 
-  /** Tarjeta del formulario (D-029, rediseño D-030): ancho de burbuja, "1/2" en vez de
-   *  "Paso 1 de 2", asterisco en los obligatorios, Siguiente/Enviar apagados hasta que esten
-   *  llenos, y una x que la cierra con la misma suavidad con la que entro. */
+  /** Tarjeta del formulario (D-029, rediseño D-030): a todo el ancho, "1/2" en vez de "Paso
+   *  1 de 2", una x que la cierra, y la validacion al INTENTAR avanzar: un obligatorio vacio
+   *  recien entonces gana su asterisco y su aviso ("Falta llenar este campo"), que se van al
+   *  escribir. Nada de asteriscos ni botones apagados de entrada. */
   function renderHandoffForm(spec, key) {
     const error = state.formError;
     const pasos = formSteps(spec);
@@ -2044,36 +2091,25 @@
     const indice = Math.min(state.formStep, pasos.length - 1);
     const ultimo = indice === pasos.length - 1;
     const stepFields = fieldsOfStep(spec, pasos[indice]);
-    // "Siguiente" es neutro y "Enviar" es primario a proposito: solo el ultimo boton manda
-    // algo al equipo. Apagado mientras falte un obligatorio del paso: el estado se ve ANTES
-    // del click, en vez de un click que marca un campo (eso queda para el error del servidor).
-    const submitBtn = h("button", {
-      class: ultimo ? "qr qr-solid" : "qr btn-neutral",
-      type: "submit",
-      text: state.formBusy ? TEXT.formSending : ultimo ? spec.submit || TEXT.send : TEXT.formNext,
-    });
-    const syncSubmit = () => {
-      submitBtn.disabled = state.formBusy || Boolean(missingIn(stepFields));
-    };
     const fields = stepFields.map((field) => {
-      const invalid = error && error.field === field.name;
+      const serverError = error && error.field === field.name ? error.message : null;
+      const missing = state.formMissing.has(field.name);
+      const flagged = missing || Boolean(serverError);
       const attrs = {
         name: field.name,
-        required: field.required ? "" : null,
         maxlength: String(field.max || state.maxChars),
-        class: invalid ? "is-invalid" : null,
+        class: flagged ? "is-invalid" : null,
         autocomplete: field.type === "email" ? "email" : field.type === "tel" ? "tel" : field.name === "name" ? "name" : "off",
         oninput: (event) => {
           state.formDraft[field.name] = event.target.value;
-          syncSubmit();
-          // Al escribir se retira el error de ESE campo: dejarlo en rojo mientras lo corrigen
-          // es ruido. El del servidor se vuelve a evaluar al enviar.
-          if (state.formError && state.formError.field === field.name) {
-            state.formError = null;
-            event.target.classList.remove("is-invalid");
-            const aviso = event.target.closest(".form-card").querySelector(".form-error");
-            if (aviso) aviso.remove();
-          }
+          // Al escribir se retira la marca de ESE campo: dejarla en rojo mientras lo corrigen
+          // es ruido. El servidor vuelve a evaluar al enviar.
+          if (!state.formMissing.has(field.name) && !(state.formError && state.formError.field === field.name)) return;
+          state.formMissing.delete(field.name);
+          if (state.formError && state.formError.field === field.name) state.formError = null;
+          const label = event.target.closest("label");
+          event.target.classList.remove("is-invalid");
+          for (const marca of label.querySelectorAll(".req, .field-hint")) marca.remove();
         },
       };
       const input =
@@ -2084,11 +2120,19 @@
       return h(
         "label",
         {},
-        h("span", {}, field.label, field.required ? h("b", { class: "req", text: " *" }) : null),
-        input
+        h("span", {}, field.label, flagged ? h("b", { class: "req", text: " *" }) : null),
+        input,
+        flagged ? h("small", { class: "field-hint", text: serverError || TEXT.formRequired }) : null
       );
     });
-    syncSubmit();
+    // "Siguiente" es neutro y "Contactar" es primario a proposito: solo el ultimo boton manda
+    // algo al equipo. Siempre activo (salvo enviando): la validacion es al pulsar.
+    const submitBtn = h("button", {
+      class: ultimo ? "qr qr-solid" : "qr btn-neutral",
+      type: "submit",
+      disabled: state.formBusy ? "" : null,
+      text: state.formBusy ? TEXT.formSending : ultimo ? spec.submit || TEXT.formSubmit : TEXT.formNext,
+    });
     // Con un solo paso (el autenticado que ya tiene correo) no hay progreso que anunciar; la
     // x y el titulo se quedan igual.
     const cabecera = h(
@@ -2114,7 +2158,8 @@
       },
       cabecera,
       fields,
-      error ? h("p", { class: "form-error", text: error.message }) : null,
+      // Un error sin campo (409, red) va aqui; el de un campo ya se ve debajo de ese campo.
+      error && !error.field ? h("p", { class: "form-error", text: error.message }) : null,
       h(
         "div",
         { class: "form-actions" },
@@ -2139,19 +2184,75 @@
     return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
-  /** Anima la salida de `el` con la clase dada y llama a `done` UNA vez (al terminar la
-   *  animacion o, por si acaso, a los `ms`). Sin movimiento (o sin elemento): de inmediato. */
-  function leaveThen(el, className, done, ms) {
+  const MOTION_EASE = "cubic-bezier(.25,.8,.25,1)";
+
+  /** Llama a `done` UNA vez: al terminar `anim` o, por si el evento no llega, a los `ms`. */
+  function whenDone(anim, done, ms) {
     let hecho = false;
     const finish = () => {
       if (hecho) return;
       hecho = true;
       done();
     };
-    if (!el || reducedMotion()) return finish();
-    el.classList.add(className);
-    el.addEventListener("animationend", finish, { once: true });
+    if (anim) anim.addEventListener("finish", finish);
     setTimeout(finish, ms);
+  }
+
+  /** El compositor se pliega hacia abajo: su altura baja a cero (el hilo crece y el
+   *  formulario lo "empuja"), se desliza y se desvanece. Web Animations sobre el DOM vivo,
+   *  porque el render siguiente lo reemplaza entero. */
+  function collapseComposer(done) {
+    const el = panelEl.querySelector(".composer");
+    if (!el || reducedMotion() || !el.animate) return done();
+    const h = el.offsetHeight;
+    el.style.overflow = "hidden";
+    el.style.pointerEvents = "none";
+    const anim = el.animate(
+      [
+        { height: h + "px", opacity: 1, transform: "none" },
+        { height: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0, transform: "translateY(60%)" },
+      ],
+      { duration: 300, easing: MOTION_EASE, fill: "forwards" }
+    );
+    whenDone(anim, done, 420);
+  }
+
+  /** El compositor vuelve subiendo desde abajo, a la inversa del pliegue. Se llama con el
+   *  elemento ya montado (rAF tras el render). */
+  function expandComposer(el) {
+    if (!el || reducedMotion() || !el.animate) return;
+    const h = el.offsetHeight;
+    el.style.overflow = "hidden";
+    const anim = el.animate(
+      [
+        { height: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0, transform: "translateY(60%)" },
+        { height: h + "px", opacity: 1, transform: "none" },
+      ],
+      { duration: 320, easing: MOTION_EASE }
+    );
+    whenDone(anim, () => {
+      el.style.overflow = "";
+    }, 450);
+  }
+
+  /** Los botones de pregunta se van con un fade mientras el formulario esta abierto. */
+  function fadeOutReplies() {
+    if (reducedMotion()) return;
+    for (const el of panelEl.querySelectorAll(".quick-replies")) {
+      if (el.animate) el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: MOTION_EASE, fill: "forwards" });
+    }
+  }
+
+  /** El formulario se va (fade hacia arriba) y despues `done`. */
+  function fadeOutForm(done) {
+    const el = panelEl.querySelector(".form-card");
+    if (!el || reducedMotion() || !el.animate) return done();
+    el.style.pointerEvents = "none";
+    const anim = el.animate(
+      [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-10px)" }],
+      { duration: 220, easing: MOTION_EASE, fill: "forwards" }
+    );
+    whenDone(anim, done, 320);
   }
 
   /** ¿Se puede pedir asesor desde la conversacion abierta? La misma regla que el servidor
@@ -2162,7 +2263,8 @@
   }
 
   /** Badge "Asesor humano" (D-030): pide la tarjeta al servidor (sin bot ni modelo) y la
-   *  muestra en el hilo mientras el compositor se retira hacia abajo. */
+   *  muestra en el hilo. La transicion (botones que se van, compositor que se pliega) la
+   *  hace `render()` al ver que hay un formulario por mostrar. */
   async function openAdvisorForm() {
     if (visibleForm() || !canAskAdvisor()) return;
     const id = state.activeId;
@@ -2176,28 +2278,36 @@
       return; // 409 (ya derivada o cerrada): el proximo sondeo trae el estado y apaga el badge
     }
     if (!spec || !Array.isArray(spec.fields)) return;
-    leaveThen(panelEl.querySelector(".composer"), "is-leaving", () => {
-      state.localForm = { spec, conversationId: id || state.activeId };
-      state.formStep = 0;
-      state.formError = null;
-      state.stickToBottom = true;
-      render();
-    }, 320);
+    state.formOpenSeq += 1;
+    state.localForm = { spec, conversationId: id || state.activeId, seq: state.formOpenSeq };
+    state.formStep = 0;
+    state.formError = null;
+    state.formMissing = new Set();
+    state.stickToBottom = true;
+    render();
+  }
+
+  /** Lo que pasa cuando un formulario deja de estar a la vista (x o envio): el compositor
+   *  vuelve subiendo y los botones de pregunta reaparecen con fade. */
+  function markFormGone() {
+    state.formError = null;
+    state.formMissing = new Set();
+    state.composerReturn = true;
+    state.repliesReturn = true;
   }
 
   /** La x del formulario: se va con suavidad y el compositor vuelve subiendo. Lo escrito se
    *  conserva en `formDraft` por si lo vuelve a abrir. */
   function closeForm() {
-    leaveThen(panelEl.querySelector(".form-card"), "is-leaving", () => {
+    fadeOutForm(() => {
       if (state.localForm) state.localForm = null;
       else {
         const ultimo = state.messages[state.messages.length - 1];
         if (ultimo) state.dismissedForm = ultimo.message_id;
       }
-      state.formError = null;
-      state.composerReturn = true;
+      markFormGone();
       render();
-    }, 320);
+    });
   }
 
   /** Tres puntos animados mientras se espera la respuesta. No se muestra si el bot esta
@@ -2354,7 +2464,10 @@
     if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
     const wrap = h(
       "div",
-      { class: "quick-replies" + (firstRenderOf("qr:" + message.message_id) ? " is-new" : "") }
+      {
+        class: "quick-replies" + (firstRenderOf("qr:" + message.message_id) ? " is-new" : "") +
+          (state.repliesReturn ? " is-returning" : ""),
+      }
     );
     for (const option of interaction.options) {
       if (!option || !option.label || !option.value) continue;
@@ -2389,7 +2502,10 @@
     if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
     const wrap = h(
       "div",
-      { class: "quick-replies related" + (firstRenderOf("rq:" + message.message_id) ? " is-new" : "") }
+      {
+        class: "quick-replies related" + (firstRenderOf("rq:" + message.message_id) ? " is-new" : "") +
+          (state.repliesReturn ? " is-returning" : ""),
+      }
     );
     for (const option of interaction.options) {
       if (!option || !option.label || !option.value) continue;
@@ -2545,13 +2661,14 @@
       ICON.person(),
       h("span", { text: TEXT.advisorBadge })
     );
-    // Vuelve subiendo cuando un formulario acaba de retirarse (una sola vez).
+    // Vuelve subiendo cuando un formulario acaba de retirarse (una sola vez): la animacion
+    // corre sobre el elemento ya montado, en el frame siguiente al render.
     const returning = state.composerReturn;
     state.composerReturn = false;
-    return h(
+    const composerEl = h(
       "form",
       {
-        class: "composer" + (returning && !reducedMotion() ? " is-returning" : ""),
+        class: "composer",
         onsubmit: (event) => {
           event.preventDefault();
           submit();
@@ -2571,6 +2688,8 @@
         )
       )
     );
+    if (returning) requestAnimationFrame(() => expandComposer(composerEl));
+    return composerEl;
   }
 
   function renderHelp() {
@@ -3050,10 +3169,14 @@
        la x lo devuelve con el movimiento inverso. */
     .form-card {
       display: flex; flex-direction: column; gap: 10px; margin: 10px 0 2px;
-      align-self: flex-start; width: 100%; max-width: 82%;
+      align-self: stretch; width: 100%; max-width: none;
       background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px 16px;
       box-shadow: var(--shadow-card);
     }
+    /* Aviso bajo un obligatorio vacio (solo tras intentar avanzar). */
+    .field-hint { color: #b3261e; font-size: 12px; font-weight: 500; margin-top: 1px; }
+    /* Los botones de pregunta vuelven con fade cuando el formulario se retira. */
+    .quick-replies.is-returning { animation: fade-in .3s var(--ease) both; }
     .form-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 2px; }
     .form-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .form-head strong { font-size: 15px; }
