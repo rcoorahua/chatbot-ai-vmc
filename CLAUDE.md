@@ -314,15 +314,26 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   **Ajustes tras la primera prueba real (mismo día, Aaron)**: (1) la pregunta **respondida**
   se detecta por **parecido con la consulta** (Jaccard de raíces de 6 letras, sin
   stopwords; `related.answered_fragment`), no por mejor score — con "Hola como me registro"
-  el índice puso persona jurídica primero y el botón repetía "¿Cómo me registro?"; (2) si la
-  respuesta o su evidencia mandan a "contactarnos"/"chat en línea"/"asesor"
-  (`related.suggests_advisor`, regex sin modelo), sale un botón sólido **"Contactar con un
-  asesor"** (`kind = handoff`, `value = ADVISOR`) que abre el formulario de D-029 **sin
-  clasificador, sin cuota y sin modelo** (`handoff_offer:related_button` en AIUsage); (3) la
+  el índice puso persona jurídica primero y el botón repetía "¿Cómo me registro?"; (2) el
+  RAG conserva los hits **más allá de `top_k`** en `RagResult.overflow` (y `candidates` =
+  todo lo que trajo el índice): en la segunda prueba los 4 primeros hits ya superaban el
+  umbral y persona jurídica era el quinto, que se tiraba con el lookahead — `all_fragments`
+  NO lo incluye, para que en la consola "descartado" siga siendo "bajo el umbral"; (3) la
   fuente se dibuja como línea "Fuente: <título subrayado>" bajo la burbuja, con puntos
   suspensivos si no cabe y el título completo al pasar el mouse — se muestra el título del
   artículo, nunca la URL, así que un enlace largo no rompe nada; (4) negritas y ritmo de
-  lista en el texto (ver D-025 revisada).
+  lista en el texto (ver D-025 revisada); (5) **el asesor NO se ofrece por contexto**: se
+  probó un botón "Contactar con un asesor" cuando la respuesta o su evidencia decían
+  "contáctanos", y salió en "¿cómo me registro?" porque lo decía un fragmento vecino del
+  artículo. En su lugar, un **badge permanente "Asesor humano"** junto al emoji del
+  compositor (decisión de Aaron): pide la tarjeta a `GET /chat/conversations/{id}/handoff/form`
+  (misma spec que ofrece el bot, `service.handoff_form_for`; 409 con la misma regla que
+  POST /handoff, `service.handoff_allowed`) y la muestra en el hilo **sin mensaje, sin bot y
+  sin modelo**; el envío sigue siendo POST /handoff. **Formulario rediseñado**: ancho de
+  burbuja (82 %), "1/2" en vez de "Paso 1 de 2", asterisco en los obligatorios,
+  Siguiente/Enviar apagados hasta llenarlos, una **x** que lo cierra, y el **compositor se
+  retira hacia abajo** mientras el formulario entra con un fade desde arriba (y vuelve
+  subiendo al cerrarlo). Lo escrito se conserva en `formDraft` si se vuelve a abrir.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
