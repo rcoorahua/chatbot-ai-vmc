@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import Button, { UserIcon } from "@/concorde/components/Button";
-import { CURRENT_ADVISOR } from "@/lib/mock-data";
+import { clearAdvisorToken } from "@/lib/api";
+import { AdvisorProvider, useAdvisor } from "@/lib/advisor-context";
 
 const NAV_ITEMS = [
   { href: "/advisor/inbox", label: "Bandeja" },
@@ -21,7 +22,16 @@ const NAV_ITEMS = [
  * (RF-047 pidió cambiarlo). Botones/avatares vienen de Concorde para marca consistente.
  */
 export default function AdvisorShellLayout({ children }: { children: ReactNode }) {
+  return (
+    <AdvisorProvider>
+      <ShellChrome>{children}</ShellChrome>
+    </AdvisorProvider>
+  );
+}
+
+function ShellChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { advisor, error } = useAdvisor();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -44,7 +54,10 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
 
   function logout(): void {
     setMenuOpen(false);
-    // Mock — RF-006 (Cognito real) aún no está conectado en el frontend.
+    // ponytail: sin login real (Cognito Hosted UI) todavía — solo borra el token pegado a mano
+    // (scripts.advisor_token) y vuelve al mock de /advisor/login. Reemplazar con el logout real
+    // de Cognito cuando RF-006 conecte el frontend.
+    clearAdvisorToken();
     router.push("/advisor/login");
   }
 
@@ -81,7 +94,7 @@ export default function AdvisorShellLayout({ children }: { children: ReactNode }
           <Button
             variant="sm-logged-in"
             icon={<UserIcon />}
-            username={CURRENT_ADVISOR.display_name}
+            username={error ? "Sin sesión" : (advisor?.name ?? advisor?.email ?? "…")}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
