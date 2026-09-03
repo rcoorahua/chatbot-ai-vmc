@@ -423,7 +423,11 @@ def test_los_tickets_cerrados_salen_de_mi_bandeja(client, limpiar):
 
 def test_un_caso_escalado_sin_ticket_lo_recibe_al_abrirlo_el_asesor(client, limpiar, tablas):
     """Si abrir el ticket falla durante el handoff no se le puede devolver un error al usuario
-    (su caso ya es durable). El asesor nunca debe encontrarse un caso sin registro."""
+    (su caso ya es durable). El asesor nunca debe encontrarse un caso sin registro.
+
+    El id es determinista (DETAILS.md §4.4 / Paso 5): recrearlo devuelve el MISMO ticket_id,
+    no uno nuevo — es lo que hace posible que dos intentos casi simultaneos de red de
+    seguridad nunca dupliquen la fila."""
     sesion = _sesion(client, limpiar)
     caso = _handoff(client, sesion, limpiar)
     _, headers = _asesor_nuevo(client, limpiar)
@@ -432,7 +436,7 @@ def test_un_caso_escalado_sin_ticket_lo_recibe_al_abrirlo_el_asesor(client, limp
 
     recreado = _ticket(client, headers, caso["conversation_id"])
 
-    assert recreado["ticket_id"] != original["ticket_id"]
+    assert recreado["ticket_id"] == original["ticket_id"]
     assert recreado["problem_type"] == "PAYMENT_ISSUE", "se reclasifica desde el formulario"
     assert recreado["description"] == FORMULARIO["detail"], "el detalle sale del hilo"
     assert tickets_repository.find_by_conversation(caso["conversation_id"]) is not None

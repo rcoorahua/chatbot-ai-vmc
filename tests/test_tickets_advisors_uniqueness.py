@@ -22,6 +22,7 @@ from boto3.dynamodb.conditions import Key
 from backend.advisors import service as advisors_service
 from backend.conversations.models import Conversation, UserType
 from backend.core.auth import CognitoClaims
+from backend.core.clock import utc_now_iso
 from backend.tickets import service as tickets_service
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
@@ -30,11 +31,15 @@ N_THREADS = 12
 
 
 def _conversation(conversation_id: str) -> Conversation:
+    now = utc_now_iso()
     return Conversation(
         conversation_id=conversation_id,
         user_type=UserType.AUTHENTICATED,
         user_id="user-uniqueness-test",
         title="No me llega el pago de una subasta",
+        last_message_at=now,
+        created_at=now,
+        updated_at=now,
     )
 
 

@@ -30,6 +30,7 @@ from backend.api.routers import chat as chat_router
 from backend.core import auth
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings, reset_settings
+from scripts.seed_data import ANA_ID, LUIS_ID
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
 
@@ -166,13 +167,13 @@ def test_auto_alta_al_primer_login_y_misma_fila_despues(client, limpiar):
 
 def test_el_asesor_del_seed_se_resuelve_por_sub_y_el_invitado_se_activa(client, tablas):
     ana = client.get("/advisor/me", headers=_bearer("sub-ana-001", name="Ana Torres")).json()
-    assert ana["advisor_id"] == "adv_001"
+    assert ana["advisor_id"] == ANA_ID
 
     luis = client.get("/advisor/me", headers=_bearer("sub-luis-002", name="Luis Ramos")).json()
-    assert luis["advisor_id"] == "adv_002" and luis["status"] == "ACTIVE"
+    assert luis["advisor_id"] == LUIS_ID and luis["status"] == "ACTIVE"
     # Se devuelve el seed a su estado para las demas pruebas.
     tablas["advisors"].update_item(
-        Key={"advisor_id": "adv_002"},
+        Key={"advisor_id": LUIS_ID},
         UpdateExpression="SET #s = :invited REMOVE last_login_at",
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":invited": "INVITED"},

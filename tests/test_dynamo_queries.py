@@ -15,6 +15,8 @@ import pytest
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from scripts.seed_data import ANA_ID, TICKET_CONV_002_ID, TICKET_CONV_003_ID, TICKET_CONV_004_ID
+
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
 
 
@@ -72,12 +74,12 @@ def test_conversaciones_de_un_asesor_por_gsi3(tablas):
     """
     respuesta = tablas["conversations"].query(
         IndexName="gsi3_advisor",
-        KeyConditionExpression=Key("assigned_advisor_id").eq("adv_001"),
+        KeyConditionExpression=Key("assigned_advisor_id").eq(ANA_ID),
     )
 
     ids = {c["conversation_id"] for c in respuesta["Items"]}
     assert {"conv_003", "conv_004"} <= ids
-    assert all(c["assigned_advisor_id"] == "adv_001" for c in respuesta["Items"])
+    assert all(c["assigned_advisor_id"] == ANA_ID for c in respuesta["Items"])
 
 
 # ─────────────────────────────── Messages: orden y contexto ───────────────────────────────
@@ -142,7 +144,7 @@ def test_tickets_de_una_conversacion_por_gsi1(tablas):
         KeyConditionExpression=Key("conversation_id").eq("conv_003"),
     )
 
-    assert [t["ticket_id"] for t in respuesta["Items"]] == ["tick_002"]
+    assert [t["ticket_id"] for t in respuesta["Items"]] == [TICKET_CONV_003_ID]
 
 
 def test_bandeja_de_tickets_por_estado_gsi3(tablas):
@@ -154,17 +156,19 @@ def test_bandeja_de_tickets_por_estado_gsi3(tablas):
     )
 
     items = respuesta["Items"]
-    assert "tick_001" in [t["ticket_id"] for t in items], "el pendiente del dataset base"
+    assert TICKET_CONV_002_ID in [t["ticket_id"] for t in items], "el pendiente del dataset base"
     assert all(t["status"] == "PENDING" for t in items)
 
 
 def test_tickets_de_un_asesor_por_gsi2(tablas):
     respuesta = tablas["tickets"].query(
         IndexName="gsi2_advisor",
-        KeyConditionExpression=Key("assigned_advisor_id").eq("adv_001"),
+        KeyConditionExpression=Key("assigned_advisor_id").eq(ANA_ID),
     )
 
-    assert sorted(t["ticket_id"] for t in respuesta["Items"]) == ["tick_002", "tick_003"]
+    assert sorted(t["ticket_id"] for t in respuesta["Items"]) == sorted(
+        [TICKET_CONV_003_ID, TICKET_CONV_004_ID]
+    )
 
 
 # ──────────────────────────────────── Advisors ────────────────────────────────────
@@ -178,7 +182,7 @@ def test_resolver_asesor_desde_el_sub_de_cognito(tablas):
     )
 
     assert len(respuesta["Items"]) == 1
-    assert respuesta["Items"][0]["advisor_id"] == "adv_001"
+    assert respuesta["Items"][0]["advisor_id"] == ANA_ID
     assert respuesta["Items"][0]["status"] == "ACTIVE"
 
 
