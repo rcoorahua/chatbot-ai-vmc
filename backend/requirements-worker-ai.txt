@@ -3,3 +3,8 @@ pydantic-settings
 boto3
 google-genai       # Gemini — clasificacion y redaccion (TD-008)
 pinecone           # RAG del Centro de Ayuda (RF-017); embebe en su propio servicio
+# El worker no sirve HTTP (no necesita mangum), pero SI importa fastapi de forma transitiva:
+# ai_worker -> conversations.service -> core.auth, que define alli mismo los `Depends()` de la
+# API junto a ChatSession/VmcIdentity. Sin esto, cold start real falla con ModuleNotFoundError:
+# fastapi -- invisible para cdk synth, lo detecto infra/tests/artifact_smoke.py (DETAILS.md §4.1).
+fastapi

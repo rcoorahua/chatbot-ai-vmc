@@ -179,6 +179,15 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
   puede colar un import que en Lambda real fallaría). Validado a mano contra un asset viejo
   (pre-fix, sin paquete `backend/`): reproduce el `ModuleNotFoundError: backend` original: y
   contra una copia con el layout corregido: importa limpio.
+- **El smoke atrapó un bug real en su primera corrida en CI** (sin Docker local no se pudo ver
+  antes): `backend/requirements-worker-ai.txt` no traía `fastapi`. El worker no sirve HTTP,
+  pero `ai_worker.py` → `conversations.service` → `core.auth` importa `fastapi` de forma
+  transitiva — `core/auth.py` define en el mismo módulo los tipos puros (`ChatSession`,
+  `VmcIdentity`) y los `Depends()` de la API, así que importar lo primero ejecuta también el
+  `from fastapi import ...` de arriba. Cold start real habría fallado con
+  `ModuleNotFoundError: fastapi`, invisible para `cdk synth`. Arreglo mínimo: sumar `fastapi` a
+  `requirements-worker-ai.txt` (no separar `core/auth.py` en esta pasada — es código de
+  identidad/auth, un refactor ahí merece su propia revisión, no ir colgado de un fix de CI).
 
 ---
 
