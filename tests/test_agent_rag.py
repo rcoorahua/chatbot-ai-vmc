@@ -180,14 +180,15 @@ def test_acepta_la_forma_clasica_de_la_api_de_vectores(monkeypatch):
 # ───────────────────────── AC-R4: el fragmento lleva su fuente ─────────────────────────
 
 
-def test_el_contexto_incluye_la_fuente(fake_index):
+def test_el_fragmento_conserva_su_fuente_y_el_contexto_no_la_incluye(fake_index):
+    """D-030: la fuente viaja en el Fragment (para el chip, `agent/related.py`) pero NO en
+    el texto que ve el redactor: el modelo ya no escribe enlaces, el widget los dibuja."""
     fake_index(hits=[_hit("La comision minima es 50 SubasCoins.", 0.95)])
 
-    contexto = rag.as_context(rag.search("cuanto es la comision"))
+    fragments = rag.search("cuanto es la comision")
 
-    assert contexto == [
-        "La comision minima es 50 SubasCoins.\n(Fuente: https://ayuda.vmc.test/comision)"
-    ]
+    assert fragments[0].source_url == "https://ayuda.vmc.test/comision"
+    assert rag.as_context(fragments) == ["La comision minima es 50 SubasCoins."]
 
 
 def test_sin_fuente_el_contexto_es_solo_el_texto():

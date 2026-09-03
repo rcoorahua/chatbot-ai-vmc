@@ -28,6 +28,17 @@ Animaciones (todas se desactivan con `prefers-reduced-motion: reduce`):
 | Contador | Rebota solo cuando cambia el número |
 | Compositor | Crece con el texto; el borde vira de vault a naranja al enfocar |
 
+### Fuentes, preguntas hermanas y franja del visitante (D-030, 2026-09-03)
+
+Tres piezas que el widget dibuja a partir de la metadata del mensaje del bot; ninguna la
+escribe el modelo (contrato en [MAPEO.md §3.1](../docs/MAPEO.md)):
+
+| Pieza | De dónde sale | Cómo se ve |
+|---|---|---|
+| **Chip de fuente** | `metadata.sources = [{title, url}]` | Píldora con icono de enlace bajo la burbuja del bot; abre el Centro de Ayuda en otra pestaña. El texto de la respuesta ya no trae URLs |
+| **Preguntas hermanas** | `metadata.interaction.type = "RELATED_QUESTIONS"` | Hasta tres botones bajo la última respuesta con las otras preguntas del mismo artículo. El clic manda la pregunta como texto más `{action_id, value}` (sin `flow_version`: no hay estado); igual que los quick replies, desaparecen en cuanto el usuario responde |
+| **Franja del visitante** | `isAnonymous()` | Aviso violeta bajo la cabecera del hilo ("Estás como visitante…") con **Entendido**; una vez por pestaña (`sessionStorage`, nada en `localStorage`). Es UI, no un mensaje: no ensucia el historial |
+
 ## Probarlo en local
 
 ```powershell

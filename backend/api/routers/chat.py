@@ -119,7 +119,10 @@ class InteractionIn(BaseModel):
 
     action_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z0-9_]+$")
     value: str = Field(min_length=1, max_length=64, pattern=r"^[A-Z0-9_]+$")
-    flow_version: int = Field(ge=1, le=1_000_000)
+    # Version del flujo para los botones CON estado (D-028). Los botones de preguntas
+    # hermanas (D-030, `agent/related.py`) no tienen estado que versionar y no la mandan; el
+    # worker valida esos contra el ultimo mensaje del bot.
+    flow_version: int | None = Field(default=None, ge=1, le=1_000_000)
     source_message_id: str | None = Field(default=None, max_length=64)
 
 

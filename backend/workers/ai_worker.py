@@ -16,9 +16,11 @@ Flujo por job (cada paso con su decision al lado):
  5. clasificar (RF-015/016): reglas deterministas primero, tier FAST despues — hoy Gemini
     flash-lite tambien orquesta (TD-008); Haiku sigue siendo el plan B del tier.
  6. rutear: FAQ → RAG en Pinecone + redactor (RF-017/018/020); sin evidencia NO se inventa:
-    autenticado deriva (AC-002), anonimo recibe invitacion a iniciar sesion (D-002).
-    CATALOG → respuesta fija con enlace mientras D-011 siga abierta. ADVISOR → handoff
-    (anonimo: invitacion a login). OTHER → redireccion fija.
+    el bot pregunta si quiere un asesor (D-029). Con evidencia, la respuesta va COMPLETA en
+    un turno y lleva en metadata la fuente (chip) y las otras preguntas del mismo articulo
+    como botones (D-030, `agent/related.py`); un clic en uno de esos botones vuelve a
+    entrar aqui y va al RAG directo, sin clasificador. CATALOG → respuesta fija con enlace
+    mientras D-011 siga abierta. ADVISOR → formulario de asesor. OTHER → redireccion fija.
  7. registrar TODA decision en AIUsage (skill llm-cost-optimizer), tambien las gratuitas:
     la proporcion de trafico que no paga tokens es la metrica que justifica D-006 y las reglas.
  8. Slack (RF-028) queda pendiente de D-016; el ticket, del modulo tickets (F5).
@@ -37,6 +39,7 @@ from backend.agent import (
     prompts,
     quota,
     rag,
+    related,
     trivial,
     usage,
     writer,
@@ -219,10 +222,36 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         )
         return
 
+    # ── D-030: clic en una pregunta hermana (botones bajo la ultima respuesta con evidencia) ──
+    # Antes de los flujos y del clasificador: la pregunta ya es canonica (es una pregunta del
+    # corpus tal cual) y el clic se valida contra el ultimo mensaje del bot, no contra el
+    # payload. Va directo al RAG; clasificarla costaria una llamada para decir "FAQ". Y antes
+    # de `_handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no debe
+    # abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    related_query = related.resolve_click(
+        (message.metadata or {}).get("interaction"), _last_bot_metadata(window, block_keys)
+    )
+    if related_query is not None:
+        if not _spend_quota_or_reply(conversation, message, ip_hash):
+            return
+        logger.info(
+            "ai.related.click",
+            extra={
+                "conversation_id": conversation.conversation_id,
+                "message_id": message.message_id,
+                "query": content_preview(related_query),
+            },
+        )
+        _answer_faq(
+            conversation, message, related_query, window, block_keys, anonymous,
+            source_prefix="related:",
+        )
+        return
+
     # ── D-028: flujos guiados con quick replies (MAPEO.md) — reglas y estado, sin IA ──
     # Antes del clasificador a proposito: un click de boton ya trae la intencion estructurada
     # y una respuesta corta ("En Vivo") solo tiene sentido con el estado del flujo.
-    anonymous = conversation.user_type == UserType.ANONYMOUS
     if _handle_flow(conversation, message, text, window, block_keys, anonymous=anonymous,
                     ip_hash=ip_hash, followup_rule=followup_rule):
         return
@@ -338,6 +367,9 @@ def _answer_faq(
         text,
         [fragment.as_context() for fragment in fragments],
         history=_history(window, block_keys),
+        # D-030: la sesion ya sabe si tiene cuenta; el redactor no lo pregunta.
+        user_state=prompts.WRITER_USER_ANONYMOUS if anonymous
+        else prompts.WRITER_USER_AUTHENTICATED,
     )
     if result.guardrail:
         # El modelo respondio pero se salio de la evidencia (cifra o enlace ajenos, fuga del
@@ -385,7 +417,20 @@ def _answer_faq(
     if result.has_evidence:
         # La consulta que dio la evidencia viaja con la respuesta: si el usuario contesta "si"
         # o "y luego?", la continuacion busca con ESTA consulta (`_previous_query`).
-        _bot_says(conversation, result.text, metadata={followups.RAG_QUERY_KEY: consulta.text})
+        # D-030: ademas la fuente (chip) y las otras preguntas del articulo (botones), las
+        # dos sacadas de la evidencia sin llamar a nada. Ojo: con `interaction` en la
+        # metadata, `_last_bot_open_question` deja de ver esta respuesta como pregunta
+        # abierta — correcto, porque ya no termina preguntando si continuar.
+        metadata: dict = {
+            followups.RAG_QUERY_KEY: consulta.text,
+            "sources": related.sources(fragments),
+        }
+        metadata.update(
+            related.related_metadata(
+                related.related_questions(fragments, retrieved.all_fragments)
+            ) or {}
+        )
+        _bot_says(conversation, result.text, metadata=metadata)
     elif result.error:
         # El dato existe, el redactor no contesto: se dice la verdad (no "no tengo ese dato"),
         # se invita a reintentar y se ofrece el asesor con los mismos botones de si/no.
@@ -815,6 +860,21 @@ def _last_bot_open_question(window: list[Message]) -> str | None:
         if (item.metadata or {}).get("interaction"):
             return None
         return item.content
+    return None
+
+
+def _last_bot_metadata(window: list[Message], block_keys: list[str]) -> dict | None:
+    """La metadata del ultimo mensaje del bot antes de la rafaga actual: ahi estan los
+    botones de preguntas hermanas (D-030) contra los que se valida un clic. Se lee del
+    mensaje persistido, nunca del payload del clic."""
+    for item in reversed(window):
+        if item.message_key in block_keys:
+            continue
+        if item.sender_type == SenderType.BOT:
+            return item.metadata
+        if item.sender_type == SenderType.USER:
+            continue
+        return None  # una nota de sistema o un asesor en medio: los botones ya no valen
     return None
 
 

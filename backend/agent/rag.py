@@ -1,5 +1,6 @@
 """Recuperacion de conocimiento en Pinecone — RF-017 (FAQ desde contenido VMC), RF-018
-(sin evidencia no se responde) y RF-019 (incluir la fuente cuando existe).
+(sin evidencia no se responde) y RF-019 (la fuente viaja con cada fragmento; el chip que
+la muestra lo arma `agent/related.py`).
 
 El indice usa **embedding integrado** (`multilingual-e5-large` dentro de Pinecone), no un
 modelo de embeddings nuestro. Tres consecuencias que justifican la eleccion:
@@ -47,14 +48,15 @@ class Fragment:
     sibling: bool = False
 
     def as_context(self) -> str:
-        """El fragmento tal como lo recibe el redactor.
+        """El fragmento tal como lo recibe el redactor: solo el texto.
 
-        La fuente viaja PEGADA al texto en vez de en un campo aparte para que el modelo pueda
-        citarla en la respuesta (RF-019) sin que el prompt tenga que explicar una estructura.
+        Hasta el 2026-09-03 la fuente viajaba pegada ("(Fuente: url)") para que el modelo la
+        citara (RF-019). Ya no: el enlace sale como chip debajo de la respuesta desde
+        `metadata.sources` (`agent/related.py`), determinista y sin gastar tokens en que el
+        modelo copie una URL de tres lineas. Si el modelo escribe un enlace igual, el
+        guardrail de salida solo deja pasar los que esten en la evidencia.
         """
-        if not self.source_url:
-            return self.text
-        return f"{self.text}\n(Fuente: {self.source_url})"
+        return self.text
 
 
 # Timeout EXPLICITO por request a Pinecone, en segundos (DETAILS.md §4.18). El SDK ya trae un

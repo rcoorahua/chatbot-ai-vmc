@@ -98,6 +98,39 @@ El clic **no** manda solo texto: manda el texto visible (para el hilo) **más** 
 acciones: un evento que no coincide con el paso actual se trata como texto normal y sigue el
 pipeline de siempre (clasificador → RAG). Los `value` aceptados son un enum cerrado por paso.
 
+### 3.1 Botones SIN estado: preguntas hermanas y chip de fuente (D-030, 2026-09-03)
+
+Bajo cada respuesta con evidencia, las **otras preguntas del mismo artículo** salen como
+botones (`agent/related.py`): hasta 3, sin la que se acaba de responder y sin la
+introducción del artículo (que no es una pregunta). La fuente va aparte, como chip:
+
+```json
+{
+  "content": "Para registrarte: 1) entra a vmcsubastas.com y pulsa Ingresar, 2) …",
+  "metadata": {
+    "rag_query": "¿Cómo me registro en VMC?",
+    "sources": [{"title": "¡Registrarte es fácil y rápido!", "url": "https://…/registrarte-es-facil-y-rapido"}],
+    "interaction": {
+      "type": "RELATED_QUESTIONS",
+      "action_id": "RELATED_QUESTION",
+      "options": [
+        {"label": "¿Puedo registrarme como persona jurídica?", "value": "Q1",
+         "query": "¿Puedo registrarme como persona jurídica?"}
+      ]
+    }
+  }
+}
+```
+
+El clic manda el texto visible más `{"action_id": "RELATED_QUESTION", "value": "Q1"}`, **sin
+`flow_version`** (no hay estado que versionar). El worker lo valida contra la metadata del
+**último mensaje del bot** (la `query` se lee de ahí, nunca del clic) y manda esa pregunta al
+RAG **sin clasificador** (`related:model` en AIUsage). Un clic sobre botones viejos o con un
+`value` inventado se degrada a texto normal. A diferencia de los flujos de §4.1, escribir otra
+cosa no "interrumpe" nada: los botones simplemente quedan atrás. Por qué existe: reemplaza al
+"¿te explico el siguiente paso?" del redactor, que costaba una llamada entera por cada "sí"
+(D-030 en CLAUDE.md).
+
 ## 4. El mapeo completo del corpus
 
 Regla de diseño: **un flujo solo existe si la respuesta correcta depende de un dato que el
@@ -217,6 +250,7 @@ handoff sigue las reglas de D-002.
 | Quick replies en `metadata` + validación servidor | ✅ esta fase |
 | Render de botones en el widget + evento de clic | ✅ esta fase |
 | F-CONS · F-LIVE · F-NEGO · F-HAB | ✅ activados 2026-09-01 — 16 consultas canónicas verificadas contra el índice (todas con 4 fragmentos sobre el umbral, scores 0.885–0.935) |
+| Preguntas hermanas + chip de fuente bajo cada respuesta (D-030, §3.1) | ✅ 2026-09-03 — sin estado, `agent/related.py`; el clic va al RAG sin clasificador |
 | HERALD en el paso resuelto | ⛔ bloqueado por D-011 |
 
 ---
