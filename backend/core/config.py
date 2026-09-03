@@ -1,15 +1,19 @@
 """Settings con pydantic-settings, leidos de variables de entorno.
 
 En dev los inyecta `.env` (endpoints locales de docker-compose); en AWS los inyecta CDK
-(`common_env` en infra/stacks/subastin_stack.py) con los MISMOS nombres. Los dos secretos que
-aparecen aqui (`VMC_IDENTITY_SECRET`, `SESSION_SIGNING_KEY`) solo llegan por variable de entorno
-en dev; en stage/prod se leen de Secrets Manager en runtime (PLAN.md §3) — TODO al desplegar.
+(`common_env` en infra/stacks/subastin_stack.py) con los MISMOS nombres. Los secretos reales
+(`VMC_IDENTITY_SECRET`, `SESSION_SIGNING_KEY`, `GEMINI_API_KEY`, `PINECONE_API_KEY`) solo llegan
+por variable de entorno en dev; en stage/prod cada Lambda recibe el ARN de SOLO los que consume
+(`IDENTITY_SECRET_ARN` la api, `AI_SECRET_ARN` el worker de IA — infra/stacks/subastin_stack.py)
+y `get_settings()` los resuelve de Secrets Manager ANTES de construir `Settings` (DETAILS.md §4.2).
 
 Principio del spec (REQUERIMENTS.md §1.1 / RNF-007): limites, TTL y politicas son configuracion,
 nunca constantes en la logica. Donde la decision de negocio sigue abierta el valor por defecto es
 PROVISIONAL y lleva su D-xxx al lado: cambiarlo es editar una variable, no cazar literales.
 """
 
+import json
+import os
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -228,9 +232,39 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
+# ARN de cada secreto -> variables de entorno que trae su JSON (ver infra/stacks/subastin_stack.py:
+# cada Lambda solo recibe el ARN de los secretos que consume).
+_SECRET_ARN_ENV_VARS = ("IDENTITY_SECRET_ARN", "AI_SECRET_ARN")
+
+
+def _fetch_secret_json(arn: str) -> dict[str, str]:
+    # Import perezoso: en dev estas variables de entorno nunca existen, asi que esta funcion
+    # jamas corre ahi y config.py no gana una dependencia dura de boto3 (evita ademas el ciclo
+    # de import con core/aws.py, que ya importa get_settings).
+    import boto3
+
+    client = boto3.client("secretsmanager")
+    body = client.get_secret_value(SecretId=arn)["SecretString"]
+    return json.loads(body)
+
+
+def _resolve_secrets_into_env() -> None:
+    """Secrets Manager en runtime (PLAN.md §3, DETAILS.md §4.2): si el ARN de un secreto esta en
+    el entorno (solo pasa en AWS), lo resuelve y vuelca sus claves como variables de entorno —
+    las MISMAS que `Settings` ya lee. Un fallo aqui (permiso, ARN, red) se propaga tal cual: se
+    quiere un error operativo claro en el cold start, no una Lambda respondiendo a medias."""
+    for arn_var in _SECRET_ARN_ENV_VARS:
+        arn = os.environ.get(arn_var)
+        if not arn:
+            continue
+        for key, value in _fetch_secret_json(arn).items():
+            os.environ[key] = value
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Settings memorizados por proceso (se reusan entre invocaciones de la Lambda tibia)."""
+    _resolve_secrets_into_env()
     return Settings()
 
 

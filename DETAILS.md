@@ -234,6 +234,17 @@ antes de invocar FastAPI. Incluso corrigiendo eso, el middleware actual rechazar
   4. `PATCH /tickets/{id}`.
 - El test debe comprobar headers `Access-Control-Allow-Origin`, métodos y headers.
 
+### Estado (2026-09-03) — ✅ corregido en `infra/stacks/subastin_stack.py` / `backend/api/main.py`
+
+- `cors_preflight` nativo en `HttpApi` (`CorsPreflightOptions`): API Gateway responde el
+  `OPTIONS` a nivel de API, antes de llegar a rutas ni al `cognito_authorizer` — el preflight
+  nunca pasa por el JWT. `PATCH` sumado ahí y en el `CORSMiddleware` de FastAPI.
+- `infra/tests/test_cors_preflight.py` prueba el mecanismo con `aws_cdk.assertions` (sin
+  Docker): confirma `CorsConfiguration` con `PATCH` y que `/advisor/{proxy+}` sigue siendo una
+  sola ruta `ANY` con `AuthorizationType: JWT` (no aparece una ruta `OPTIONS` aparte). Corre en
+  el job `synth` de CI. **Pendiente:** el E2E real desde el dominio del frontend (no hay
+  frontend desplegado todavía para probarlo).
+
 ---
 
 ## 4.4 P1 — Tickets y asesores no tienen unicidad real
@@ -272,6 +283,20 @@ el mismo Cognito `sub`.
 - Aserción final: exactamente una fila física, no sólo que el servicio devuelva una.
 - Test de migración con dos duplicados y una regla determinista para elegir/fusionar el registro
   canónico.
+
+### Estado (2026-09-03) — ✅ corregido en `backend/tickets/` y `backend/advisors/`
+
+- `ticket_id_for_conversation()` / `advisor_id_for_cognito_sub()` (`uuid5`, mismo patrón que
+  `_USER_CONVERSATION_NAMESPACE` de D-002/D-003): el `attribute_not_exists(pk)` de la creación
+  condicional pasa a ser la exclusión mutua real, sin depender de la consistencia del GSI ni
+  para leer (ahora `get_item` por PK con `ConsistentRead=True`) ni para crear. `find_by_cognito_sub`
+  quedó sin caller, se borró.
+- `tests/test_tickets_advisors_uniqueness.py`: 12 threads con `threading.Barrier` contra
+  dynamodb-local real, aserción de una sola fila física (no solo que el servicio devuelva una).
+- **Sin script de migración**: el stack nunca se desplegó (`ESQUELETO — NO DESPLEGADO NUNCA`) y
+  los únicos creadores de estas filas son `resolve_advisor`/`open_ticket`, así que no hay (ni
+  puede haber) datos reales con el id viejo. El seed local (`scripts/seed_data.py`) sí tenía IDs
+  fijos que no coincidían con la derivación — se corrigió ahí, no con una migración aparte.
 
 ---
 
@@ -331,6 +356,28 @@ Recomendación concreta:
 - Repetir exactamente el mismo handoff y cierre: misma entidad, mismo resultado, sin mensajes extra.
 - Ejecutar seis handoffs concurrentes con límite cinco: deben quedar como máximo cinco.
 - Verificar el número físico de Conversations, Messages y Tickets después de cada escenario.
+
+### Estado (2026-09-03) — 🟡 parcial: idempotencia de handoff/casos y límite atómico hechos; toma/cierre queda para Paso 7
+
+- ✅ **Orden de operaciones** (`backend/api/routers/chat.py`, `backend/conversations/service.py`,
+  `backend/conversations/repository.py`): el cupo diario de handoff por IP anónima se validaba
+  el formulario ANTES de consumirlo; el FORM_RESPONSE (PII, RF-003) del anónimo se escribía
+  antes de ganar el CAS de `start_handoff`; la nota que enlaza un caso con su hilo de origen se
+  escribía en una llamada aparte después de confirmar la transacción del caso. Las tres
+  corregidas — la última metiendo `link_message` en la MISMA `TransactWriteItems` que crea el
+  caso.
+- ✅ **Límite de casos abiertos atómico**: contador condicional (`OPEN_CASES#USER#<id>`, tabla
+  RateLimits) en la misma transacción que crea el caso, liberado en la misma transacción que
+  lo cierra. Reemplaza el `list_open_cases` (GSI) check-then-act.
+- ⏳ **No hecho**: `client_handoff_id` + `case_id` determinista (idempotencia real de "reintentar
+  el mismo intento", no solo evitar estados corruptos) — toca el contrato público de
+  `/chat/.../handoff` y requiere que el widget lo mande. Se decidió deliberadamente dejarlo
+  fuera: `widget/subastin.js` tuvo un cambio grande en paralelo (PR #114) y tocarlo ahora es
+  alto riesgo de choque. Retomar cuando se coordine con quien lo tenga.
+- ⏳ **Toma y cierre** (asignación de conversación + ticket, cierre de conversación + ticket) es
+  el Paso 7, todavía sin tocar — el ticket sigue fuera de la transacción del handoff a
+  propósito (`ensure_ticket` como red de seguridad, el patrón outbox que el propio audit ofrece
+  como alternativa), así que ese punto de la Corrección recomendada NO aplica.
 
 ---
 
@@ -443,6 +490,23 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - JWT inválido -> fallback anónimo sin conservar mensajes previos.
 - Dos llamadas a `reset()` deben ser idempotentes y no dejar timers/listeners duplicados.
 
+### Estado (2026-09-03) — ✅ corregido en `widget/subastin.js`
+
+- El JWT se lee **en vivo** (`currentJwt`) y la sesión guarda con quién es (`identity`,
+  derivado del `sub`; solo invalida caché, la verificación sigue en el backend). Antes de
+  cada request `ensureSession` compara identidades: si cambió, `reset()` corta las requests
+  en vuelo (AbortController + generación: lo que vuelva de la generación anterior se
+  descarta aunque el servidor haya respondido), apaga temporizadores, borra memoria y
+  `sessionStorage`, y programa **un** arranque limpio.
+- API pública nueva: `Subastin.setIdentity(jwt | null)`, `Subastin.reset()`,
+  `Subastin.mount()`, `Subastin.unmount()` (contrato en `widget/README.md`).
+- `__subastinBooted` se marca **después** de validar la configuración; `unmount()` lo libera.
+- Verificado en Chrome headless con `widget/selftest.html` (A → B sin avisar, A → B con
+  `setIdentity`, logout → anónimo, JWT inválido, `reset()` doble = una sola sesión,
+  `unmount()` sin requests, `mount()`). Botones de "cambiar de sesión sin recargar" en
+  `widget/test.html` para probarlo a mano. **Pendiente:** Playwright real (el selftest es
+  un HTML sin dependencias) y que VMC llame a `setIdentity` en su login/logout.
+
 ---
 
 ## 4.9 P1 — Abuso público y cuotas desactivadas en AWS
@@ -477,6 +541,20 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - Sintetizar stage/prod y afirmar valores no cero de `AI_QUOTA_*`.
 - Formulario inválido no debe consumir slot.
 - Retry con la misma idempotency key no debe consumir un segundo slot.
+
+### Estado (2026-09-03) — 🟡 parcial, solo la parte de infra
+
+- ✅ `AI_QUOTA_ANON_PER_HOUR/DAY` y `AI_QUOTA_AUTH_PER_HOUR/DAY` ahora se inyectan explícitos en
+  `common_env` (`infra/stacks/subastin_stack.py`) con los valores de negocio de D-027
+  (10/20 anónimo, 20/40 autenticado) en vez de caer al default `0 = ilimitado`. De paso se
+  encontró `MAX_MESSAGE_CHARS` hardcodeado en `"2000"` en el mismo dict, pisando el `500` de
+  D-005 — corregido junto con lo anterior.
+- ✅ `infra/tests/test_business_env.py` sintetiza los valores por stage (vía `BUSINESS_ENV`,
+  extraído a módulo sin objetos CDK) y afirma los no-cero — exactamente el test que pedía este
+  punto.
+- ⏳ **No hecho:** rate limit de `POST /chat/sessions` por IP hasheada, throttling de API
+  Gateway/WAF, y "validar formulario e idempotencia antes de consumir el slot" — esto último es
+  el Paso 6 (idempotencia del handoff), que sigue sin implementarse.
 
 ---
 
@@ -743,6 +821,17 @@ a procesarse o cuyos side effects ya ocurrieron.
 - Batch con primer job lento y siguientes válidos.
 - Verificar que sólo se reintentan los no completados y que no hay duplicados.
 
+### Estado (2026-09-03) — 🟡 parcial
+
+- ✅ **Timeout explícito hacia Gemini** (`core/llm.py`, 30 s por llamada, `HttpOptions`).
+  Se encontró en vivo: el SDK trae `None` y una conexión muda dejó al worker local colgado
+  13 minutos en una sola llamada, con todos los jobs siguientes esperando detrás y sin un
+  solo error en el log. Ahora cualquier fallo del transporte (timeout, conexión cortada) se
+  normaliza como `LLMError` de conexión: cae al respaldo del tier y, si también falla, el
+  redactor responde con el texto fijo. Tests en `tests/test_agent_llm.py`.
+- ⏳ **No hecho:** timeout de Pinecone, `get_remaining_time_in_millis`, `batch_size=1` (toca
+  `infra/`, que lo están cambiando otras ramas) y los tests de batch con job lento.
+
 ---
 
 ## 4.19 P2 — Widget sobrecargado y dependencia CDN sin SRI
@@ -780,6 +869,21 @@ a procesarse o cuyos side effects ya ocurrieron.
 - Playwright para teclado, Escape, foco, account switch, panel cerrado y badge.
 - Presupuesto de peso comprimido y medición de trabajo al abrir el panel.
 - CSP de prueba que bloquee cdnjs: el chat debe continuar funcional.
+
+### Estado (2026-09-03) — 🟡 parcial
+
+- ✅ Lottie desde cdnjs con `integrity` (sha384) y `crossorigin="anonymous"`; si el archivo
+  cambia, el navegador lo bloquea y queda el bot SVG estático (el chat nunca dependió de él).
+  Comentario contradictorio corregido: el SVG es el avatar base, el Lottie lo reemplaza en
+  los avatares grandes cuando carga.
+- ✅ Diálogo accesible: `Escape` cierra, `Tab`/`Shift+Tab` circulan dentro del panel, el
+  foco vuelve al botón flotante al cerrar, `aria-expanded`/`aria-controls` en el botón.
+- ✅ Cerrado y esperando al bot se sigue sondeando (2 s, vence sola a los 45 s) y la
+  respuesta llega al contador del botón; antes el sondeo se detenía al cerrar.
+- ✅ Ciclo de vida `mount/unmount/reset` (ver §4.8).
+- ⏳ **No hecho:** separar en módulos con build, decidir si se elimina Lottie (decisión de
+  producto: hoy hay orbe WebGPU/WebGL para "escribiendo" y Lottie para el avatar),
+  Vitest/jsdom, Playwright + axe, presupuesto de peso y prueba con CSP que bloquee cdnjs.
 
 ---
 
@@ -1088,6 +1192,9 @@ npm run build
 
 - GET/POST/PATCH del panel funcionan desde el dominio real del frontend.
 
+**Estado (2026-09-03): ✅ hecho** — ver §4.3 "Estado". Falta el E2E real (sin frontend
+desplegado todavía).
+
 ## Paso 4 — Unificar configuración y fijar dependencias
 
 ### Implementación
@@ -1108,6 +1215,13 @@ npm run build
 
 - Local, stage y documentación usan los mismos límites intencionales.
 
+**Estado (2026-09-03): ✅ hecho** — cuotas IA + fix de `MAX_MESSAGE_CHARS` (ver §4.9 "Estado");
+CDK CLI pineado a `2.1139.0`, `aws-cdk-lib`/alpha en lockstep a `2.268.0`; `requirements-lock.txt`
+(pip freeze) para `pyproject.toml[dev]`, el job `test` de CI instala desde ahí. **Alcance
+acotado a propósito:** el lock no cubre `backend/requirements.txt` (lo que bundlea a Lambda) ni
+`infra/requirements.txt` (ya pineado directo, sin lock aparte) — decisión explícita, no
+supuesto silencioso.
+
 ## Paso 5 — Garantizar unicidad de tickets y asesores
 
 ### Implementación
@@ -1125,6 +1239,8 @@ npm run build
 ### Criterio de salida
 
 - Un ticket por conversación y un advisor por Cognito `sub` bajo cualquier retry razonable.
+
+**Estado (2026-09-03): ✅ hecho** — ver §4.4 "Estado".
 
 ## Paso 6 — Añadir idempotencia al handoff
 
@@ -1146,6 +1262,9 @@ npm run build
 ### Criterio de salida
 
 - El mismo intento siempre devuelve el mismo caso y consume una sola cuota.
+
+**Estado (2026-09-03): 🟡 parcial** — ver §4.5 "Estado". Orden de operaciones y límite de
+casos atómico hechos (PR #119, #120); `client_handoff_id` pendiente (toca el widget).
 
 ## Paso 7 — Hacer toma y cierre consistentes
 
@@ -1224,6 +1343,9 @@ npm run build
 ### Criterio de salida
 
 - Nunca se muestra ni se solicita información con la sesión anterior.
+
+**Estado (2026-09-03): ✅ hecho** — ver §4.8 "Estado". Las cuatro pruebas corren en
+`widget/selftest.html` (Chrome headless, sin dependencias); falta portarlas a Playwright.
 
 ## Paso 11 — Activar controles de abuso
 
@@ -1321,6 +1443,11 @@ npm run build
 ### Criterio de salida
 
 - Widget mantenible, accesible y con menor superficie de supply chain.
+
+**Estado (2026-09-03): 🟡 parcial** — hechos el SRI del CDN y la accesibilidad del diálogo
+(ver §4.19 "Estado"). Pendientes: modularizar con build, animación única, unit tests y
+Playwright + axe; la parte de `frontend/` (componentes, Link/Button) no se tocó porque la
+avanzan las ramas `feature/cliente-api-asesor` y `fix/adapt-mobile-y-alerta-magenta`.
 
 ## Paso 16 — Generar contratos y ampliar CI
 

@@ -296,16 +296,16 @@ def _handoff_in_place(
 ) -> Conversation:
     t0, t1, t2 = _stamps(3)
     ttl = conversation.expires_at
-    response = _form_response_message(conversation.conversation_id, clean, created_at=t0,
-                                      transcript=None, expires_at=ttl)
-    # Cuenta como no leido: desde aqui quien lee es el asesor (RF-035).
-    repository.put_message(response, count_as_unread=True)
+    # DETAILS.md §4.5 / Paso 6: el CAS (`start_handoff`) va PRIMERO. Antes se escribia el
+    # FORM_RESPONSE (con el contacto del anonimo, RF-003) sin haber ganado la carrera todavia
+    # — si `start_handoff` perdia (alguien mas ya la derivo/asigno), quedaba un mensaje con PII
+    # huerfano en una conversacion que nunca transiciono. Nada se persiste hasta ganarla.
     note = _system_note(conversation.conversation_id, SystemEvent.HANDOFF_REQUESTED,
-                        {"reason": "user_form"}, created_at=t1, expires_at=ttl)
+                        {"reason": "user_form"}, created_at=t0, expires_at=ttl)
     started = repository.start_handoff(
         conversation.conversation_id,
         reason="user_form",
-        at=t1,
+        at=t0,
         note=note,
         title=clean.subject,
         contact={
@@ -316,6 +316,10 @@ def _handoff_in_place(
     )
     if not started:
         raise HandoffNotAllowed(conversation.conversation_id)
+    response = _form_response_message(conversation.conversation_id, clean, created_at=t1,
+                                      transcript=None, expires_at=ttl)
+    # Cuenta como no leido: desde aqui quien lee es el asesor (RF-035).
+    repository.put_message(response, count_as_unread=True)
     post_bot_message(conversation.conversation_id, confirmation, created_at=t2, expires_at=ttl)
     current = repository.get_conversation(conversation.conversation_id)
     if current is None:  # pragma: no cover
@@ -326,9 +330,12 @@ def _handoff_in_place(
 def _open_case(
     thread: Conversation, clean: forms.HandoffForm, *, confirmation: str
 ) -> Conversation:
+    # El limite se hace cumplir de verdad dentro de create_conversation_with_messages
+    # (contador condicional en la MISMA transaccion que crea el caso, DETAILS.md §4.5 /
+    # Paso 6) — chequearlo aqui antes con list_open_cases (GSI, eventualmente consistente)
+    # era check-then-act: dos handoffs casi simultaneos podian pasar los dos y dejar mas de
+    # N casos abiertos.
     limit = get_settings().max_open_cases_per_user
-    if limit > 0 and thread.user_id and len(repository.list_open_cases(thread.user_id)) >= limit:
-        raise TooManyOpenCases(limit)
     t0, t1, t2, t3 = _stamps(4)
     case_id = str(uuid.uuid4())
     opened = _system_note(case_id, SystemEvent.CASE_OPENED,
@@ -358,12 +365,19 @@ def _open_case(
         created_at=t0,
         updated_at=t2,
     )
-    if not repository.create_conversation_with_messages(case, [opened, response, confirm]):
-        raise RuntimeError("colision de id al crear el caso")  # pragma: no cover
-    # Nota en el hilo de origen: enlaza al caso; el bot sigue encendido ahi.
+    # Nota en el hilo de origen: enlaza al caso; el bot sigue encendido ahi. Va en la MISMA
+    # transaccion que el caso (DETAILS.md §4.5 / Paso 6): antes era un put_message aparte
+    # despues del commit, y un fallo ahi dejaba el caso sin enlace en el hilo.
     link = _system_note(thread.conversation_id, SystemEvent.CASE_OPENED,
                         {"case_id": case_id, "title": clean.subject}, created_at=t3)
-    repository.put_message(link, count_as_unread=False)
+    try:
+        created = repository.create_conversation_with_messages(
+            case, [opened, response, confirm], link_message=link, open_case_limit=limit
+        )
+    except repository.OpenCaseLimitReached as exc:
+        raise TooManyOpenCases(limit) from exc
+    if not created:
+        raise RuntimeError("colision de id al crear el caso")  # pragma: no cover
     return case
 
 
@@ -702,8 +716,17 @@ def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
             conversation.conversation_id, SystemEvent.CONVERSATION_CLOSED,
             {"advisor_id": advisor_id}, expires_at=conversation.expires_at,
         )
+        # Solo un CASO conto para OPEN_CASES#USER#<id> al abrirse (Paso 6); la conversacion
+        # anonima pasa por aqui tambien (no returns_to_bot_on_close) pero nunca conto.
+        release_for = (
+            conversation.user_id if conversation.kind == ConversationKind.CASE else None
+        )
         done = repository.close_conversation(
-            conversation.conversation_id, advisor_id, note=note, closed_by=str(ClosedBy.ADVISOR)
+            conversation.conversation_id,
+            advisor_id,
+            note=note,
+            closed_by=str(ClosedBy.ADVISOR),
+            release_case_slot_for_user=release_for,
         )
     if not done:
         raise NotAssignedToAdvisor(conversation.conversation_id)

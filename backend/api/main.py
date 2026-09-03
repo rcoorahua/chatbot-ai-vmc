@@ -22,7 +22,7 @@ app = FastAPI(title="Subastin API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().allowed_origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
