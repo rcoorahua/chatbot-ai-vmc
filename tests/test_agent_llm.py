@@ -376,7 +376,8 @@ def test_el_markdown_y_los_guiones_largos_se_limpian_antes_de_publicar(fake_llm)
     result = writer.write_answer("cuanto es la comision", ["La comision es 3.9%."])
 
     assert result.has_evidence is True and result.guardrail is None
-    assert result.text == "Claro, la comision es 3.9%."
+    # D-025 revisada (D-030): las negritas se quedan (el widget las dibuja); el guion largo no.
+    assert result.text == "**Claro**, la comision es 3.9%."
 
 
 def test_las_etiquetas_dentro_de_la_evidencia_se_neutralizan(fake_llm):

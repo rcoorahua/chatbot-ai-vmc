@@ -184,11 +184,18 @@ def test_una_respuesta_vacia_pasa():
 # ───────────────────────────── AC-G5: higiene ─────────────────────────────
 
 
-def test_tidy_quita_markdown_y_guiones_largos():
+def test_tidy_quita_markdown_y_guiones_largos_pero_conserva_negritas():
+    """D-025 revisada con D-030: las **negritas** son el unico markdown que pasa (el widget
+    las renderiza); encabezados, guiones bajos y asteriscos sueltos se siguen quitando."""
     texto = "**Hola** — mira esto\n\n\n\n# Titulo\n_linea_ con 3 * 4 y https://a.test/x_y"
     assert guardrails.tidy(texto) == (
-        "Hola, mira esto\n\nTitulo\nlinea con 3 * 4 y https://a.test/x_y"
+        "**Hola**, mira esto\n\nTitulo\nlinea con 3 * 4 y https://a.test/x_y"
     )
+
+
+def test_tidy_quita_un_doble_asterisco_sin_cerrar():
+    assert guardrails.tidy("haz clic en **Ingresar y listo") == "haz clic en Ingresar y listo"
+    assert guardrails.tidy("**a** y **b**") == "**a** y **b**"
 
 
 def test_neutralize_tags_desactiva_etiquetas_sin_perder_texto():
