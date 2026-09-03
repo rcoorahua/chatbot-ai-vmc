@@ -691,21 +691,52 @@
   }
 
   // Enlaces como nodos <a> (nunca HTML crudo). Solo http(s), con rel="noopener".
+  /** Texto de una linea con enlaces clicables y **negritas** (D-025 revisada con D-030: el
+   *  unico markdown que el bot puede usar). Todo va por textContent: nada se inyecta. */
   function textWithLinks(text) {
     const fragment = document.createDocumentFragment();
-    const pattern = /https?:\/\/[^\s<>"']+/g;
+    const pattern = /(\*\*(?=\S)[^*]+?(?<=\S)\*\*)|(https?:\/\/[^\s<>"']+)/g;
     let last = 0;
-    let match;
-    // SAFETY: es RegExp.prototype.exec sobre texto para encontrar URLs; no ejecuta comandos ni
-    // codigo (no es child_process.exec). El resultado solo alimenta textContent y href.
-    while ((match = pattern.exec(text)) !== null) {
+    // SAFETY: es String.prototype.matchAll sobre texto para encontrar URLs y pares de
+    // asteriscos; no ejecuta comandos ni codigo. Solo alimenta textContent y href.
+    for (const match of String(text || "").matchAll(pattern)) {
       if (match.index > last) fragment.appendChild(document.createTextNode(text.slice(last, match.index)));
-      fragment.appendChild(
-        h("a", { href: match[0], target: "_blank", rel: "noopener noreferrer", text: match[0] })
-      );
+      if (match[1]) {
+        fragment.appendChild(h("strong", { text: match[1].slice(2, -2) }));
+      } else {
+        fragment.appendChild(
+          h("a", { href: match[2], target: "_blank", rel: "noopener noreferrer", text: match[2] })
+        );
+      }
       last = match.index + match[0].length;
     }
     if (last < text.length) fragment.appendChild(document.createTextNode(text.slice(last)));
+    return fragment;
+  }
+
+  const LIST_ITEM = /^\s*(\d{1,2}[).]|[-•])\s+(.*)$/;
+
+  /** El cuerpo de una burbuja: cada linea es un bloque; "1) ..." es un item de lista con
+   *  sangria colgante y aire entre items; una linea en blanco separa parrafos. Lo que
+   *  antes era `white-space: pre-wrap` sobre un solo nodo de texto, pero con ritmo. */
+  function renderRichText(text) {
+    const fragment = document.createDocumentFragment();
+    const lines = String(text || "").split("\n");
+    let gap = false;
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (!line.trim()) {
+        gap = true;
+        continue;
+      }
+      const item = line.match(LIST_ITEM);
+      const block = item
+        ? h("div", { class: "li" }, h("span", { class: "li-n", text: item[1] }), h("span", { class: "li-t" }, textWithLinks(item[2])))
+        : h("div", { class: "line" }, textWithLinks(line.trim()));
+      if (gap && fragment.childNodes.length) block.classList.add("after-gap");
+      gap = false;
+      fragment.appendChild(block);
+    }
     return fragment;
   }
 
@@ -2128,39 +2159,49 @@
             text: (message.metadata && message.metadata.sender_name) || "Asesor",
           })
         : null,
-      h("span", { class: "bubble-text" }, textWithLinks(message.content || "")),
-      message.created_at ? h("span", { class: "stamp", text: formatTime(message.created_at) }) : null
+      h("div", { class: "bubble-text" }, renderRichText(message.content || ""))
     );
-    // D-030: la fuente de una respuesta con evidencia va como chip DEBAJO de la burbuja (como
-    // las citas de un asistente), no como URL dentro del texto.
+    // La hora se mete en el ULTIMO bloque de texto para que flote al final de su linea (el
+    // truco de WhatsApp); con el texto en bloques, puesta despues quedaria en una linea sola.
+    if (message.created_at) {
+      const stamp = h("span", { class: "stamp", text: formatTime(message.created_at) });
+      const cuerpo = bubble.querySelector(".bubble-text");
+      (cuerpo.lastElementChild || cuerpo).appendChild(stamp);
+    }
+    // D-030: la fuente de una respuesta con evidencia va DEBAJO de la burbuja ("Fuente: ..."),
+    // no como URL dentro del texto ni como un boton que se confunda con las preguntas.
     const sources = renderSources(message);
     return h("div", { class: clases }, sources ? h("div", { class: "bubble-wrap" }, bubble, sources) : bubble);
   }
 
-  /** Chips de fuente (RF-019): `metadata.sources` = [{title, url}], deduplicadas por el
-   *  servidor. Solo del bot; un mensaje sin evidencia no trae el campo. */
+  /** Linea de fuente (RF-019): "Fuente: <titulo del articulo>" como enlace subrayado, bajo la
+   *  burbuja. `metadata.sources` = [{title, url}], deduplicadas por el servidor. Se muestra
+   *  el TITULO, nunca la URL: por larga que sea la direccion, el texto es corto y se corta
+   *  con puntos suspensivos si no cabe; el `title` deja ver el completo al pasar el mouse. */
   function renderSources(message) {
     const sources = message.metadata && message.metadata.sources;
     if (message.sender_type !== "BOT" || !Array.isArray(sources) || !sources.length) return null;
-    const wrap = h("div", { class: "sources" });
+    const links = [];
     for (const source of sources) {
       if (!source || !source.url || !/^https?:\/\//.test(source.url)) continue;
-      wrap.appendChild(
+      const label = source.title || source.url;
+      links.push(
         h(
           "a",
           {
-            class: "source-chip",
+            class: "source-link",
             href: source.url,
             target: "_blank",
             rel: "noopener noreferrer",
-            title: TEXT.sourceLabel + ": " + (source.title || source.url),
+            title: label + " · " + source.url,
           },
-          ICON.link(),
-          h("span", { text: source.title || source.url })
+          h("span", { class: "source-title", text: label }),
+          ICON.link()
         )
       );
     }
-    return wrap.childNodes.length ? wrap : null;
+    if (!links.length) return null;
+    return h("div", { class: "sources" }, h("span", { class: "sources-label", text: TEXT.sourceLabel + ":" }), links);
   }
 
   function renderPending(clientMessageId, draft, primero) {
@@ -2236,11 +2277,14 @@
     );
     for (const option of interaction.options) {
       if (!option || !option.label || !option.value) continue;
+      // El boton de asesor (kind = handoff) va en color solido: no es "otra pregunta", es la
+      // salida a una persona, y el servidor abre el formulario sin pasar por ningun modelo.
+      const handoff = option.kind === "handoff";
       wrap.appendChild(
         h(
           "button",
           {
-            class: "qr qr-related",
+            class: "qr " + (handoff ? "qr-solid qr-handoff" : "qr-related"),
             type: "button",
             onclick: () =>
               sendMessage(option.label, {
@@ -2832,17 +2876,34 @@
        y con texto normal: son preguntas enteras, no opciones de un menu. */
     .quick-replies.related { max-width: 88%; }
     .qr-related { font-weight: 500; text-align: left; line-height: 1.3; }
-    /* Chip de fuente bajo la burbuja del bot (RF-019): discreto, un enlace con icono. */
-    .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
-    .source-chip {
-      display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
-      padding: 4px 10px; border-radius: var(--radius-pill);
-      border: 1px solid var(--line); background: var(--surface);
-      color: var(--vault-600); font-size: 12px; font-weight: 600; text-decoration: none;
-      transition: background-color .18s var(--ease), border-color .18s var(--ease);
+    .qr-handoff { font-weight: 600; }
+    /* Fuente bajo la burbuja del bot (RF-019): una linea discreta "Fuente: <titulo>" con el
+       titulo subrayado, para que NO parezca un boton de pregunta. Se muestra el titulo del
+       articulo, nunca la URL: cabe en una linea y, si no, se corta con puntos suspensivos. */
+    .sources {
+      display: flex; align-items: center; gap: 6px; max-width: 100%;
+      margin: 4px 0 0 4px; font-size: 12px; line-height: 1.3; color: var(--ink-faint);
     }
-    .source-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .source-chip:hover { background: rgba(132, 96, 229, .08); border-color: var(--vault-500); }
+    .sources-label { flex: none; }
+    .source-link {
+      display: inline-flex; align-items: center; gap: 3px; min-width: 0;
+      color: var(--vault-600); text-decoration: underline; text-underline-offset: 2px;
+    }
+    .source-link:hover { color: var(--vault-700); }
+    .source-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-link svg { flex: none; opacity: .7; }
+    /* Texto de la burbuja en bloques (D-030): pasos con sangria colgante y aire entre ellos,
+       parrafos separados por una linea en blanco del modelo. */
+    .bubble-text { display: block; }
+    .bubble-text .line, .bubble-text .li { display: block; }
+    .bubble-text .li { display: flex; gap: 6px; margin-top: 5px; }
+    .bubble-text .li-n { flex: none; font-weight: 600; color: var(--vault-600); }
+    .bubble-mine .bubble-text .li-n { color: rgba(255, 255, 255, .85); }
+    .bubble-text .li-t { min-width: 0; }
+    .bubble-text .after-gap { margin-top: 10px; }
+    .bubble-text strong { font-weight: 700; }
+    /* Dentro de un item (flex) el float no aplica: la hora se alinea al final como item. */
+    .bubble-text .li .stamp { float: none; margin: 0 -3px -2px auto; align-self: flex-end; }
     .banner-anon {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
       background: rgba(132, 96, 229, .08); color: var(--vault-700);
