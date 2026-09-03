@@ -173,7 +173,7 @@ class HandoffOut(BaseModel):
 
 
 @router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
-def create_session(body: SessionIn) -> SessionOut:
+def create_session(body: SessionIn, request: Request) -> SessionOut:
     identity: auth.VmcIdentity | None = None
     if body.user_jwt:
         try:
@@ -187,6 +187,20 @@ def create_session(body: SessionIn) -> SessionOut:
             ) from exc
         except auth.IdentityConfigurationError as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+    # DETAILS.md §4.9/Paso 11: cada sesion anonima crea una fila Conversation NUEVA (sin dedup,
+    # a diferencia del autenticado con id determinista) retenida 30 dias — un script en bucle
+    # aqui es el vector de abuso mas barato de la API publica. Antes de crear nada, no despues:
+    # el 429 no debe dejar huerfanos (mismo criterio que el handoff, DETAILS.md §4.5).
+    if identity is None:
+        ip_hash = quota.hash_ip(_client_ip(request))
+        limit = get_settings().anon_sessions_per_ip_per_day
+        if ip_hash and not quota.take_daily_slot(f"SESSION#IP#{ip_hash}", limit=limit):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Demasiadas conexiones nuevas desde tu conexion hoy. Intenta mas tarde.",
+                headers={"Retry-After": "3600"},
+            )
 
     # DETAILS.md §4.2: falla ANTES de abrir la conversacion si falta la clave de sesion — si no,
     # un anonimo sin SESSION_SIGNING_KEY dejaba una fila huerfana en cada intento (el 503 llegaba

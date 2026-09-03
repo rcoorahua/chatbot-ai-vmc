@@ -99,6 +99,9 @@ BUSINESS_ENV = {
     "AI_QUOTA_AUTH_PER_DAY": "40",
     "MAX_OPEN_CASES_PER_USER": "5",
     "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
+    # DETAILS.md §4.9/Paso 11: mas holgado que el handoff (crear una sesion no manda PII ni
+    # notifica a un asesor), pero acota al script que llama POST /chat/sessions en bucle.
+    "ANON_SESSIONS_PER_IP_PER_DAY": "30",
     "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
     "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
     "MAX_IMAGES_PER_MESSAGE": "3",
@@ -400,6 +403,9 @@ class SubastinStack(Stack):
             self,
             "HttpApi",
             api_name=f"{prefix}-api",
+            # create_default_stage=False: el stage $default se crea a mano abajo, con throttle.
+            # HttpApi no deja pasarle throttle al stage automatico que crearia por su cuenta.
+            create_default_stage=False,
             # /advisor y /dashboard llevan cognito_authorizer (abajo), que por default cubre TODOS
             # los metodos incluido OPTIONS: el preflight del navegador no manda Authorization y el
             # authorizer lo rechazaba con 401 antes de llegar a FastAPI (DETAILS.md §4.3). Nativo
@@ -413,6 +419,21 @@ class SubastinStack(Stack):
                 ],
                 allow_headers=["Authorization", "Content-Type"],
             ),
+        )
+        # DETAILS.md §4.9/Paso 11 ("Throttling Gateway/WAF"): freno GLOBAL y barato (nativo de
+        # API Gateway, sin WAF) contra un pico volumetrico -- complementa, no reemplaza, los
+        # topes por IP/usuario de agent/quota.py (esos SI distinguen actores; esto es un balde
+        # unico compartido por toda la API). 50 rps / 100 de rafaga es generoso para el trafico
+        # real (polling adaptativo de TD-001, minimo 2 s entre pedidos por conversacion abierta)
+        # y deja margen de sobra antes de tocar un WAF con reglas por IP -- se agrega si el
+        # trafico de produccion lo pide.
+        apigwv2.HttpStage(
+            self,
+            "DefaultStage",
+            http_api=http_api,
+            stage_name="$default",
+            auto_deploy=True,
+            throttle=apigwv2.ThrottleSettings(rate_limit=50, burst_limit=100),
         )
         api_integration = integrations.HttpLambdaIntegration("ApiIntegration", api_fn)
         cognito_authorizer = authorizers.HttpJwtAuthorizer(

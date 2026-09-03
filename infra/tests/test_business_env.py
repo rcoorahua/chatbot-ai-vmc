@@ -34,8 +34,14 @@ def test_every_value_is_a_string():
     assert all(isinstance(v, str) for v in BUSINESS_ENV.values())
 
 
+def test_anon_session_limit_matches_paso_11_no_es_cero():
+    # DETAILS.md §4.9/Paso 11: en dev el default es 0 (sin tope); stage/prod deben encenderlo.
+    assert int(BUSINESS_ENV["ANON_SESSIONS_PER_IP_PER_DAY"]) > 0
+
+
 if __name__ == "__main__":
     test_message_length_matches_d005()
     test_ai_quota_matches_d027_business_numbers()
     test_every_value_is_a_string()
+    test_anon_session_limit_matches_paso_11_no_es_cero()
     print("ok")

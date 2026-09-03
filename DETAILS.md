@@ -577,7 +577,7 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - Formulario inválido no debe consumir slot.
 - Retry con la misma idempotency key no debe consumir un segundo slot.
 
-### Estado (2026-09-03) — 🟡 parcial, solo la parte de infra
+### Estado (2026-09-03) — 🟡 parcial: cuotas, rate limit por IP y throttling hechos; faltan alarmas
 
 - ✅ `AI_QUOTA_ANON_PER_HOUR/DAY` y `AI_QUOTA_AUTH_PER_HOUR/DAY` ahora se inyectan explícitos en
   `common_env` (`infra/stacks/subastin_stack.py`) con los valores de negocio de D-027
@@ -587,9 +587,28 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - ✅ `infra/tests/test_business_env.py` sintetiza los valores por stage (vía `BUSINESS_ENV`,
   extraído a módulo sin objetos CDK) y afirma los no-cero — exactamente el test que pedía este
   punto.
-- ⏳ **No hecho:** rate limit de `POST /chat/sessions` por IP hasheada, throttling de API
-  Gateway/WAF, y "validar formulario e idempotencia antes de consumir el slot" — esto último es
-  el Paso 6 (idempotencia del handoff), que sigue sin implementarse.
+- ✅ **Rate limit de `POST /chat/sessions` por IP hasheada** (`api/routers/chat.py`,
+  `core/config.py`: `anon_sessions_per_ip_per_day`, default 0 en dev/tests, `30` en
+  stage/prod vía `BUSINESS_ENV`). Reusa `quota.take_daily_slot` tal cual (mismo mecanismo que
+  D-029 para handoffs, misma tabla RateLimits, cero infra nueva) — solo aplica al anónimo
+  (`identity is None`); el autenticado ya se cuenta por `user_id` (D-027) y un JWT de VMC
+  válido no es falsificable en volumen. Corre ANTES de crear la conversación (el 429 no deja
+  fila huérfana, mismo criterio que el handoff). Tests:
+  `tests/test_chat_cases.py::test_con_el_tope_por_ip_la_segunda_sesion_del_dia_es_429` y
+  `test_el_tope_de_sesiones_no_aplica_al_autenticado`.
+- ✅ **Throttling nativo de API Gateway** (`infra/stacks/subastin_stack.py`: `HttpStage`
+  explícito con `ThrottleSettings(rate_limit=50, burst_limit=100)` sobre el stage `$default`).
+  Freno GLOBAL barato (sin WAF) contra un pico volumétrico — complementa, no reemplaza, los
+  topes por IP/usuario de arriba. **WAF deliberadamente fuera de alcance**: agrega un servicio
+  nuevo (reglas, Web ACL, costo aparte) para lo que el rate limit por IP ya cubre
+  ("un actor no genera costo/filas ilimitadas"); se revisa si el tráfico real de producción lo
+  pide. Test (sin Docker, réplica aislada como `test_cors_preflight.py`):
+  `infra/tests/test_throttle.py`.
+- ⏳ **No hecho:** alarmas CloudWatch de abuso/costo (tasa de sesiones, DynamoDB writes,
+  invocaciones IA, 429) — es observabilidad/detección, no prevención; el "Criterio de salida"
+  del Paso 11 ("un actor no puede generar costo o filas ilimitadas") ya lo cierran los dos
+  puntos de arriba. Y "validar formulario e idempotencia antes de consumir el slot" del
+  handoff sigue siendo el Paso 7 (toma/cierre), sin tocar.
 
 ---
 
@@ -1425,6 +1444,10 @@ casos atómico hechos (PR #119, #120); `client_handoff_id` pendiente (toca el wi
 ### Criterio de salida
 
 - Un actor no puede generar costo o filas ilimitadas con endpoints públicos.
+
+**Estado (2026-09-03): 🟡 parcial** — ver §4.9 "Estado". Cuotas IA, rate limit de sesiones por
+IP y throttling nativo de API Gateway hechos. Falta: alarmas CloudWatch de abuso/costo (item 4
+de "Implementación"); WAF deliberadamente fuera de alcance (ver §4.9).
 
 ## Paso 12 — Migrar índices y consultas activas
 
