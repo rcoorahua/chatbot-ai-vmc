@@ -329,11 +329,25 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   compositor (decisión de Aaron): pide la tarjeta a `GET /chat/conversations/{id}/handoff/form`
   (misma spec que ofrece el bot, `service.handoff_form_for`; 409 con la misma regla que
   POST /handoff, `service.handoff_allowed`) y la muestra en el hilo **sin mensaje, sin bot y
-  sin modelo**; el envío sigue siendo POST /handoff. **Formulario rediseñado**: ancho de
-  burbuja (82 %), "1/2" en vez de "Paso 1 de 2", asterisco en los obligatorios,
-  Siguiente/Enviar apagados hasta llenarlos, una **x** que lo cierra, y el **compositor se
-  retira hacia abajo** mientras el formulario entra con un fade desde arriba (y vuelve
-  subiendo al cerrarlo). Lo escrito se conserva en `formDraft` si se vuelve a abrir.
+  sin modelo**; el envío sigue siendo POST /handoff. **Formulario rediseñado** (tercera
+  ronda, mismo día): a todo el ancho del hilo, cabeceras "Datos de contacto · 1/2" y "Motivo
+  de la consulta" (las preguntas "¿Con quién hablamos?" sonaban informales), botón final
+  **"Contactar"** (`forms.handoff_form_spec`, antes "Enviar al asesor"), una **x** que lo
+  cierra, y **validación al intentar avanzar**: sin asteriscos de entrada; al pulsar Siguiente
+  con obligatorios vacíos, TODOS los que falten ganan a la vez asterisco y "Falta llenar este
+  campo", que se van al escribir. **Transición con movimiento** (Web Animations sobre el DOM
+  vivo, porque `render()` reemplaza el árbol entero — una clase CSS en un nodo que se
+  descarta no anima nada): al aparecer un formulario, `render()` primero desvanece los
+  botones de pregunta y **pliega el compositor** (su altura baja a cero, así el hilo crece y
+  el formulario "empuja") sobre el DOM actual, pospone cualquier otro render mientras dura
+  (`formEntering`) y recién entonces dibuja; al cerrarlo o contactar, el compositor **vuelve
+  subiendo** (`expandComposer` en el frame siguiente al montaje) y los botones reaparecen con
+  fade. Mientras el formulario está a la vista no hay compositor ni botones de pregunta. Lo
+  escrito se conserva en `formDraft` si se vuelve a abrir. **Mensaje nuevo leído desde
+  arriba** (pedido de Aaron): al llegar una fila del bot o del asesor, la vista se desliza
+  suave hasta alinear su **inicio** con el borde superior del hilo, en vez de saltar al
+  final; lo propio y la primera apertura siguen aterrizando abajo, y los eventos de scroll de
+  ese deslizamiento no cuentan como "el usuario subió a leer" (`autoScrollUntil`).
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
