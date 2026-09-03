@@ -281,6 +281,24 @@ def list_messages(
     )
 
 
+class HandoffFormOut(BaseModel):
+    # La misma spec que el bot deja en `metadata.interaction` cuando ofrece el formulario.
+    interaction: dict[str, Any]
+
+
+@router.get("/conversations/{conversation_id}/handoff/form", response_model=HandoffFormOut)
+def handoff_form(conversation_id: str, session: auth.CurrentSession) -> HandoffFormOut:
+    """La tarjeta de formulario de asesor para abrirla desde el badge del widget (D-030), sin
+    que el bot la ofrezca y sin pasar por ningun modelo. 409 si desde aqui no se puede pedir
+    asesor (caso, conversacion ya derivada o cerrada): la misma regla que POST /handoff."""
+    conversation = _owned_conversation(session, conversation_id)
+    if not service.handoff_allowed(conversation):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Desde esta conversacion no se puede pedir un asesor"
+        )
+    return HandoffFormOut(**service.handoff_form_for(conversation))
+
+
 @router.post(
     "/conversations/{conversation_id}/handoff",
     response_model=HandoffOut,

@@ -261,6 +261,27 @@ def latest_messages(
 # ───────────────────────────── Handoff con formulario (D-029) ─────────────────────────────
 
 
+def handoff_allowed(conversation: Conversation) -> bool:
+    """Desde esta conversacion se puede pedir un asesor: es el hilo con el bot (no un caso),
+    el bot esta atendiendo y nadie la tomo. La misma regla decide el 409 de POST /handoff y
+    si el widget puede abrir el formulario desde su badge (GET /handoff/form)."""
+    return (
+        conversation.kind == ConversationKind.THREAD
+        and conversation.status == ConversationStatus.BOT_ATTENDING
+        and not conversation.assigned_advisor_id
+    )
+
+
+def handoff_form_for(conversation: Conversation) -> dict:
+    """La tarjeta de formulario que le corresponde a esta conversacion (D-029): al anonimo se
+    le piden nombre y correo; al autenticado solo el correo si el JWT de VMC no lo trajo.
+    Es la misma spec que ofrece el bot; el badge del widget la pide por aqui (D-030)."""
+    anonymous = conversation.user_type == UserType.ANONYMOUS
+    return forms.handoff_form_spec(
+        anonymous=anonymous, needs_email=not anonymous and not conversation.user_email
+    )
+
+
 def request_handoff(
     conversation: Conversation, form: forms.HandoffForm, *, confirmation: str
 ) -> Conversation:
@@ -272,11 +293,7 @@ def request_handoff(
     `confirmation` es el texto fijo del bot (lo trae la entrada: el dominio no importa
     prompts). Devuelve la conversacion que espera al asesor (la misma o el caso).
     """
-    if (
-        conversation.kind != ConversationKind.THREAD
-        or conversation.status != ConversationStatus.BOT_ATTENDING
-        or conversation.assigned_advisor_id
-    ):
+    if not handoff_allowed(conversation):
         raise HandoffNotAllowed(conversation.conversation_id)
     anonymous = conversation.user_type == UserType.ANONYMOUS
     needs_email = not anonymous and not conversation.user_email
