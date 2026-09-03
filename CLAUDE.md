@@ -419,6 +419,17 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
      `interaction` (quick replies, sí/no del asesor, formulario), lo que el usuario escriba y no
      la responda es un tema NUEVO. Sin esto, "mejor dime cuánto es la comisión" escrito tras
      "¿quieres un asesor?" heredaba el tema viejo y buscaba la pregunta equivocada.
+  4. **(2026-09-03) La continuidad se decide ANTES de triviales y repetidos, y la consulta
+     viaja con la respuesta.** En una explicación por pasos el usuario contesta "sí" varias
+     veces: el segundo "sí" caía como *mensaje repetido* (D-006) y el tercero en silencio; y
+     "ok"/"listo" tras una pregunta del bot caían como el "¡Con gusto!" de cierre. Ahora
+     `_attend` calcula `is_continuation` primero y solo un acuse sin pregunta abierta es
+     cierre. Además, cada respuesta con evidencia guarda en su metadata la consulta que la
+     produjo (`followups.RAG_QUERY_KEY`) y una continuación busca con ESA consulta: así el
+     "sí" tras un paso de flujo (D-028) repite la consulta canónica y no el texto del botón.
+     "sí"/"listo"/"y luego?" ya no llaman al clasificador (`continuation:<regla>` en
+     AIUsage, sin modelo). Medido: "quiero registrarme" 4/4 (0.858) contra "si" 0/4 (0.790).
+     Tests: `tests/test_ai_worker_continuity.py`.
 
   Todo por reglas deterministas, sin llamada a modelo (no gasta cuota D-027). **No confundir con
   D-028**: `flows.py` es estado persistido con botones; esto solo cambia la consulta y no guarda

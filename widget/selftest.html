@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Subastín — autoprueba del widget</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; color: #191c1c; }
+    h1 { font-size: 18px; }
+    pre { background: #f7f7fb; padding: 12px; border-radius: 8px; overflow: auto; }
+    .ok { color: #0a7d4f; } .fail { color: #b3261e; font-weight: 600; }
+    li { margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <h1>Autoprueba del widget (ciclo de vida e identidad)</h1>
+  <p>Corre sola contra la API local (<code>:8000</code>) y escribe el resultado abajo. Sin
+    dependencias: sirve para verificar a mano o desde Chrome headless
+    (<code>chrome --headless=new --dump-dom http://localhost:8080/selftest.html</code>).
+    No manda mensajes al bot: no gasta llamadas de IA.</p>
+  <ul id="checks"></ul>
+  <pre id="results">(corriendo…)</pre>
+
+<script>
+(async function () {
+  const API = "http://localhost:8000";
+  const SECRET = "dev-vmc-identity-secret";
+  const checks = [];
+  const ul = document.getElementById("checks");
+
+  function check(name, ok, detail) {
+    checks.push({ name, ok: Boolean(ok), detail: detail === undefined ? "" : String(detail) });
+    const li = document.createElement("li");
+    li.className = ok ? "ok" : "fail";
+    li.textContent = (ok ? "✔ " : "✘ ") + name + (detail !== undefined ? " — " + detail : "");
+    ul.appendChild(li);
+  }
+
+  async function signJwt(payload) {
+    const enc = new TextEncoder();
+    const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const header = b64(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+    const body = b64(enc.encode(JSON.stringify(payload)));
+    const key = await crypto.subtle.importKey("raw", enc.encode(SECRET),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${header}.${body}`));
+    return `${header}.${body}.${b64(sig)}`;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const jwtA = await signJwt({ sub: "selftest-A", name: "Ana Selftest", email: "a@example.com", iat: now, exp: now + 3600 });
+  const jwtB = await signJwt({ sub: "selftest-B", name: "Beto Selftest", email: "b@example.com", iat: now, exp: now + 3600 });
+  const jwtBad = jwtA.slice(0, -4) + "xxxx"; // firma rota
+
+  // Espía de red: cada request del widget con su Authorization y el instante.
+  const log = [];
+  const realFetch = window.fetch.bind(window);
+  window.fetch = function (url, init) {
+    const headers = (init && init.headers) || {};
+    log.push({ t: Date.now(), url: String(url), method: (init && init.method) || "GET",
+      auth: headers.Authorization || null });
+    return realFetch(url, init);
+  };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const session = () => JSON.parse(sessionStorage.getItem("subastin.session.v1") || "null");
+  const host = () => document.getElementById("subastin-widget");
+  const shadow = () => host() && host().shadowRoot;
+  const panel = () => shadow() && shadow().querySelector(".panel");
+  const launcher = () => shadow() && shadow().querySelector(".launcher");
+  const bubbles = () => shadow() ? Array.from(shadow().querySelectorAll(".bubble-text")).map((b) => b.textContent) : [];
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < (ms || 8000)) {
+      try { if (fn()) return true; } catch (_) {}
+      await sleep(100);
+    }
+    return false;
+  }
+
+  try {
+    // ── 1. Arranca como A ──
+    sessionStorage.clear();
+    window.subastinSettings = { apiUrl: API, userJwt: jwtA };
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "subastin.js"; s.onload = resolve; s.onerror = reject;
+      document.body.appendChild(s);
+    });
+    check("el widget se monta", await until(() => host() && launcher()));
+    check("expone setIdentity/reset/mount/unmount",
+      window.Subastin && ["setIdentity", "reset", "mount", "unmount"].every((k) => typeof window.Subastin[k] === "function"));
+    check("A abre sesion al cargar (autenticado)", await until(() => session() && session().userType === "AUTHENTICATED"));
+    const sessA = session();
+    check("la sesion guarda la identidad", sessA && sessA.identity === "user:selftest-A", sessA && sessA.identity);
+    window.Subastin.open();
+    check("el panel abre con aria-expanded", await until(() => launcher().getAttribute("aria-expanded") === "true"));
+    check("saluda a A por su nombre", await until(() => bubbles().some((t) => t.includes("Ana Selftest"))), bubbles()[0]);
+    const tokenA = sessA.token;
+    const convA = sessA.conversationId;
+
+    // ── 2. A → B sin recargar y SIN avisar: la pagina solo reasigna el JWT ──
+    const tSwitch = Date.now();
+    window.subastinSettings.userJwt = jwtB;
+    window.Subastin.close();
+    window.Subastin.open(); // cualquier request siguiente compara la identidad y reinicia
+    check("un JWT distinto en la pagina reinicia la sesion (B)", await until(() => session() && session().identity === "user:selftest-B"));
+    const postsAfterSwitch = () => log.filter((r) => r.t > tSwitch && r.method === "POST" && r.url.endsWith("/chat/sessions")).length;
+    await sleep(1500);
+    check("el cambio abre UNA sola sesion", postsAfterSwitch() === 1, `${postsAfterSwitch()} POST /chat/sessions`);
+    // Avisar despues con la misma persona no reinicia nada.
+    const sessBefore = session().token;
+    window.Subastin.setIdentity(jwtB);
+    await sleep(300);
+    check("setIdentity con la misma persona conserva la sesion", session() && session().token === sessBefore);
+    const sessB = session();
+    check("B tiene otra conversacion", sessB.conversationId !== convA, `${convA} → ${sessB.conversationId}`);
+    check("el storage ya no guarda a A", session().token !== tokenA);
+    await sleep(1500);
+    const leaks = log.filter((r) => r.t > tSwitch + 5 && r.auth === `Bearer ${tokenA}`);
+    check("ninguna request tras el cambio usa el token de A", leaks.length === 0, `${leaks.length} filtradas`);
+    check("la pantalla saluda a B y no muestra a A",
+      await until(() => bubbles().some((t) => t.includes("Beto Selftest")) && !bubbles().some((t) => t.includes("Ana Selftest"))));
+
+    // ── 3. B → anonimo (logout) sin recargar ──
+    window.Subastin.setIdentity(null);
+    check("logout deja sesion anonima (panel abierto)", await until(() => session() && session().userType === "ANONYMOUS"));
+    check("el anonimo no ve mensajes de B", !bubbles().some((t) => t.includes("Beto Selftest")));
+
+    // ── 4. JWT invalido: error de identidad, sin conservar lo anterior ──
+    window.Subastin.setIdentity(jwtBad);
+    check("un JWT invalido muestra el aviso de identidad", await until(() => shadow().querySelector(".banner-error")));
+    check("con JWT invalido no queda sesion", session() === null);
+    check("con JWT invalido no se muestran mensajes previos", bubbles().length === 0, bubbles().length);
+
+    // ── 5. reset() dos veces seguidas: una sola sesion nueva, sin sondeos dobles ──
+    window.Subastin.setIdentity(jwtA);
+    check("volver a A recupera su conversacion", await until(() => session() && session().conversationId === convA));
+    const before = log.length;
+    window.Subastin.reset();
+    window.Subastin.reset();
+    await sleep(2500);
+    const sessionsCreated = log.slice(before).filter((r) => r.method === "POST" && r.url.endsWith("/chat/sessions")).length;
+    check("dos reset seguidos abren UNA sola sesion", sessionsCreated === 1, `${sessionsCreated} POST /chat/sessions`);
+    check("tras reset la sesion sigue siendo de A", session() && session().identity === "user:selftest-A");
+
+    // ── 6. Escape cierra y devuelve el foco al boton ──
+    const textarea = await until(() => shadow().querySelector("textarea")) && shadow().querySelector("textarea");
+    textarea.focus();
+    check("el compositor toma el foco", shadow().activeElement === textarea);
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    check("Escape cierra el panel", await until(() => launcher().getAttribute("aria-expanded") === "false"));
+    check("el foco vuelve al boton flotante", shadow().activeElement === launcher());
+
+    // ── 7. Tab no sale del panel ──
+    window.Subastin.open();
+    await until(() => shadow().querySelector("textarea"));
+    const focusables = Array.from(panel().querySelectorAll("button:not([disabled]), textarea"));
+    const last = focusables[focusables.length - 1];
+    last.focus();
+    last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, composed: true }));
+    check("Tab desde el ultimo control vuelve al primero", panel().contains(shadow().activeElement) && shadow().activeElement === focusables[0]);
+
+    // ── 8. unmount / mount ──
+    window.Subastin.unmount();
+    check("unmount retira el widget", host() === null);
+    const beforeUnmount = log.length;
+    await sleep(2000);
+    check("desmontado no hace requests", log.length === beforeUnmount, `${log.length - beforeUnmount} requests`);
+    window.Subastin.mount();
+    check("mount lo vuelve a montar", await until(() => host() && launcher()));
+    check("remontado vuelve a abrir sesion de A", await until(() => session() && session().identity === "user:selftest-A"));
+  } catch (error) {
+    check("la autoprueba termino sin excepciones", false, error && (error.stack || error.message));
+  }
+
+  const failed = checks.filter((c) => !c.ok).length;
+  document.getElementById("results").textContent = JSON.stringify({ passed: checks.length - failed, failed, checks }, null, 2);
+  document.title = failed ? `FAIL ${failed}` : "PASS";
+})();
+</script>
+</body>
+</html>

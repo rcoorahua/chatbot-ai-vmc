@@ -203,6 +203,20 @@ _PRIVACY_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             rf"de esas|de un|de una|de quien|de el|de este|de esta)\s+{_ROLE_NOUNS}\b"
         ),
     ),
+    # "telefono del usuario Jorge Perez que gano la ultima subasta": un usuario identificado
+    # por nombre o por lo que hizo. El generico solo, sin "otro/ese" ni un hecho que lo
+    # señale, sigue fuera (puede ser una pregunta sobre uno mismo). Bateria del 2026-09-03:
+    # este caso caia al modelo, que lo mandaba a OTHER; el resultado era inocuo pero la
+    # respuesta correcta es la fija de privacidad (RF-052), sin gastar una llamada.
+    (
+        "third_party_named",
+        re.compile(
+            rf"\b{_THIRD_PARTY_DATA}\b.{{0,30}}\b(del|de la|de el)\s+"
+            r"(usuario|usuaria|cliente|clienta|persona|postor|postora|participante)\b.{0,50}"
+            r"\b(que gano|que se gano|que oferto|que pujo|que compro|que se llevo|ganador|"
+            r"ganadora|que vendio|que consigno|que participo)\b"
+        ),
+    ),
     # "correo de otro usuario", "telefono de esa persona": generico solo con "otro/ese".
     (
         "third_party_contact",
