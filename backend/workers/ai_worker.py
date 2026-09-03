@@ -194,9 +194,11 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     if kind == "identity":
         _reply_fixed(conversation, message, prompts.TRIVIAL_IDENTITY_RESPONSE, "trivial_identity")
         return
-    # Una continuacion nunca es "repetido": responde a la ULTIMA pregunta del bot aunque use la
-    # misma palabra que la vez anterior. El volumen lo frena el rate limit (D-005).
-    if not continuation and _is_repeat(text, window, block_keys):
+    # Un acuse ("si", "listo") o un "y luego?" nunca es "repetido": responde a la ULTIMA
+    # pregunta del bot aunque use la misma palabra que la vez anterior. Solo las reglas
+    # seguras: un texto corto cualquiera repetido (tambien un intento de manipulacion) sigue
+    # recibiendo el aviso de repetido y luego silencio, que es lo que D-024 quiere.
+    if followup_rule not in _CERTAIN_CONTINUATIONS and _is_repeat(text, window, block_keys):
         if _already_warned_repeat(window):
             _record_free(conversation, message, source="trivial_repeat_silent")
         else:
