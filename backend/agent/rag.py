@@ -22,7 +22,7 @@ derivar a un humano antes que arriesgar una respuesta inventada por una caida de
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from backend.core.config import get_settings
@@ -148,11 +148,24 @@ class RagResult:
     relevant: list[Fragment]
     discarded: list[Fragment]
     threshold: float
+    # Hits mas alla de `top_k` que NO entraron como hermanos: no son evidencia ni "bajo el
+    # umbral" (pueden superarlo), solo quedaron fuera del corte por posicion. Se conservan
+    # porque las preguntas hermanas (agent/related.py) los necesitan: con "Hola como me
+    # registro" los 4 primeros ya eran del articulo de registro y persona juridica era el
+    # quinto — se tiraba y el boton no salia (prueba real, 2026-09-03).
+    overflow: list[Fragment] = field(default_factory=list)
 
     @property
     def all_fragments(self) -> list[Fragment]:
-        """Relevantes primero (asi los recibe el redactor), descartados despues."""
+        """Relevantes primero (asi los recibe el redactor), descartados despues. Es lo que
+        registra AIUsage y muestra la consola: los `overflow` no van aqui a proposito, para
+        que "descartado" siga significando "bajo el umbral"."""
         return self.relevant + self.discarded
+
+    @property
+    def candidates(self) -> list[Fragment]:
+        """Todo lo que trajo el indice, incluidos los que quedaron fuera por posicion."""
+        return self.relevant + self.discarded + self.overflow
 
     @property
     def siblings(self) -> list[Fragment]:
@@ -212,6 +225,7 @@ def retrieve(
     head, tail = fragments[:limit], fragments[limit:]
     relevant = [f for f in head if f.score >= threshold]
     discarded = [f for f in head if f.score < threshold]
+    admitted: list[Fragment] = []
     if relevant and margin > 0:
         topics = {f.topic for f in relevant if f.topic}
         admitted = [
@@ -221,6 +235,7 @@ def retrieve(
         if admitted:
             relevant = relevant + [replace(f, sibling=True) for f in admitted]
             discarded = [f for f in discarded if f not in admitted]
+    overflow = [f for f in tail if f not in admitted]
     if fragments and not relevant:
         # Sin esto, calibrar el umbral obligaria a reproducir la consulta a mano.
         logger.info(
@@ -228,7 +243,9 @@ def retrieve(
             threshold,
             max(f.score for f in fragments),
         )
-    return RagResult(relevant=relevant, discarded=discarded, threshold=threshold)
+    return RagResult(
+        relevant=relevant, discarded=discarded, threshold=threshold, overflow=overflow
+    )
 
 
 def search(

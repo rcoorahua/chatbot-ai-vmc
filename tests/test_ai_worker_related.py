@@ -43,6 +43,7 @@ REG_URL = "https://ayuda.vmc.test/registro"
 COMO = "¿Cómo me registro?"
 PJ = "¿Puedo registrarme como persona jurídica?"
 CLAVE = "He olvidado mi contraseña, ¿cómo puedo recuperar el ingreso a mi cuenta?"
+FORM_Q = "Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?"
 RESPUESTA = "Para registrarte entra a vmcsubastas.com y dale a Regístrate 🙂"
 
 
@@ -315,39 +316,30 @@ def test_con_persona_juridica_primero_el_boton_no_repite_como_me_registro(
     assert labels[0] == PJ
 
 
-# ───────────────── AC-W7: boton de asesor cuando la respuesta manda a contactar ─────────────────
+# ───────────── AC-W7: una hermana fuera de top_k (overflow del RAG) tambien se ofrece ─────────────
 
 
-def test_si_la_respuesta_manda_a_contactar_sale_el_boton_y_abre_el_formulario_sin_ia(
-    limpiar, modelo, indice, tablas
+def test_una_pregunta_del_articulo_mas_alla_de_top_k_sale_como_boton(
+    limpiar, modelo, monkeypatch
 ):
-    modelo.answer = "Si nunca te registraste, pídeme un asesor aquí mismo para validar tus datos."
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
-    botones = _bot(conversation.conversation_id)[-1].metadata["interaction"]
-    asesor = botones["options"][-1]
-    assert asesor["label"] == prompts.RELATED_ADVISOR_BUTTON
-    assert asesor["kind"] == "handoff" and asesor["value"] == related.HANDOFF_VALUE
-    llamadas = len(modelo.calls)
-
-    click = _escribe(_fresca(conversation), asesor["label"], interaction={
-        "action_id": botones["action_id"], "value": asesor["value"],
-    })
-    _atiende(click)
-
-    respuesta = _bot(conversation.conversation_id)[-1]
-    assert respuesta.content == prompts.HANDOFF_OFFER_RESPONSE
-    assert respuesta.metadata["interaction"]["type"] == "HANDOFF_FORM"
-    assert len(modelo.calls) == llamadas, "el boton de asesor no toca ningun modelo"
-    usos = _usos(tablas, click.message_id)
-    assert [u["source"] for u in usos] == ["handoff_offer:related_button"]
-
-
-def test_sin_sugerencia_de_contacto_no_hay_boton_de_asesor(limpiar, modelo, indice):
+    """Segunda prueba real de Aaron (2026-09-03): los 4 primeros hits eran del articulo de
+    registro (intro, formulario, contraseña, "¿Como me registro?") y persona juridica era el
+    quinto. El RAG lo tiraba con el resto del lookahead y el boton no salia."""
+    intro = _frag(REG, "Para registrarte, ingresa a vmcsubastas.com.", 0.8586)
+    relevant = [intro, _frag(REG, FORM_Q, 0.8581), _frag(REG, CLAVE, 0.8531),
+                _frag(REG, COMO, 0.8525)]
+    monkeypatch.setattr(
+        ai_worker.rag, "retrieve",
+        lambda text, **kwargs: RagResult(
+            relevant=relevant, discarded=[], threshold=0.84,
+            overflow=[_frag(REG, PJ, 0.8490)],
+        ),
+    )
     conversation = _conversacion(limpiar)
 
-    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    _atiende(_escribe(conversation, "Hola como me registro"))
 
-    kinds = [o["kind"] for o in
-             _bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
-    assert "handoff" not in kinds
+    labels = [o["label"] for o in
+              _bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
+    # Por score del indice (el orden real de esa prueba): persona juridica entra tercera.
+    assert labels == [FORM_Q, CLAVE, PJ]

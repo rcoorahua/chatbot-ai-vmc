@@ -131,13 +131,18 @@ cosa no "interrumpe" nada: los botones simplemente quedan atrás. Por qué exist
 "¿te explico el siguiente paso?" del redactor, que costaba una llamada entera por cada "sí"
 (D-030 en CLAUDE.md).
 
-Cada opción lleva `kind`: `question` (las de arriba) o `handoff`. La de `handoff` es el botón
-**"Contactar con un asesor"** (`value: "ADVISOR"`, sin `query`), que aparece solo cuando la
-respuesta o su evidencia mandan a contactar al equipo (`related.suggests_advisor`, regex sin
-modelo); su clic abre el formulario de D-029 directamente, sin clasificador, sin cuota y sin
-modelo (`handoff_offer:related_button`). La pregunta **respondida** (la que no se ofrece) se
-detecta por parecido con la consulta, no por score: con "Hola como me registro" el índice puso
-persona jurídica primero y el botón repetía "¿Cómo me registro?".
+La pregunta **respondida** (la que no se ofrece) se detecta por parecido con la consulta, no
+por score: con "Hola como me registro" el índice puso persona jurídica primero y el botón
+repetía "¿Cómo me registro?". Los candidatos son **todo** lo que trajo el índice
+(`RagResult.candidates`, incluidos los hits más allá de `top_k`): en la segunda prueba real
+persona jurídica era el quinto hit y se perdía.
+
+**El asesor no se ofrece por contexto.** Se probó un botón "Contactar con un asesor" cuando la
+respuesta o su evidencia decían "contáctanos", y salió en "¿cómo me registro?" porque lo decía
+un fragmento vecino del artículo. En su lugar el widget lleva un **badge permanente "Asesor
+humano"** junto al compositor: pide la tarjeta a `GET /chat/conversations/{id}/handoff/form`
+(la misma spec que deja el bot; 409 con la misma regla que `POST /handoff`) y la muestra en el
+hilo sin mensaje, sin bot y sin modelo. El envío sigue siendo `POST /handoff`.
 
 ## 4. El mapeo completo del corpus
 

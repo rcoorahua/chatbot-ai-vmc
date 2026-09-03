@@ -606,3 +606,49 @@ def test_perder_la_carrera_de_handoff_no_deja_form_response_huerfano(client, lim
     )["Items"]
     respuestas = [m for m in mensajes if m.get("message_type") == "FORM_RESPONSE"]
     assert len(respuestas) == 1, "el intento que perdio la carrera no debio dejar FORM_RESPONSE"
+
+
+# ───────────── AC-H9: la tarjeta de formulario para el badge "Asesor humano" (D-030) ─────────────
+
+
+def _formulario(client, sesion, conversation_id=None):
+    conversation_id = conversation_id or sesion["conversation"]["conversation_id"]
+    return client.get(
+        f"/chat/conversations/{conversation_id}/handoff/form", headers=_auth(sesion)
+    )
+
+
+def test_el_badge_recibe_la_misma_tarjeta_que_ofrece_el_bot(client, limpiar):
+    """Anonimo: nombre, correo y telefono en el paso 1, asunto y detalle en el 2; autenticado
+    con correo en el JWT: solo asunto y detalle. Sin pasar por el bot ni por ningun modelo."""
+    anon = _sesion(client, limpiar)
+    response = _formulario(client, anon)
+    assert response.status_code == 200, response.text
+    spec = response.json()["interaction"]
+    assert spec["type"] == "HANDOFF_FORM"
+    assert [f["name"] for f in spec["fields"]] == ["name", "email", "phone", "subject", "detail"]
+    assert [f["name"] for f in spec["fields"] if f["required"]] == [
+        "name", "email", "subject", "detail"
+    ]
+
+    auth = _sesion(client, limpiar, autenticado=True)
+    spec = _formulario(client, auth).json()["interaction"]
+    assert [f["name"] for f in spec["fields"]] == ["subject", "detail"]
+
+
+def test_la_tarjeta_es_409_cuando_no_se_puede_pedir_asesor(client, limpiar):
+    anon = _sesion(client, limpiar)
+    assert _handoff(client, anon, **CONTACTO).status_code == 201
+
+    response = _formulario(client, anon)
+
+    assert response.status_code == 409, response.text
+
+
+def test_la_tarjeta_de_otro_usuario_es_403(client, limpiar):
+    uno = _sesion(client, limpiar, autenticado=True)
+    otro = _sesion(client, limpiar, autenticado=True)
+
+    response = _formulario(client, otro, uno["conversation"]["conversation_id"])
+
+    assert response.status_code == 403
