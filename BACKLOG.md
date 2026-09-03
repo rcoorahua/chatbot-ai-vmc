@@ -25,10 +25,15 @@ Estos tickets **no dependen de ninguna decisión abierta** y son el trabajo disp
 
 | Ticket | Qué es | Track |
 |---|---|---|
+
 | T-03 | Módulo de asesores completo | Dominio |
 | T-04 | Repositorio de consumo de IA (`AIUsage`) | IA |
 | T-11 | Pantalla de bandeja del asesor (sin conectar) | Frontend |
 | T-30 | Cliente de Slack | Integraciones |
+
+**T-09 hecho (01/09/2026).** D-027 revisada e implementada: anónimo 10/hora y 20/día
+(sesión + hash de IP), autenticado el doble; apagado en dev (`AI_QUOTA_* = 0`), se enciende
+por variables de entorno en stage/prod. Código en `agent/quota.py` + tabla `RateLimits`.
 
 **T-24 hecho (2026-08-28):** D-004/D-006/D-020 se cerraron y el worker quedó conectado — el bot
 responde (en local: `python -m scripts.run_ai_worker`). También T-04 (AIUsage). El siguiente
@@ -132,15 +137,17 @@ Qué incluye: crear conversación, enviar mensaje (responde 202 y encola), lista
 sondeo del frontend, y la dependencia de identidad — que jamás confía en un `user_id` del
 frontend (RNF-005).
 
-**T-07 · Handoff y tickets**
-Requerimientos: RF-022..RF-028 · Depende de: T-05, T-03, T-30
-**Bloqueado por: D-008** (taxonomía), D-016 (formato
-Slack). D-017 y D-019 quedaron cerradas el 2026-08-27: N tickets por conversación (máx. 5
-activos), cerrar un ticket no cierra la conversación, y el anónimo no deriva (RF-003 sin efecto).
-Archivos: `backend/tickets/*`
-Qué incluye: criterios de derivación, creación del ticket (tope de 5 activos por usuario), apagado
-de la IA, mensaje de espera una sola vez, encolado de la notificación a Slack, y al cerrar: mensaje
-SYSTEM `TICKET_CLOSED` en el hilo + conversación de vuelta a `BOT_ATTENDING`.
+**T-07 · Handoff y tickets** — ✅ hecho 2026-09-02 (`tests/test_tickets_api.py`,
+`tests/test_tickets_taxonomy.py`)
+Requerimientos: RF-022..RF-028, RF-031 · Depende de: T-05, T-03
+Hecho: handoff con formulario y casos (D-029), y el módulo `backend/tickets/*` completo —
+taxonomía del corpus (12 `problem_type` con categoría, prioridad y datos mínimos), sugerencia
+por reglas sin modelo, ciclo PENDING → IN_PROGRESS → CLOSED pegado a la conversación escalada,
+reclasificación del asesor y cierre con resolución. El apagado de la IA, el mensaje de espera
+una sola vez y las notas SYSTEM ya venían de F2/D-029.
+⚠️ **La taxonomía es la PROPUESTA de Aaron: D-008 sigue abierta** y la cierran Silvana + Julio;
+cerrarla es editar `backend/tickets/taxonomy.py`.
+**Pendiente:** encolar la notificación a Slack (T-30 / **D-016**).
 
 **T-08 · Endpoints del asesor** — ✅ mensajería hecha 2026-08-27 (`tests/test_advisor_api.py`)
 Requerimientos: RF-029..RF-039 · Depende de: T-07, T-03
@@ -168,6 +175,10 @@ TD-002 dejó de bloquear: el tier FAST lo atiende Gemini; Haiku es el plan B
 Archivos: `backend/agent/classifier.py`, `backend/agent/prompts.py`
 Criterio: un conjunto de mensajes de ejemplo se clasifica correctamente en FAQ, CATALOG, ADVISOR
 u OTHER, con al menos 95% de acierto (skill `prompt-governance`).
+**Golden set y guardrails (2026-08-28, D-024/D-025/D-026):** `tests/golden/intents.jsonl` (70+
+casos), `backend/agent/guardrails.py` (entrada: manipulación y datos de terceros; salida:
+cifras/enlaces fuera de la evidencia, fuga del prompt) y `scripts/eval_intents.py` (eval real
+manual, piso 95%). Pendiente: correr la eval real con `GEMINI_API_KEY` y anotar el score base.
 
 **T-21 · Redactor de respuestas** — ✅ hecho 2026-08-27 (D-004 cerrada el 28: ventana sin resumen)
 Requerimientos: RF-019, RF-020 · Depende de: T-20
@@ -180,7 +191,8 @@ Archivos: `backend/agent/rag.py`, `scripts/helpcenter_fetch.py`, `scripts/helpce
 Ingesta definida (lo que estaba bloqueado): **entra el Centro de Ayuda público de VMC**, un chunk
 por pregunta; lo cura quien revisa los `.md` que deja el fetch; se re-indexa corriendo los dos
 scripts (`--replace` para un refresco completo). Detalle en `data/helpcenter/README.md`.
-**Pendiente:** calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`).
+**Calibrado 28/08/2026:** `RAG_MIN_SCORE=0.84` (antes `0.75`, sin calibrar) contra el índice
+real — margen angosto entre preguntas on-topic y off-topic, detalle en CLAUDE.md "RAG".
 La conexión al pipeline (T-24) quedó hecha el 2026-08-28.
 
 **T-23 · Catálogo HERALD**
@@ -210,6 +222,41 @@ verifique el envío, no el texto.
 Requerimientos: RF-040..RF-043 · Depende de: T-02
 **Bloqueado por: D-015** (tamaños, compresión y modelo multimodal), D-005 (límite de peso)
 Archivos: `backend/images/*`
+
+**T-09 · Tope de ejecuciones de IA** — ✅ hecho 01/09/2026 (D-027 revisada: 10/h y 20/d anónimo, doble autenticado, off en dev)
+Requerimientos: RF-014, RNF-007, RNF-005 · Depende de: T-01, T-04 · Bloqueado por: nada
+(**D-027 ya está cerrada**, 31/08/2026 — este ticket se puede empezar hoy)
+Archivos: `infra/stacks/subastin_stack.py` **y** `scripts/local_setup.py` (tabla nueva, hay que
+tocar los dos: el esquema está duplicado a propósito), `backend/core/config.py`,
+`backend/conversations/service.py` o `backend/agent/usage.py`, `backend/api/routers/chat.py`,
+`.env.example`, tests.
+
+Por qué es prioritario: hoy el único freno para un anónimo es el de 10 mensajes/minuto de
+D-005 — que deja pasar **14 400 llamadas de IA al día** desde una sola pestaña con un script.
+Cada una cuesta dinero real de Gemini. Es el agujero de costo más grande que queda abierto.
+
+Qué incluye:
+- Tabla `RateLimits`: PK `IP#<hash>` / `USER#<id>` / `SESSION#<id>`, SK la fecha (`YYYY-MM-DD`),
+  contador con `ADD` atómico y **TTL a 48 h** (que DynamoDB lo borre solo, sin proceso aparte).
+- La IP sale de `requestContext.http.sourceIp` del evento de API Gateway HTTP API, que Mangum
+  deja en `request.scope["aws.event"]` — el mismo camino que ya usa `core/auth.py` para los
+  claims de Cognito. **No hace falta ninguna librería.** En local, `request.client.host`.
+- Se guarda **hasheada** (HMAC con un secreto): la IP es dato personal y para contar da igual.
+- Se cuenta la **ejecución de IA**, no el mensaje: los triviales y los guardrails no gastan
+  cuota porque no llaman al modelo. `agent/usage.py` ya distingue esos casos.
+- Topes de D-027: anónimo 10/día (IP y sesión, se agota la primera), autenticado 50/día por
+  `user_id`, sin tope mientras atiende un asesor. `0 = ilimitado` y así queda en dev.
+- Al agotarse: mensaje fijo del bot explicándolo (no un 500 ni silencio), y si el usuario es
+  anónimo, invitarlo a iniciar sesión — que es justo lo que sube su cuota a 50.
+
+Criterio de aceptación: un test agota la cuota de un anónimo y verifica que el mensaje 11 se
+persiste pero **no** dispara llamada a IA; otro verifica que con `0` no hay tope; otro que un
+mensaje trivial no consume cuota.
+
+**Ojo al implementarlo:** CGNAT. Claro y Movistar sacan miles de móviles por la misma IP
+pública, y una oficina entera también. El tope por IP va a golpear a usuarios legítimos que
+comparten salida — por eso D-027 cuenta *también* por sesión y por eso el autenticado va por
+`user_id` y nunca por IP.
 
 ### Frontend
 

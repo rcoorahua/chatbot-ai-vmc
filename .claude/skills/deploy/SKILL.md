@@ -8,7 +8,8 @@ description: Runbook de deploy de Subastín con CDK v2 en Python para stage y pr
 ## Precondiciones (verificar EN ORDEN; abortar y avisar si alguna falla)
 
 1. **Suite de tests en verde** (skill `testing`) — nunca desplegar con tests rojos.
-2. **Docker corriendo** — `PythonFunction` bundlea `backend/requirements.txt` dentro de Docker.
+2. **Docker corriendo** — cada Lambda bundlea su propio `backend/requirements-{api,worker-ai,
+   worker-notify}.txt` dentro de Docker (`Code.from_asset(bundling=...)`, no `PythonFunction`).
 3. **Cuenta lista** (PLAN.md §6): bootstrap hecho (`cdk bootstrap aws://<account>/<region>`),
    credenciales con `sts:AssumeRole` sobre `arn:aws:iam::*:role/cdk-*`, y `account`/`region`
    completados en `infra/config.py`. Si falta algo → checklist de PLAN.md §6 con el equipo AWS;

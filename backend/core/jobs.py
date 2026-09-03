@@ -5,10 +5,19 @@ otra. El body de SQS se trata como no confiable en el worker: se valida con este
 antes de usarlo (regla 6 de la skill security-guidance).
 """
 
+from collections import deque
+from typing import Any
+
 from pydantic import BaseModel
 
 from backend.core.aws import sqs_client
+from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
+
+# Rastro para la consola de dev (GET /dev/queues en api/routers/dev.py): los ultimos jobs
+# encolados, en memoria del proceso. Solo se alimenta con STAGE=dev — en AWS cada Lambda tiene
+# su propia memoria y ademas la ruta que lo lee responde 404 fuera de dev.
+RECENT_JOBS: deque[dict[str, Any]] = deque(maxlen=200)
 
 
 class AIJob(BaseModel):
@@ -16,6 +25,9 @@ class AIJob(BaseModel):
     message_id: str
     message_key: str
     requested_at: str
+    # HMAC de la IP del cliente (T-09/D-027) — la calcula el API, que es quien ve el request;
+    # el worker solo la usa para el contador de cuota del anonimo. Nunca la IP en claro.
+    ip_hash: str | None = None
 
 
 class QueueNotConfigured(RuntimeError):
@@ -33,8 +45,18 @@ def enqueue_ai_job(job: AIJob) -> None:
     settings = get_settings()
     if not settings.ai_jobs_queue_url:
         raise QueueNotConfigured("Falta AI_JOBS_QUEUE_URL")
+    delay = max(0, min(settings.ai_debounce_seconds, 900))  # tope de SQS: 15 min
     sqs_client().send_message(
         QueueUrl=settings.ai_jobs_queue_url,
         MessageBody=job.model_dump_json(),
-        DelaySeconds=max(0, min(settings.ai_debounce_seconds, 900)),  # tope de SQS: 15 min
+        DelaySeconds=delay,
     )
+    if settings.stage == "dev":
+        RECENT_JOBS.appendleft(
+            {
+                "queue": "ai-jobs",
+                "body": job.model_dump(),
+                "delay_seconds": delay,
+                "enqueued_at": utc_now_iso(),
+            }
+        )

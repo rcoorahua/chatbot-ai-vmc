@@ -41,6 +41,8 @@ export type HandoffReason =
 export interface Conversation {
   conversation_id: string;
   user_type: UserType;
+  /** D-029: THREAD = hilo del bot; CASE = caso abierto por el formulario de asesor. */
+  kind?: "THREAD" | "CASE";
   status: ConversationStatus;
   channel: string;
   bot_enabled: boolean;
@@ -48,6 +50,12 @@ export interface Conversation {
   user_name: string | null;
   user_email: string | null;
   user_company: string | null;
+  /** D-029: asunto del caso y contacto que dejo el anonimo en el formulario (RF-003). */
+  title?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  source_conversation_id?: string | null;
   assigned_advisor_id: string | null;
   summary: string | null;
   message_count: number;
@@ -59,6 +67,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  closed_by?: "ADVISOR" | "AUTO" | null;
 }
 
 export interface Message {

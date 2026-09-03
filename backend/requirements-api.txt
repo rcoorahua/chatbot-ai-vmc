@@ -1,0 +1,7 @@
+# Dependencias reales de la Lambda `api` (backend/api/*) — separadas de worker-ai/worker-notify
+# para no cargar cada función con lo que no usa (DETAILS.md 4.23/paso 4). Verificado por import:
+# ni api/ ni lo que importa (agent/prompts.py, agent/quota.py) tocan anthropic/google-genai/pinecone.
+fastapi
+mangum
+pydantic-settings
+boto3

@@ -125,7 +125,7 @@ de la Lambda `api` (ver `backend/api/routers/`).
 | Ruta APIGW | Auth | Router FastAPI | Superficie (qué expondrá) | RFs |
 |---|---|---|---|---|
 | `$default` (cae en `/chat/*`) | `POST /chat/sessions` verifica el JWT de VMC (D-001) y emite el token de sesión; el resto exige ese token como Bearer, atado a UNA conversación | `chat` | **Hecho:** sesión, conversación, enviar mensaje (202 + job), listar mensajes (polling con cursor). **Pendiente:** solicitar handoff, presigned URL para subir imagen | RF-001..005, 008..014, 022, 040..042 |
-| `/advisor/{proxy+}` | **JWT authorizer Cognito** (nativo de HTTP API); la Lambda lee los claims del evento (`core/auth.py`). En local, `ADVISOR_DEV_AUTH=1` imita al authorizer (`api/dev_auth.py`) | `advisor` | **Hecho:** `GET /me` (auto-alta D-021), bandeja (`GET /conversations?status=&mine=`), detalle, hilo (últimos 20, `before`/`after`, consume no leídos), `POST …/take` (atómica), `POST …/messages` (idempotente, solo el asignado — D-022), `POST …/close` (cierre mínimo — D-023). **Pendiente:** tickets (F5) | RF-006, 012, 029, 031..036, 038 |
+| `/advisor/{proxy+}` | **JWT authorizer Cognito** (nativo de HTTP API); la Lambda lee los claims del evento (`core/auth.py`). En local, `ADVISOR_DEV_AUTH=1` imita al authorizer (`api/dev_auth.py`) | `advisor` | **Hecho:** `GET /me` (auto-alta D-021), bandeja (`GET /conversations?status=&mine=`), detalle, hilo (últimos 20, `before`/`after`, consume no leídos), `POST …/take` (atómica), `POST …/messages` (idempotente, solo el asignado — D-022), `POST …/close` (cierre mínimo — D-023). **Hecho 2026-09-02 (tickets):** `GET /taxonomy` (⚠️ propuesta D-008), `GET /tickets?status=&mine=`, `GET /conversations/{id}/ticket` (lo crea si faltaba), `PATCH /tickets/{id}` (confirmar o corregir + datos mínimos), y el cierre acepta `resolution`. **Pendiente:** campos definitivos del usuario (D-010) | RF-006, 012, 023, 024, 029, 031..036, 038 |
 | `/dashboard/{proxy+}` | **JWT authorizer Cognito** | `dashboard` | Métricas operativas (D-013) | RF-047..049 |
 | `GET /health` | pública | `main` | Healthcheck | — |
 
@@ -190,6 +190,13 @@ de sistema en el hilo ("Ticket cerrado"), que es como D-003 hace visible el hist
 | `Tickets` | `ticket_id` | — | GSI1 `conversation_id`/`created_at` · GSI2 `assigned_advisor_id`/`updated_at` · GSI3 `status`/`created_at` |
 | `Advisors` | `advisor_id` | — | GSI `cognito_sub` (lookup desde el JWT) |
 | `AIUsage` | `conversation_id` | `created_at#execution_id` | GSI `billing_month`/`created_at` (costos mensuales) |
+| `RateLimits` ⚠️ **pendiente** | `IP#<hash>` / `USER#<id>` / `SESSION#<id>` | `YYYY-MM-DD` | — (solo lectura por clave completa) |
+
+⚠️ **`RateLimits` está decidida (D-027, 31/08/2026) pero NO creada.** Es el tope diario de
+ejecuciones de IA: contador con `ADD` atómico y **TTL a 48 h**, para que DynamoDB limpie solo y
+no haga falta ningún proceso de purga. No lleva GSI porque siempre se lee por clave completa
+(actor + día). Ver T-09 en BACKLOG.md; al crearla hay que tocar **infra y `local_setup.py`**,
+que son espejo.
 
 ### Revisión del modelo contra el spec — veredicto
 
@@ -230,6 +237,13 @@ del modelo. Ajustes detectados (agregar al modelo antes de crear tablas):
     `conversations/service.py`: hace atómica la regla "máximo 1" (D-002) con una creación
     condicional, sin consultar GSI1 antes de crear (dos pestañas a la vez no crean dos). GSI1
     sigue sirviendo para el historial que ve el asesor (RF-012).
+11. **D-029 (2026-09-02): hilo + casos sin GSI nuevos** — `Conversations` gana `kind`
+    (`THREAD`/`CASE`), `title`, `contact_name/email/phone`, `source_conversation_id` y
+    `closed_by`; GSI1 (`user_id`/`updated_at`) lista el hilo y los casos del usuario y, con
+    filtro, cuenta los casos abiertos para el tope. `Messages` gana el tipo `FORM_RESPONSE`
+    (resumen legible en `content`, valores y transcripción del hilo en `metadata`). La
+    conversación anónima y sus mensajes llevan `expires_at` (TTL, `ANONYMOUS_CONVERSATION_TTL_DAYS`).
+    El caso se crea con sus tres primeros mensajes en una sola `TransactWriteItems`.
 
 ---
 
@@ -416,7 +430,7 @@ chatbot-ai-vmc/
 ├── .claude/                    # skills (spec-driven, testing, commit, deploy, llm-cost-optimizer,
 │                               #   rag-architect, prompt-governance, ci-cd, docker-dev,
 │                               #   security-guidance, skill-auditor, write-a-skill) + hook de seguridad
-├── pyproject.toml              # entorno local de dev (sync manual con backend/requirements.txt)
+├── pyproject.toml              # entorno local de dev (sync manual con backend/requirements-*.txt)
 ├── REQUERIMENTS.md             # spec del MVP en el repo (RF/RNF/RB/AC/D + modelo DynamoDB v1.0)
 ├── PLAN.md                     # este documento
 ├── CLAUDE.md                   # registro de decisiones (leer SIEMPRE antes de implementar)
@@ -439,10 +453,10 @@ Cada fase deja algo verificable. Los bloqueos por decisión se marcan.
 |---|---|---|
 | **F0** | Solicitudes al equipo AWS (§6), bootstrap, `cdk deploy` del esqueleto con `GET /health` en stage | §6 |
 | **F1** | **Hecha 2026-08-27.** Dominio conversaciones/mensajes + chat público con polling (sin IA): sesión con identidad VMC, conversación única por usuario, enviar/listar mensajes, idempotencia, largo máximo configurable, widget embebible con página de prueba | Quedó provisional: D-005 (rate limit y límites por conversación), D-018 (sesión anónima 24 h) |
-| **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con `gemini-3.7-flash`, handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
-| **F3** | RAG: ingesta y recuperación hechas 2026-08-27; **conectado al pipeline 2026-08-28**. Falta solo calibrar `RAG_MIN_SCORE` con scores reales (`helpcenter_upload --verify`) | — |
+| **F2** | **Hecha 2026-08-28.** Pipeline IA completo en `workers/ai_worker.py`: debounce por DelaySeconds (D-020), triviales fijos (D-006), clasificación reglas→Gemini flash-lite (TD-008: Gemini también orquesta), RAG + redacción con el tier ANSWER de `core/llm.py` (2026-09-01: `gemini-3.6-flash`, respaldo `3.5-flash`), handoff mínimo (RF-022/025/026/027) y registro `AIUsage`. En local: `python -m scripts.run_ai_worker` | Slack espera D-016; ticket espera F5 |
+| **F3** | RAG: ingesta y recuperación hechas 2026-08-27; **conectado al pipeline 2026-08-28**. `RAG_MIN_SCORE` calibrado el mismo día en `0.84` (CLAUDE.md "RAG") | — |
 | **F4** | Catálogo HERALD | **D-011**, D-012 |
-| **F5** | Handoff completo: tickets (máx. 5 activos por usuario; solo autenticados — RF-003 sin efecto por D-002), Slack, Cognito desplegado. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería (bandeja, toma atómica, hilo, responder, cierre mínimo sin ticket — D-021/D-022/D-023) y módulo `advisors` | **D-008**, D-016, **D-010** (D-001/D-017/D-019/D-021/D-022 cerradas; D-023 provisional) |
+| **F5** | Handoff completo. **Adelantado 2026-08-27:** rutas `/advisor` de mensajería y módulo `advisors`. **2026-09-02:** handoff con formulario y casos (D-029) + **módulo `tickets` con la taxonomía del corpus como propuesta** (12 `problem_type`, categoría, prioridad, datos mínimos, reclasificación del asesor y cierre con resolución). **Pendiente:** Slack (D-016), campos de usuario (D-010) y el cierre formal de **D-008** por Silvana + Julio | D-016, **D-010**, **D-008** (abierta, con propuesta implementada) |
 | **F6** | Imágenes: presigned URLs, render en chat/asesor, interpretación IA | D-015 |
 | **F7** | Dashboard + hardening: métricas, retención/TTL, auditoría QA, escenarios AC-001..009 end-to-end | D-013, D-014 |
 
@@ -459,11 +473,27 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   Lado asesor (mismo día): D-021 (auto-alta al primer login), D-022 (responde solo quien tomó
   la conversación; sin ticket), D-023 (cierre mínimo sin ticket, provisional hasta F5).
 - **De negocio cerradas (2026-08-28, Aaron):** D-004 (sin resumen: ventana de 20 mensajes de la
-  última hora), D-005 (guardrails: 2000 caracteres, 10 mensajes/min, imágenes 5 MB / 3 por
-  mensaje / 20 por hora, sin tope acumulativo), D-006 (triviales fijos sin llamada IA) y D-020
+  última hora), D-005 (guardrails: 500 caracteres por mensaje —revisado el 31/08, antes 2000—,
+  10 mensajes/min, imágenes 5 MB / 3 por mensaje / 20 por hora, sin tope acumulativo), D-006
+  (triviales fijos sin llamada IA) y D-020
   (debounce de 6 s vía DelaySeconds de SQS) y D-007 (cerrada el mismo día, opción simple: la IA
   no se re-enciende sola; apagada hasta que un asesor tome y cierre el caso, sin expiración).
+  Seguridad y tono del bot, mismo día: D-024 (guardrails: manipulación → fijo amable sin IA;
+  datos de terceros → fijo de privacidad; verificación de la respuesta contra la evidencia en
+  `agent/guardrails.py`), D-025 (un emoji máximo, sin markdown ni guiones largos) y D-026
+  (golden set en `tests/golden/`, eval real manual con `scripts/eval_intents.py`, piso 95%).
   Detalle en [CLAUDE.md](CLAUDE.md).
+- **De negocio cerrada (2026-09-02, Aaron): D-029 — casos y handoff con formulario.** Revisa
+  D-002/D-003/D-017/D-019/D-023 tras estudiar Intercom y Zendesk (varias conversaciones por
+  persona; el ticket es la conversación escalada). Autenticado: un hilo permanente con el bot
+  (`kind=THREAD`) y hasta 5 casos abiertos (`kind=CASE`) que nacen del formulario de asesor
+  (asunto + detalle); el hilo sigue con el bot encendido. Anónimo: una conversación por sesión,
+  puede pedir asesor dejando nombre y correo (teléfono opcional; RF-003 vuelve a aplicar), se
+  deriva en el sitio, con TTL y tope de handoffs por IP. Pedir asesor o "FAQ sin evidencia"
+  ya no derivan solos: el bot ofrece la tarjeta (`HANDOFF_FORM`, mecanismo de D-028) y deriva
+  `POST /chat/conversations/{id}/handoff`. Un caso o la anónima cerrados quedan `CLOSED` y de
+  solo lectura; el hilo del autenticado vuelve al bot (D-023). Sin GSI nuevos. Detalle y
+  código en [CLAUDE.md](CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-008** (taxonomía tickets), **D-010** (campos de usuario),

@@ -18,11 +18,31 @@ class ConversationStatus(StrEnum):
     BOT_ATTENDING = "BOT_ATTENDING"
     PENDING_ADVISOR = "PENDING_ADVISOR"
     IN_ATTENTION = "IN_ATTENTION"
-    # Con D-003 cerrada (una sola conversacion por usuario autenticado; lo que se cierra son
-    # los tickets) este estado queda para la conversacion anonima al expirar su sesion y para
-    # compatibilidad con RF-009. La conversacion autenticada vuelve a BOT_ATTENDING al cerrarse
-    # el ticket, con un mensaje SYSTEM `TICKET_CLOSED` en el hilo.
+    # D-029 (2026-09-02): CLOSED es el estado final de un CASO (autenticado) y de la
+    # conversacion anonima cuando el asesor la cierra. Una conversacion cerrada es de solo
+    # lectura: el widget ofrece volver al hilo del bot (autenticado) o abrir una sesion nueva
+    # (anonimo). El hilo permanente del autenticado (kind=THREAD) nunca pasa a CLOSED: si un
+    # asesor lo tomo (D-022) y lo cierra, vuelve a BOT_ATTENDING con la nota `TICKET_CLOSED`.
     CLOSED = "CLOSED"
+
+
+class ConversationKind(StrEnum):
+    """Que es esta conversacion dentro del modelo de D-029.
+
+    THREAD  el hilo donde atiende el bot. Permanente para el autenticado (id determinista,
+            D-003) y unico por sesion para el anonimo (D-002/D-018).
+    CASE    un caso para asesor, creado por el formulario de handoff de un usuario
+            autenticado. Nace PENDING_ADVISOR con el bot apagado y termina CLOSED. El anonimo
+            no crea casos: su unica conversacion se deriva en el sitio (RF-003 con correo).
+    """
+
+    THREAD = "THREAD"
+    CASE = "CASE"
+
+
+class ClosedBy(StrEnum):
+    ADVISOR = "ADVISOR"
+    AUTO = "AUTO"
 
 
 class UserType(StrEnum):
@@ -41,6 +61,10 @@ class MessageType(StrEnum):
     TEXT = "TEXT"
     IMAGE = "IMAGE"
     SYSTEM = "SYSTEM"
+    # D-029: lo que el usuario contesto en el formulario de handoff. `content` lleva el resumen
+    # legible (asunto y detalle) para que cualquier cliente lo muestre como texto; los valores
+    # estructurados y la transcripcion del hilo de origen van en `metadata`.
+    FORM_RESPONSE = "FORM_RESPONSE"
 
 
 class MessageStatus(StrEnum):
@@ -73,6 +97,9 @@ class SystemEvent(StrEnum):
     BOT_DISABLED = "BOT_DISABLED"
     BOT_ENABLED = "BOT_ENABLED"
     CONVERSATION_CLOSED = "CONVERSATION_CLOSED"
+    # D-029: en el caso, su primer mensaje (metadata: de que hilo salio); en el hilo de origen,
+    # la nota que enlaza al caso (metadata: case_id y titulo).
+    CASE_OPENED = "CASE_OPENED"
 
 
 # Alias historico: el modelo base vive en core/dynamo_model.py.
@@ -82,6 +109,8 @@ _DynamoModel = DynamoModel
 class Conversation(_DynamoModel):
     conversation_id: str
     user_type: UserType
+    # D-029. El default THREAD mantiene validas las filas anteriores a la decision.
+    kind: ConversationKind = ConversationKind.THREAD
     status: ConversationStatus = ConversationStatus.BOT_ATTENDING
     channel: str = "WEB"
     bot_enabled: bool = True
@@ -90,8 +119,30 @@ class Conversation(_DynamoModel):
     user_email: str | None = None
     user_company: str | None = None
     assigned_advisor_id: str | None = None
+    # D-029: asunto del caso (lo escribe el usuario en el formulario) y, para el anonimo, el
+    # contacto que dejo para que el asesor pueda buscarlo fuera del chat (RF-003). Datos
+    # personales: nunca van a logs (core/observability.py) y solo los ve el asesor.
+    title: str | None = None
+    contact_name: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    # Hilo del que salio el caso (autenticado). El asesor lo tiene como contexto ademas de la
+    # transcripcion que viaja en el FORM_RESPONSE.
+    source_conversation_id: str | None = None
+    closed_by: ClosedBy | None = None
     summary: str | None = None
     summary_updated_at: str | None = None
+    # Flujo guiado activo (D-028, MAPEO.md): la posicion del usuario en un proceso multi-paso
+    # ("quiero participar" → esperando el tipo de oferta). APARTE del contexto de mensajes
+    # (D-004, efimero): esto es duradero, con vencimiento propio, y se limpia por eventos
+    # (paso resuelto, handoff, guardrail, expiracion). `flow_version` hace atomicas las
+    # transiciones e invalida los botones de versiones viejas — la conversacion es permanente
+    # (D-003) y un quick reply de hace dias no debe mover el flujo de hoy.
+    active_flow: str | None = None
+    flow_step: str | None = None
+    flow_slots: dict[str, Any] | None = None
+    flow_version: int = 0
+    flow_expires_at: str | None = None
     message_count: int = 0
     unread_count: int = 0
     wait_message_sent: bool = False

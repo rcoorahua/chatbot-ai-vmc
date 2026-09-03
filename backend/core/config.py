@@ -1,15 +1,19 @@
 """Settings con pydantic-settings, leidos de variables de entorno.
 
 En dev los inyecta `.env` (endpoints locales de docker-compose); en AWS los inyecta CDK
-(`common_env` en infra/stacks/subastin_stack.py) con los MISMOS nombres. Los dos secretos que
-aparecen aqui (`VMC_IDENTITY_SECRET`, `SESSION_SIGNING_KEY`) solo llegan por variable de entorno
-en dev; en stage/prod se leen de Secrets Manager en runtime (PLAN.md §3) — TODO al desplegar.
+(`common_env` en infra/stacks/subastin_stack.py) con los MISMOS nombres. Los secretos reales
+(`VMC_IDENTITY_SECRET`, `SESSION_SIGNING_KEY`, `GEMINI_API_KEY`, `PINECONE_API_KEY`) solo llegan
+por variable de entorno en dev; en stage/prod cada Lambda recibe el ARN de SOLO los que consume
+(`IDENTITY_SECRET_ARN` la api, `AI_SECRET_ARN` el worker de IA — infra/stacks/subastin_stack.py)
+y `get_settings()` los resuelve de Secrets Manager ANTES de construir `Settings` (DETAILS.md §4.2).
 
 Principio del spec (REQUERIMENTS.md §1.1 / RNF-007): limites, TTL y politicas son configuracion,
 nunca constantes en la logica. Donde la decision de negocio sigue abierta el valor por defecto es
 PROVISIONAL y lleva su D-xxx al lado: cambiarlo es editar una variable, no cazar literales.
 """
 
+import json
+import os
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -34,6 +38,7 @@ class Settings(BaseSettings):
     table_tickets: str = "subastin-dev-tickets"
     table_advisors: str = "subastin-dev-advisors"
     table_ai_usage: str = "subastin-dev-ai-usage"
+    table_rate_limits: str = "subastin-dev-rate-limits"
     images_bucket: str | None = None
     ai_jobs_queue_url: str | None = None
     notifications_queue_url: str | None = None
@@ -63,6 +68,14 @@ class Settings(BaseSettings):
     advisor_thread_page_size: int = 20
     inbox_page_size: int = 50
 
+    # ── Proveedores de IA (TD-008) ───────────────────────────────────────────────────────────
+    # SOLO en dev llegan por `.env`; en stage/prod se resuelven desde Secrets Manager antes de
+    # construir Settings. `core/llm.py` las lee de aqui (no de `os.environ`): pydantic carga
+    # `.env` en Settings pero no lo exporta al proceso, asi que leer el entorno directo dejaba
+    # la key de `.env` invisible y el bot caia al fallback sin avisar.
+    gemini_api_key: str | None = None
+    anthropic_api_key: str | None = None
+
     # ── RAG en Pinecone (RF-017/018/019) ────────────────────────────────────────────────────
     # Mismos nombres de variable que usaba el proyecto de referencia, para que una credencial
     # ya existente sirva sin renombrar nada.
@@ -79,7 +92,7 @@ class Settings(BaseSettings):
     # OJO: hay que calibrarlo con datos reales. `python -m scripts.helpcenter_upload --verify`
     # imprime los scores de una consulta de prueba; el valor por defecto asume el rango tipico
     # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
-    rag_min_score: float = 0.75
+    rag_min_score: float = 0.84
 
     # ── Pipeline IA (D-006 y D-020 cerradas 2026-08-28) ─────────────────────────────────────
     # D-020: cada mensaje encola su job con este retraso (DelaySeconds de SQS). Al procesarlo,
@@ -103,7 +116,7 @@ class Settings(BaseSettings):
 
     # ── Limites contra abuso (RF-014 / RNF-007, D-005 cerrada 2026-08-28) ───────────────────
     # Un mensaje sin tope se convertiria en un item DynamoDB de 400 KB y en un prompt caro.
-    max_message_chars: int = 2000
+    max_message_chars: int = 500
     messages_page_size: int = 50
     # Rate limit por conversacion (que con D-002 es por usuario): ritmo humano incluso
     # escribiendo rapido y en frases partidas. Pasarse devuelve 429, no pierde el mensaje.
@@ -112,6 +125,37 @@ class Settings(BaseSettings):
     # del autenticado no se cierra nunca, asi que un tope duro la dejaria inservible de por vida
     # y habria que intervenir a mano. El crecimiento lo controlan el rate limit y la retencion
     # (D-014), no un contador que solo sube.
+
+    # ── Tope de ejecuciones de IA por actor (T-09 / D-027, revisada 2026-09-01) ─────────────
+    # Complementa al rate limit de arriba: aquel es por minuto y por conversacion; esto frena
+    # el costo ACUMULADO de un mismo actor. Cuenta mensajes que llamaron a un modelo (los
+    # triviales, guardrails, reglas y ofrecer botones de flujo no gastan porque no cuestan).
+    # 0 = sin tope, y ASI QUEDA EN DEV (decision de Aaron 2026-09-01: apagado por ahora).
+    # Valores decididos para prod: anonimo 10/hora y 20/dia (por sesion Y por hash de IP, se
+    # agota la primera); autenticado el doble (20/hora y 40/dia) por user_id. Al agotarse:
+    # respuesta fija que orienta a crear cuenta (anonimo) o pedir asesor (autenticado) — pedir
+    # asesor sale por reglas, sin modelo, asi que funciona incluso sin cuota.
+    ai_quota_anon_per_hour: int = 0
+    ai_quota_anon_per_day: int = 0
+    ai_quota_auth_per_hour: int = 0
+    ai_quota_auth_per_day: int = 0
+    # Sal del HMAC con el que se hashea la IP (dato personal, jamas en claro). Vacio = se usa
+    # session_signing_key; rotarla reinicia contadores, aceptable con ventanas de horas.
+    ip_hash_secret: str | None = None
+
+    # ── Casos y handoff con formulario (D-029, cerrada 2026-09-02) ──────────────────────────
+    # Autenticado: un hilo permanente con el bot y hasta N casos abiertos (PENDING_ADVISOR o
+    # IN_ATTENTION) a la vez. Al llegar al tope, el formulario responde 409 y el widget invita
+    # a seguir en un caso abierto. 0 = sin tope.
+    max_open_cases_per_user: int = 5
+    # Anonimo: cuantos handoffs por dia acepta una misma IP (hasheada). Frena al que abre
+    # pestañas para inundar la bandeja con correos falsos. 0 = sin tope, y asi queda en dev
+    # (misma politica que AI_QUOTA_*); en stage/prod se enciende por variable de entorno.
+    anon_handoffs_per_ip_per_day: int = 0
+    # La conversacion anonima (y sus mensajes) caduca sola por TTL de DynamoDB: sin cuenta no
+    # hay forma de volver a ella, asi que conservarla mas alla de un margen operativo solo
+    # acumula chats muertos. 0 = sin TTL. El valor definitivo de retencion lo fija D-014.
+    anonymous_conversation_ttl_days: int = 30
 
     # ── Imagenes (RF-040..042, valores de D-005; se aplican en F6) ──────────────────────────
     # Mismo criterio que arriba: todos los topes se renuevan (por imagen, por mensaje, por
@@ -124,6 +168,40 @@ class Settings(BaseSettings):
     # Origenes que pueden llamar a la API desde el navegador. "*" solo en dev: en stage/prod
     # va el dominio de VMC donde vive el widget.
     cors_allowed_origins: str = "*"
+
+    # ── Observabilidad (RNF-006; politica de Aaron 2026-08-28) ──────────────────────────────
+    # dev y stage detallados, prod sobrio. `None` = "decidir por stage" (ver las propiedades
+    # `effective_*`): asi un `.env` copiado de la plantilla no fija nada y prod no hereda el
+    # nivel de dev por accidente. En AWS los inyecta el stack por stage.
+    log_level: str | None = None  # DEBUG | INFO | WARNING | ERROR
+    log_content: bool | None = None  # vista previa del texto de los mensajes en los logs
+    log_format: str | None = None  # json | text
+    # Rutas /dev/* (consola de widget/test.html). Solo metricas de la conversacion propia.
+    dev_observability: bool | None = None
+
+    @property
+    def effective_log_level(self) -> str:
+        if self.log_level:
+            return self.log_level.upper()
+        return "INFO" if self.stage == "prod" else "DEBUG"
+
+    @property
+    def effective_log_content(self) -> bool:
+        return self.log_content if self.log_content is not None else self.stage != "prod"
+
+    @property
+    def effective_log_format(self) -> str:
+        if self.log_format:
+            return self.log_format.lower()
+        import os
+
+        return "json" if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") else "text"
+
+    @property
+    def dev_observability_enabled(self) -> bool:
+        if self.dev_observability is not None:
+            return self.dev_observability
+        return self.stage != "prod"
 
     @field_validator("*", mode="before")
     @classmethod
@@ -154,9 +232,39 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
+# ARN de cada secreto -> variables de entorno que trae su JSON (ver infra/stacks/subastin_stack.py:
+# cada Lambda solo recibe el ARN de los secretos que consume).
+_SECRET_ARN_ENV_VARS = ("IDENTITY_SECRET_ARN", "AI_SECRET_ARN")
+
+
+def _fetch_secret_json(arn: str) -> dict[str, str]:
+    # Import perezoso: en dev estas variables de entorno nunca existen, asi que esta funcion
+    # jamas corre ahi y config.py no gana una dependencia dura de boto3 (evita ademas el ciclo
+    # de import con core/aws.py, que ya importa get_settings).
+    import boto3
+
+    client = boto3.client("secretsmanager")
+    body = client.get_secret_value(SecretId=arn)["SecretString"]
+    return json.loads(body)
+
+
+def _resolve_secrets_into_env() -> None:
+    """Secrets Manager en runtime (PLAN.md §3, DETAILS.md §4.2): si el ARN de un secreto esta en
+    el entorno (solo pasa en AWS), lo resuelve y vuelca sus claves como variables de entorno —
+    las MISMAS que `Settings` ya lee. Un fallo aqui (permiso, ARN, red) se propaga tal cual: se
+    quiere un error operativo claro en el cold start, no una Lambda respondiendo a medias."""
+    for arn_var in _SECRET_ARN_ENV_VARS:
+        arn = os.environ.get(arn_var)
+        if not arn:
+            continue
+        for key, value in _fetch_secret_json(arn).items():
+            os.environ[key] = value
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Settings memorizados por proceso (se reusan entre invocaciones de la Lambda tibia)."""
+    _resolve_secrets_into_env()
     return Settings()
 
 

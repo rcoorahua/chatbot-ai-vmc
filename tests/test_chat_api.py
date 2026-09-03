@@ -102,6 +102,25 @@ def test_sesion_anonima_abre_sin_datos(client, limpiar):
     assert sesion["token"]
 
 
+def test_la_sesion_informa_el_limite_de_caracteres(client, limpiar, monkeypatch):
+    """El widget corta en el limite REAL del servidor (D-005), no en uno copiado.
+
+    Si el numero viviera en `widget/subastin.js`, subir `MAX_MESSAGE_CHARS` en `.env` dejaria
+    al widget cortando en el valor viejo sin que nada avisara: el usuario no podria escribir lo
+    que el servidor si acepta. Por eso viaja en la sesion.
+    """
+    sesion = _sesion(client, limpiar)
+    assert sesion["limits"]["max_message_chars"] == get_settings().max_message_chars
+
+    monkeypatch.setenv("MAX_MESSAGE_CHARS", "500")
+    reset_settings()
+    try:
+        assert _sesion(client, limpiar)["limits"]["max_message_chars"] == 500
+    finally:
+        monkeypatch.delenv("MAX_MESSAGE_CHARS", raising=False)
+        reset_settings()
+
+
 def test_dos_sesiones_anonimas_no_comparten_conversacion(client, limpiar):
     una = _sesion(client, limpiar)
     otra = _sesion(client, limpiar)
@@ -152,6 +171,21 @@ def test_sin_secreto_de_vmc_configurado_responde_503(client, monkeypatch):
         reset_settings()
 
     assert response.status_code == 503
+
+
+def test_sin_session_signing_key_responde_503_y_no_crea_conversacion(client, monkeypatch, tablas):
+    # DETAILS.md §4.2: el chequeo debe correr ANTES de abrir la conversacion (tambien la del
+    # anonimo, que no manda user_jwt) — si no, cada intento sin la clave deja una fila huerfana.
+    antes = tablas["conversations"].scan()["Count"]
+    monkeypatch.setenv("SESSION_SIGNING_KEY", "")
+    reset_settings()
+    try:
+        response = client.post("/chat/sessions", json={})
+    finally:
+        reset_settings()
+
+    assert response.status_code == 503
+    assert tablas["conversations"].scan()["Count"] == antes
 
 
 # ───────────────────────────── AC-P4: cada sesion, su conversacion ─────────────────────────────

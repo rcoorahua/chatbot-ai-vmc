@@ -36,11 +36,75 @@ from aws_cdk import (
     aws_s3 as s3,
 )
 from aws_cdk import (
+    aws_secretsmanager as secretsmanager,
+)
+from aws_cdk import (
     aws_sqs as sqs,
 )
-from aws_cdk.aws_lambda_python_alpha import PythonFunction  # bundling requiere Docker corriendo
 from config import StageConfig
 from constructs import Construct
+
+# Directorio real que contiene el paquete `backend/` (repo root) — NO `backend/` en sí. Los
+# imports son absolutos (`backend.api.main`, `backend.workers.ai_worker`, backend/__init__.py):
+# si el asset apuntara a `backend/` como raíz, el ZIP quedaría con `api/`, `core/`, etc. sueltos
+# y sin el paquete `backend` que el propio código importa (el bug real: ModuleNotFoundError:
+# backend en cold start — cdk synth no lo detecta porque nunca importa el handler).
+# cdk.json corre "python app.py" con cwd=infra/ (mismo motivo por el que el `entry` viejo era
+# "../backend" y no "backend"): un solo ".." sube de infra/ a la raíz del repo.
+_REPO_ROOT = ".."
+
+
+def _lambda_code(requirements_file: str) -> lambda_.Code:
+    """Bundlea SOLO `backend/` (no todo el repo) con SOLO las deps de esa función — reemplaza
+    `PythonFunction` (que exige un único requirements.txt compartido en `entry`) por
+    `Code.from_asset` con un `command` explícito: instala ese requirements.txt puntual y copia
+    `backend/` tal cual, conservándolo como paquete real dentro del asset."""
+    return lambda_.Code.from_asset(
+        _REPO_ROOT,
+        exclude=[
+            "frontend", "widget", "infra", "tests", "scripts", "docs",
+            ".git", ".github", "node_modules", "**/__pycache__", "**/.venv", "*.md",
+        ],
+        bundling=cdk.BundlingOptions(
+            image=lambda_.Runtime.PYTHON_3_12.bundling_image,
+            command=[
+                "bash",
+                "-c",
+                f"pip install -r backend/{requirements_file} -t /asset-output "
+                "&& cp -r backend /asset-output/backend",
+            ],
+        ),
+    )
+
+
+# Limites de negocio identicos en TODOS los stages (a diferencia de CORS_ALLOWED_ORIGINS o
+# LOG_LEVEL, que si varian por StageConfig). Modulo-level y sin objetos CDK a proposito: se
+# importa desde infra/tests/test_business_env.py sin bundlear nada ni levantar Docker, y es lo
+# que detecta un valor que se desvia del decidido (paso DETAILS.md §4 / Paso 4: "500 vs 2000").
+# Guardrails y ventana de contexto (RNF-007: configuracion, no constantes) — D-004/D-005.
+# Cuotas de IA (D-027) y limites de casos/handoff/imagenes (D-029, RF-040..042).
+BUSINESS_ENV = {
+    "AI_DEBOUNCE_SECONDS": "6",
+    "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
+    "AI_ANSWER_MAX_TOKENS": "600",
+    "AI_CONTEXT_MESSAGES": "20",
+    "AI_CONTEXT_WINDOW_MINUTES": "60",
+    "MAX_MESSAGE_CHARS": "500",
+    "MAX_MESSAGES_PER_MINUTE": "10",
+    # En dev (core/config.py) el tope de IA va en 0 (D-027, apagado a proposito); aqui van los
+    # numeros de negocio para que se enciendan en stage y prod.
+    "AI_QUOTA_ANON_PER_HOUR": "10",
+    "AI_QUOTA_ANON_PER_DAY": "20",
+    "AI_QUOTA_AUTH_PER_HOUR": "20",
+    "AI_QUOTA_AUTH_PER_DAY": "40",
+    "MAX_OPEN_CASES_PER_USER": "5",
+    "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
+    "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
+    "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
+    "MAX_IMAGES_PER_MESSAGE": "3",
+    "MAX_IMAGES_PER_HOUR": "20",
+    "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
+}
 
 
 class SubastinStack(Stack):
@@ -166,6 +230,23 @@ class SubastinStack(Stack):
             sort_key=dynamodb.Attribute(name="created_at", type=dynamodb.AttributeType.STRING),
         )
 
+        # T-09 / D-027 (revisada 2026-09-01): contadores del tope de ejecuciones de IA por
+        # actor. PK = quien (`USER#<id>` / `SESSION#<conversation_id>` / `IP#<hash>`), SK = la
+        # ventana (`H#...` por hora, `D#...` por dia). TTL a 48 h: DynamoDB borra los
+        # contadores vencidos solo, sin proceso de limpieza. ESPEJO en scripts/local_setup.py.
+        rate_limits = dynamodb.Table(
+            self,
+            "RateLimits",
+            table_name=f"{prefix}-rate-limits",
+            partition_key=dynamodb.Attribute(
+                name="limit_key", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(name="window", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="expires_at",
+            removal_policy=removal,
+        )
+
         # ─────────────────────────────── S3 — imagenes (RF-042) ───────────────────────────────
         images_bucket = s3.Bucket(
             self,
@@ -209,72 +290,87 @@ class SubastinStack(Stack):
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=notifications_dlq),
         )
 
+        # ─────────────────── Secretos (Secrets Manager, PLAN.md §3 / DETAILS.md §4.2) ───────────
+        # CDK solo crea el "cascaron" del secreto (valor placeholder autogenerado) y el permiso de
+        # lectura — NUNCA el valor real en el codigo o en la plantilla de CloudFormation. Despues
+        # del primer deploy, alguien con acceso carga el valor real a mano:
+        #   aws secretsmanager put-secret-value --secret-id <arn> --secret-string '{"...": "..."}'
+        # VMC_IDENTITY_SECRET es un secreto COMPARTIDO con VMC (coordinado fuera de este repo);
+        # GEMINI_API_KEY/PINECONE_API_KEY son credenciales de terceros. Ninguno de los dos se
+        # puede autogenerar. Cada Lambda recibe el ARN de SOLO lo que consume (core/config.py
+        # los resuelve en runtime): la api necesita identidad, el worker de IA necesita RAG/LLM.
+        identity_secret = secretsmanager.Secret(
+            self,
+            "IdentitySecret",
+            secret_name=f"{prefix}-identity",
+            description="VMC_IDENTITY_SECRET + SESSION_SIGNING_KEY (D-001) - completar a mano",
+        )
+        ai_secret = secretsmanager.Secret(
+            self,
+            "AiSecret",
+            secret_name=f"{prefix}-ai",
+            description="GEMINI_API_KEY + PINECONE_API_KEY (TD-008/RF-017) - completar a mano",
+        )
+
         # ──────────────────────────────────── Lambdas (T2/T3) ───────────────────────────────────
-        # PythonFunction bundlea backend/requirements.txt dentro de Docker (TD-005 si crece >250MB).
+        # _lambda_code() bundlea backend/requirements-{api,worker-ai,worker-notify}.txt (uno por
+        # funcion) dentro de Docker (TD-005 si alguna crece >250MB).
         common_env = {
             "STAGE": cfg.stage,
+            # Observabilidad por stage (RNF-006): el formato es JSON dentro de Lambda por
+            # defecto (core/observability.py lo detecta), asi que aqui solo va nivel y politica.
+            "LOG_LEVEL": cfg.log_level,
+            "LOG_CONTENT": "1" if cfg.log_content else "0",
+            "DEV_OBSERVABILITY": "1" if cfg.dev_observability else "0",
             "TABLE_CONVERSATIONS": conversations.table_name,
             "TABLE_MESSAGES": messages.table_name,
             "TABLE_TICKETS": tickets.table_name,
             "TABLE_ADVISORS": advisors.table_name,
             "TABLE_AI_USAGE": ai_usage.table_name,
+            "TABLE_RATE_LIMITS": rate_limits.table_name,
             "IMAGES_BUCKET": images_bucket.bucket_name,
             "CORS_ALLOWED_ORIGINS": cfg.cors_allowed_origins,
-            # Guardrails y ventana de contexto (RNF-007: configuracion, no constantes). Van
-            # explicitos aunque coincidan con los defaults de core/config.py para poder ajustarlos
-            # en la consola de Lambda durante un incidente, sin desplegar codigo.
-            # Valores de D-004 y D-005, cerradas el 2026-08-28.
-            "AI_DEBOUNCE_SECONDS": "6",
-            "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
-            "AI_ANSWER_MAX_TOKENS": "600",
-            "AI_CONTEXT_MESSAGES": "20",
-            "AI_CONTEXT_WINDOW_MINUTES": "60",
-            "MAX_MESSAGE_CHARS": "2000",
-            "MAX_MESSAGES_PER_MINUTE": "10",
-            "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
-            "MAX_IMAGES_PER_MESSAGE": "3",
-            "MAX_IMAGES_PER_HOUR": "20",
-            "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
-            # Secretos (Anthropic/Gemini/Pinecone/Slack/HERALD/VMC): leer de Secrets Manager por
-            # ARN en runtime, NUNCA como variables de entorno en claro (PLAN.md §3). Incluye los
-            # dos de identidad del chat (D-001): VMC_IDENTITY_SECRET (compartido con VMC) y
-            # SESSION_SIGNING_KEY (propio). Hoy backend/core/config.py los lee del entorno; al
-            # desplegar hay que resolverlos desde el secreto antes de construir Settings.
+            **BUSINESS_ENV,
         }
 
-        api_fn = PythonFunction(
+        api_fn = lambda_.Function(
             self,
             "ApiFn",
-            entry="../backend",
-            index="api/main.py",
-            handler="handler",
+            code=_lambda_code("requirements-api.txt"),
+            handler="backend.api.main.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=cfg.api_memory_mb,
             timeout=Duration.seconds(15),  # la API no llama a la IA (T8)
-            environment={**common_env, "AI_JOBS_QUEUE_URL": ai_jobs.queue_url},
+            environment={
+                **common_env,
+                "AI_JOBS_QUEUE_URL": ai_jobs.queue_url,
+                "IDENTITY_SECRET_ARN": identity_secret.secret_arn,
+            },
         )
 
-        worker_ai_fn = PythonFunction(
+        worker_ai_fn = lambda_.Function(
             self,
             "WorkerAiFn",
-            entry="../backend",
-            index="workers/ai_worker.py",
-            handler="handler",
+            code=_lambda_code("requirements-worker-ai.txt"),
+            handler="backend.workers.ai_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=1024,
             timeout=Duration.seconds(cfg.worker_ai_timeout_s),
-            environment={**common_env, "NOTIFICATIONS_QUEUE_URL": notifications.queue_url},
+            environment={
+                **common_env,
+                "NOTIFICATIONS_QUEUE_URL": notifications.queue_url,
+                "AI_SECRET_ARN": ai_secret.secret_arn,
+            },
         )
         worker_ai_fn.add_event_source(
             event_sources.SqsEventSource(ai_jobs, batch_size=5, report_batch_item_failures=True)
         )
 
-        worker_notify_fn = PythonFunction(
+        worker_notify_fn = lambda_.Function(
             self,
             "WorkerNotifyFn",
-            entry="../backend",
-            index="workers/notify_worker.py",
-            handler="handler",
+            code=_lambda_code("requirements-worker-notify.txt"),
+            handler="backend.workers.notify_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(30),
         )
@@ -288,22 +384,35 @@ class SubastinStack(Stack):
         # inactividad o la expiracion de sesion anonima lo exigen. No crear hasta cerrarlas.
 
         # Permisos via grants (T4: cero JSON de IAM a mano)
-        for table in (conversations, messages, tickets, advisors, ai_usage):
+        for table in (conversations, messages, tickets, advisors, ai_usage, rate_limits):
             table.grant_read_write_data(api_fn)
             table.grant_read_write_data(worker_ai_fn)
         images_bucket.grant_read_write(api_fn)  # presigned URLs
         images_bucket.grant_read(worker_ai_fn)  # interpretacion de imagenes (D-015)
         ai_jobs.grant_send_messages(api_fn)
         notifications.grant_send_messages(worker_ai_fn)
-        # TODO: grants de Secrets Manager cuando existan los secretos (PLAN.md §6.5).
+        # Solo el secreto que cada Lambda de verdad consume (worker_notify_fn no lee ninguno).
+        identity_secret.grant_read(api_fn)
+        ai_secret.grant_read(worker_ai_fn)
 
         # ──────────────── API Gateway HTTP API — mapa de rutas (T1, PLAN.md §3) ────────────────
         http_api = apigwv2.HttpApi(
             self,
             "HttpApi",
             api_name=f"{prefix}-api",
-            # El preflight CORS lo responde FastAPI (CORSMiddleware con CORS_ALLOWED_ORIGINS):
-            # la ruta $default tambien recibe OPTIONS, asi que no hace falta cors_preflight aqui.
+            # /advisor y /dashboard llevan cognito_authorizer (abajo), que por default cubre TODOS
+            # los metodos incluido OPTIONS: el preflight del navegador no manda Authorization y el
+            # authorizer lo rechazaba con 401 antes de llegar a FastAPI (DETAILS.md §4.3). Nativo
+            # de API Gateway: responde el preflight el gateway mismo, nunca pasa por el authorizer.
+            cors_preflight=apigwv2.CorsPreflightOptions(
+                allow_origins=cfg.cors_allowed_origins.split(","),
+                allow_methods=[
+                    apigwv2.CorsHttpMethod.GET,
+                    apigwv2.CorsHttpMethod.POST,
+                    apigwv2.CorsHttpMethod.PATCH,
+                ],
+                allow_headers=["Authorization", "Content-Type"],
+            ),
         )
         api_integration = integrations.HttpLambdaIntegration("ApiIntegration", api_fn)
         cognito_authorizer = authorizers.HttpJwtAuthorizer(

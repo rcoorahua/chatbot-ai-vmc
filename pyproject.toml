@@ -3,8 +3,9 @@ name = "chatbot-ai-vmc"
 version = "0.2.0"
 description = "Subastin - plataforma de atencion propia de VMC (backend serverless del MVP)"
 requires-python = ">=3.12"
-# OJO: lo que CDK bundlea en las Lambdas es backend/requirements.txt. Este archivo define el
-# entorno LOCAL de desarrollo (mismas deps runtime + uvicorn + tooling). Mantener en sync.
+# OJO: lo que CDK bundlea en las Lambdas es backend/requirements-{api,worker-ai,worker-notify}.txt,
+# uno por función. Este archivo define el entorno LOCAL de desarrollo (unión de esas deps
+# runtime + uvicorn + tooling). Mantener en sync.
 dependencies = [
     "fastapi",
     "mangum",

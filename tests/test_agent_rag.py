@@ -110,6 +110,31 @@ def test_lo_que_supera_el_umbral_se_devuelve_ordenado(fake_index, monkeypatch):
     assert fragments[0].score == pytest.approx(0.91)
 
 
+def test_retrieve_separa_lo_relevante_de_lo_descartado(fake_index, monkeypatch):
+    """El pipeline registra TODO lo que trajo el indice (consola de dev), pero solo lo que
+    supera el umbral cuenta como evidencia."""
+    monkeypatch.setenv("RAG_MIN_SCORE", "0.5")
+    reset_settings()
+    fake_index(hits=[_hit("mejor", 0.91), _hit("bajo el umbral", 0.20)])
+    try:
+        resultado = rag.retrieve("cuanto es la comision")
+    finally:
+        reset_settings()
+
+    assert [f.text for f in resultado.relevant] == ["mejor"]
+    assert [f.text for f in resultado.discarded] == ["bajo el umbral"]
+    assert resultado.threshold == pytest.approx(0.5)
+    assert [f.text for f in resultado.all_fragments] == ["mejor", "bajo el umbral"]
+
+
+def test_un_fallo_del_proveedor_tampoco_rompe_retrieve(fake_index):
+    fake_index(error=RuntimeError("Pinecone no responde"))
+
+    resultado = rag.retrieve("cuanto es la comision")
+
+    assert resultado.relevant == [] and resultado.discarded == []
+
+
 def test_el_umbral_se_puede_desactivar_para_calibrar(fake_index, monkeypatch):
     monkeypatch.setenv("RAG_MIN_SCORE", "0.9")
     reset_settings()

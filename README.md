@@ -70,17 +70,29 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 4. **[BACKLOG.md](BACKLOG.md)** — el trabajo dividido en tickets tomables, con sus dependencias:
    qué se puede empezar hoy, qué bloquea cada decisión pendiente y cómo repartirlo entre dos
    personas sin pisarse.
+5. **[MAPEO.md](MAPEO.md)** — qué intenciones del Centro de Ayuda llevan flujo guiado con
+   botones y cuáles son FAQ planas (D-028), y la taxonomía de tickets propuesta para D-008.
+6. **[TEST.md](TEST.md)** — prueba manual del bot: comandos para levantar y resetear el
+   entorno, y 50 mensajes (30 del Centro de Ayuda, 15 frontera, 5 de manipulación).
 
 ## Estado actual
 
 **F1 implementada (2026-08-27)**: chat público con identidad VMC (`POST /chat/sessions`),
 persistencia idempotente de mensajes, sondeo, y el widget embebible con su página de prueba.
-El clasificador, el redactor y la **recuperación en Pinecone** existen (`backend/agent/`), con la
-ingesta del Centro de Ayuda lista (`scripts/helpcenter_*`), pero el pipeline que los conecta
-(`workers/ai_worker.py`) sigue bloqueado por D-004/D-006/D-020: **el bot todavía no responde**.
-El resto (handoff, asesores, catálogo, imágenes, dashboard) se implementa fase por fase
-(PLAN.md §8) a medida que se cierran las decisiones de negocio pendientes (responsables Silvana +
-Julio) y se obtiene la cuenta AWS.
+
+**Pipeline IA completo (2026-08-28): el bot responde.** `workers/ai_worker.py` encadena debounce
+(D-020) → triviales (D-006) → guardrails de seguridad (D-024: manipulación y datos de terceros,
+sin IA) → clasificador (reglas → Gemini flash-lite, TD-008) → RAG en Pinecone + redacción con
+Gemini → verificación de la respuesta contra la evidencia (cifras, enlaces, fuga del prompt) →
+handoff mínimo. Toda decisión queda en `AIUsage`. Los prompts tienen golden set
+(`tests/golden/intents.jsonl`) y eval real a mano (`python -m scripts.eval_intents`, D-026).
+En local: `python -m scripts.run_ai_worker` con `GEMINI_API_KEY`, `PINECONE_API_KEY` y
+`AI_JOBS_QUEUE_URL` en `.env`.
+
+**Mensajería del asesor (2026-08-27)**: `/advisor/*` con bandeja, toma atómica, hilo, respuesta
+y cierre mínimo; la app Next.js aún usa datos de prueba. El resto (tickets, Slack, catálogo,
+imágenes, dashboard) se implementa fase por fase (PLAN.md §8) a medida que se cierran las
+decisiones de negocio pendientes (responsables Silvana + Julio) y se obtiene la cuenta AWS.
 
 ## Cómo correr el proyecto (local, sin cuenta AWS)
 
@@ -108,7 +120,7 @@ cd frontend; npm install; cd ..
 
 ```powershell
 docker compose up -d              # DynamoDB (:8001) + LocalStack SQS/S3 (:4566)
-python -m scripts.local_setup     # crea las 5 tablas, las 2 colas y el bucket
+python -m scripts.local_setup     # crea las 6 tablas, las 2 colas y el bucket
 python -m scripts.seed_data       # carga los datos de prueba
 
 uvicorn backend.api.main:app --reload --port 8000
@@ -121,6 +133,10 @@ python -m scripts.run_ai_worker                      # en otra terminal: el bot 
 - **Widget** (en otra terminal): `cd widget; python -m http.server 8080` →
   <http://localhost:8080/test.html>, que simula la página de VMC en modo anónimo o autenticado.
   Detalle en [widget/README.md](widget/README.md).
+- **Consola de observabilidad** en la misma `test.html`: por cada mensaje muestra qué capa
+  decidió (trivial, guardrail, regla o modelo), el modelo, los tokens, el costo y la latencia,
+  leyendo `GET /dev/conversations/{id}/ai-usage` (solo dev/stage; 404 en prod). Los logs de la
+  terminal siguen la misma política: `LOG_LEVEL`/`LOG_CONTENT` vacías = detallado en dev.
 - App del asesor: `cd frontend; npm run dev` → <http://localhost:3000> (hoy con datos de prueba).
   La API `/advisor/*` ya funciona en local: pon `ADVISOR_DEV_AUTH=1` y `ADVISOR_DEV_JWT_SECRET=algo`
   en `.env`, emite un token con `python -m scripts.advisor_token --sub sub-ana-001 --name "Ana"`
@@ -131,7 +147,9 @@ python -m scripts.run_ai_worker                      # en otra terminal: el bot 
 - Al terminar: `Ctrl+C` y `docker compose down`.
 
 Los dos scripts son idempotentes y **hay que volver a ejecutarlos cada vez que se reinician los
-contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse.
+contenedores**: DynamoDB local corre en memoria y pierde las tablas al apagarse. Para limpiar
+lo que ensuciaron pruebas manuales sin reiniciar los contenedores, `python -m scripts.reset_local`
+hace las dos cosas en un solo paso (y purga las colas); no hace falta reiniciar el worker de IA.
 
 ### Verificar que todo está bien
 

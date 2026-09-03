@@ -12,7 +12,10 @@ Patrones que viven aqui y en ningun otro sitio:
 - bandeja por estado (GSI2) y casos de un asesor (GSI3) para RF-032;
 - toma ATOMICA de la conversacion (AC-005) y cierre del caso: un UpdateItem condicional sobre
   la conversacion + la nota SYSTEM en el hilo, en una sola transaccion;
-- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`.
+- historial hacia atras para el asesor (RF-012): ultimos N y paginas anteriores con `before`;
+- D-029: casos abiertos de un usuario (GSI1 + filtro), creacion de un caso con sus primeros
+  mensajes en UNA transaccion, y cierre definitivo (CLOSED) de un caso o de la conversacion
+  anonima.
 
 Los tests de este modulo corren contra dynamodb-local real: un GSI mal usado falla aqui.
 """
@@ -30,6 +33,7 @@ from backend.conversations.models import (
     idempotency_key_for,
 )
 from backend.core.aws import dynamodb_resource
+from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
 
 # Toda SK de mensaje empieza por el año (`2026-...`); los marcadores empiezan por `CMID#`, que
@@ -42,6 +46,13 @@ _PREVIEW_CHARS = 120
 
 class ConversationNotFound(LookupError):
     pass
+
+
+class OpenCaseLimitReached(RuntimeError):
+    """El contador `OPEN_CASES#USER#<id>` (RateLimits, Paso 6) ya esta en el limite. La tabla
+    es compartida con agent/quota.py (contadores atomicos por actor); este modulo NO la
+    importa — solo referencia el nombre de tabla via core.config, para no romper la regla de
+    dependencia de backend/__init__.py (dominio nunca importa integraciones)."""
 
 
 def _conversations():
@@ -73,6 +84,25 @@ def find_conversations_by_user(user_id: str, *, limit: int = 10) -> list[Convers
         Limit=limit,
     )
     return [Conversation.from_item(item) for item in response["Items"]]
+
+
+def list_open_cases(user_id: str) -> list[Conversation]:
+    """Casos del usuario que siguen abiertos (D-029: tope de N). Consulta GSI1 con filtro y
+    paginando hasta el final: el filtro se aplica DESPUES del Limit, asi que una sola pagina
+    podria dejar fuera un caso abierto detras de muchos cerrados."""
+    kwargs: dict[str, Any] = {
+        "IndexName": "gsi1_user",
+        "KeyConditionExpression": Key("user_id").eq(user_id),
+        "FilterExpression": Attr("kind").eq("CASE") & Attr("status").ne("CLOSED"),
+    }
+    found: list[Conversation] = []
+    while True:
+        response = _conversations().query(**kwargs)
+        found.extend(Conversation.from_item(item) for item in response["Items"])
+        last = response.get("LastEvaluatedKey")
+        if not last:
+            return found
+        kwargs["ExclusiveStartKey"] = last
 
 
 def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> list[Conversation]:
@@ -107,6 +137,82 @@ def create_conversation(conversation: Conversation) -> bool:
         )
     except ClientError as exc:
         if _is_condition_failure(exc):
+            return False
+        raise
+    return True
+
+
+def create_conversation_with_messages(
+    conversation: Conversation,
+    messages: list[Message],
+    *,
+    link_message: Message | None = None,
+    open_case_limit: int = 0,
+) -> bool:
+    """Crea un caso (D-029) con sus primeros mensajes, todo o nada. La conversacion llega
+    con sus campos desnormalizados YA calculados (message_count, preview, no leidos): aqui no
+    se suma nada, solo se escribe. Devuelve False si el id ya existia.
+
+    `link_message` (DETAILS.md §4.5 / Paso 6) es la nota `CASE_OPENED` que enlaza al hilo de
+    ORIGEN (otra conversacion, ya existente) — va en la MISMA transaccion, con el touch de sus
+    contadores (`_touch_conversation_update`), para que nunca exista un caso sin su enlace en
+    el hilo: antes era un `put_message` aparte despues del commit del caso.
+
+    `open_case_limit` > 0 (Paso 6) reserva un cupo del contador `OPEN_CASES#USER#<user_id>`
+    (tabla RateLimits) en la MISMA transaccion — `ADD` condicionado a seguir bajo el limite.
+    Antes el tope se chequeaba con `list_open_cases` (GSI, eventualmente consistente) ANTES de
+    crear: dos handoffs casi simultaneos podian pasar los dos el chequeo y dejar mas de N casos
+    abiertos. Levanta `OpenCaseLimitReached` si el cupo esta agotado (en vez de `False`, que
+    aqui solo significa "el conversation_id ya existia")."""
+    table_messages = get_settings().table_messages
+    client = dynamodb_resource().meta.client
+    items: list[dict[str, Any]] = [
+        {
+            "Put": {
+                "TableName": get_settings().table_conversations,
+                "Item": conversation.to_item(),
+                "ConditionExpression": "attribute_not_exists(conversation_id)",
+            }
+        },
+        *({"Put": {"TableName": table_messages, "Item": m.to_item()}} for m in messages),
+    ]
+    if link_message is not None:
+        items.append({"Put": {"TableName": table_messages, "Item": link_message.to_item()}})
+        items.append(
+            _touch_conversation_update(
+                link_message.conversation_id, link_message, count_as_unread=False
+            )
+        )
+    reserve_index: int | None = None
+    if open_case_limit > 0:
+        if not conversation.user_id:  # pragma: no cover — un caso siempre tiene user_id
+            raise ValueError("open_case_limit requiere conversation.user_id")
+        reserve_index = len(items)
+        items.append(
+            {
+                "Update": {
+                    "TableName": get_settings().table_rate_limits,
+                    "Key": {
+                        "limit_key": f"OPEN_CASES#USER#{conversation.user_id}",
+                        "window": "LIVE",
+                    },
+                    "UpdateExpression": "ADD open_cases :one",
+                    "ConditionExpression": (
+                        "attribute_not_exists(open_cases) OR open_cases < :limit"
+                    ),
+                    "ExpressionAttributeValues": {":one": 1, ":limit": open_case_limit},
+                }
+            }
+        )
+    try:
+        client.transact_write_items(TransactItems=items)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
+        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
+        if reserve_index is not None and reasons[reserve_index] == "ConditionalCheckFailed":
+            raise OpenCaseLimitReached() from exc
+        if reasons and reasons[0] == "ConditionalCheckFailed":
             return False
         raise
     return True
@@ -191,31 +297,163 @@ def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> 
     return _transact_note(update, note)
 
 
-def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
-    """Handoff minimo (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el bot
-    atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma transaccion.
-    `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
-    Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
+def close_conversation(
+    conversation_id: str,
+    advisor_id: str,
+    *,
+    note: Message,
+    closed_by: str,
+    release_case_slot_for_user: str | None = None,
+) -> bool:
+    """Cierre definitivo (D-029): un caso, o la conversacion anonima. Queda CLOSED, con el
+    bot apagado y de solo lectura; `assigned_advisor_id` se conserva como historial de quien
+    lo atendio. La nota SYSTEM `CONVERSATION_CLOSED` va en la misma transaccion. Solo el
+    asesor asignado cierra: devuelve False si no lo es.
+
+    `release_case_slot_for_user` (Paso 6): si esta conversacion es un CASO (contaba para
+    `OPEN_CASES#USER#<id>`, ver `create_conversation_with_messages`), libera el cupo en la
+    MISMA transaccion. La conversacion anonima nunca pasa este id: nunca conto para el limite."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += (
+        ", #status = :closed, bot_enabled = :off, wait_message_sent = :off, "
+        "unread_count = :zero, closed_at = :at, closed_by = :closed_by"
+    )
+    update["ConditionExpression"] = "assigned_advisor_id = :advisor AND #status <> :closed"
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(
+        {":advisor": advisor_id, ":closed": "CLOSED", ":off": False, ":zero": 0,
+         ":closed_by": closed_by}
+    )
+    extra_items = None
+    if release_case_slot_for_user:
+        extra_items = [
+            {
+                "Update": {
+                    "TableName": get_settings().table_rate_limits,
+                    "Key": {
+                        "limit_key": f"OPEN_CASES#USER#{release_case_slot_for_user}",
+                        "window": "LIVE",
+                    },
+                    "UpdateExpression": "ADD open_cases :minus_one",
+                    "ExpressionAttributeValues": {":minus_one": -1},
+                }
+            }
+        ]
+    return _transact_note(update, note, extra_items=extra_items)
+
+
+def start_handoff(
+    conversation_id: str,
+    *,
+    reason: str,
+    at: str,
+    note: Message,
+    title: str | None = None,
+    contact: dict[str, str] | None = None,
+) -> bool:
+    """Handoff en el sitio (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el
+    bot atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma
+    transaccion. `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
+    `title` y `contact` (D-029: asunto y datos del anonimo, RF-003) se guardan en el mismo
+    update. Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
     update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
     update["UpdateExpression"] += (
         ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
         "handoff_requested_at = :requested_at, handoff_reason = :reason"
     )
+    values: dict[str, Any] = {
+        ":pending": "PENDING_ADVISOR",
+        ":bot_attending": "BOT_ATTENDING",
+        ":off": False,
+        ":requested_at": at,
+        ":reason": reason,
+    }
+    if title:
+        update["UpdateExpression"] += ", title = :title"
+        values[":title"] = title
+    for field, value in (contact or {}).items():
+        if value:
+            update["UpdateExpression"] += f", {field} = :{field}"
+            values[f":{field}"] = value
     update["ConditionExpression"] = (
         "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
         "AND #status = :bot_attending"
     )
     update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(
-        {
-            ":pending": "PENDING_ADVISOR",
-            ":bot_attending": "BOT_ATTENDING",
-            ":off": False,
-            ":requested_at": at,
-            ":reason": reason,
-        }
-    )
+    update["ExpressionAttributeValues"].update(values)
     return _transact_note(update, note)
+
+
+def set_flow_state(
+    conversation_id: str,
+    *,
+    flow: str,
+    step: str,
+    slots: dict[str, Any] | None,
+    expires_at: str,
+    expected_version: int,
+) -> int | None:
+    """Instala (o avanza) el flujo guiado con transicion atomica (D-028).
+
+    La condicion sobre `flow_version` es lo que evita que dos jobs o dos pestañas muevan el
+    flujo a la vez: gana uno y el otro recibe None. `expected_version` SIEMPRE sale de una
+    lectura fresca de la conversacion (el modelo entrega 0 cuando el atributo no existe, y la
+    condicion cubre ese caso con attribute_not_exists).
+    """
+    new_version = expected_version + 1
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression=(
+                "SET active_flow = :flow, flow_step = :step, flow_slots = :slots, "
+                "flow_version = :new, flow_expires_at = :expires, updated_at = :now"
+            ),
+            ConditionExpression=(
+                "attribute_not_exists(flow_version) OR flow_version = :expected"
+            ),
+            ExpressionAttributeValues={
+                ":flow": flow,
+                ":step": step,
+                ":slots": slots or {},
+                ":new": new_version,
+                ":expires": expires_at,
+                ":expected": expected_version,
+                ":now": utc_now_iso(),
+            },
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return None
+        raise
+    return new_version
+
+
+def clear_flow_state(conversation_id: str, *, expected_version: int) -> bool:
+    """Cierra el flujo guiado (paso resuelto, handoff, guardrail o vencimiento).
+
+    Sube `flow_version` a proposito: los quick replies emitidos para la version cerrada
+    quedan invalidos aunque el usuario los clickee despues (MAPEO.md §3). Devuelve False si
+    otro proceso movio el flujo primero — en ese caso no hay nada que limpiar aqui.
+    """
+    try:
+        _conversations().update_item(
+            Key={"conversation_id": conversation_id},
+            UpdateExpression=(
+                "REMOVE active_flow, flow_step, flow_slots, flow_expires_at "
+                "SET flow_version = :new, updated_at = :now"
+            ),
+            ConditionExpression="flow_version = :expected",
+            ExpressionAttributeValues={
+                ":new": expected_version + 1,
+                ":expected": expected_version,
+                ":now": utc_now_iso(),
+            },
+        )
+    except ClientError as exc:
+        if _is_condition_failure(exc):
+            return False
+        raise
+    return True
 
 
 def mark_wait_message_sent(conversation_id: str) -> bool:
@@ -236,14 +474,21 @@ def mark_wait_message_sent(conversation_id: str) -> bool:
     return True
 
 
-def _transact_note(conversation_update: dict[str, Any], note: Message) -> bool:
-    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada."""
+def _transact_note(
+    conversation_update: dict[str, Any],
+    note: Message,
+    *,
+    extra_items: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada. `extra_items`
+    (Paso 6) se suman a la MISMA transaccion — p. ej. liberar un cupo de casos abiertos."""
     client = dynamodb_resource().meta.client
     try:
         client.transact_write_items(
             TransactItems=[
                 {"Update": conversation_update},
                 {"Put": {"TableName": get_settings().table_messages, "Item": note.to_item()}},
+                *(extra_items or []),
             ]
         )
     except ClientError as exc:

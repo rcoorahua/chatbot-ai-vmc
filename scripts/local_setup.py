@@ -35,6 +35,7 @@ def nombres_de_tabla() -> dict[str, str]:
         "tickets": _env("TABLE_TICKETS", "subastin-dev-tickets"),
         "advisors": _env("TABLE_ADVISORS", "subastin-dev-advisors"),
         "ai_usage": _env("TABLE_AI_USAGE", "subastin-dev-ai-usage"),
+        "rate_limits": _env("TABLE_RATE_LIMITS", "subastin-dev-rate-limits"),
     }
 
 
@@ -50,7 +51,7 @@ def _gsi(nombre: str, pk: str, sk: str | None = None) -> dict:
 
 
 def definiciones_de_tabla() -> list[dict]:
-    """Las 5 tablas del modelo (PLAN.md §4), con sus claves e indices."""
+    """Las 6 tablas del modelo (PLAN.md §4 + RateLimits de T-09/D-027), con claves e indices."""
     t = nombres_de_tabla()
     return [
         {
@@ -123,6 +124,22 @@ def definiciones_de_tabla() -> list[dict]:
             ],
             "GlobalSecondaryIndexes": [_gsi("gsi_billing", "billing_month", "created_at")],
         },
+        {
+            # T-09 / D-027: contadores del tope de ejecuciones de IA por actor. PK = quien
+            # (`USER#<id>` / `SESSION#<conversation_id>` / `IP#<hash>`), SK = la ventana
+            # (`H#2026-09-01T19` por hora, `D#2026-09-01` por dia). En AWS lleva TTL sobre
+            # `expires_at` (48 h) para que DynamoDB borre solo; dynamodb-local es -inMemory
+            # asi que aqui no hace falta activarlo.
+            "TableName": t["rate_limits"],
+            "KeySchema": [
+                {"AttributeName": "limit_key", "KeyType": "HASH"},
+                {"AttributeName": "window", "KeyType": "RANGE"},
+            ],
+            "AttributeDefinitions": [
+                {"AttributeName": "limit_key", "AttributeType": STRING},
+                {"AttributeName": "window", "AttributeType": STRING},
+            ],
+        },
     ]
 
 
@@ -149,7 +166,7 @@ def recurso_dynamo():
 
 
 def crear_tablas(verbose: bool = True) -> None:
-    """Crea las 5 tablas si no existen. Ignora las que ya estan."""
+    """Crea las 6 tablas si no existen. Ignora las que ya estan."""
     cliente = cliente_dynamo()
     for definicion in definiciones_de_tabla():
         nombre = definicion["TableName"]
@@ -166,18 +183,34 @@ def crear_tablas(verbose: bool = True) -> None:
                 raise
 
 
+def cliente_sqs():
+    return boto3.client(
+        "sqs",
+        endpoint_url=_env("SQS_ENDPOINT_URL", "http://localhost:4566"),
+        region_name=_env("AWS_REGION", "us-east-1"),
+        aws_access_key_id=_env("AWS_ACCESS_KEY_ID", "local"),
+        aws_secret_access_key=_env("AWS_SECRET_ACCESS_KEY", "local"),
+        config=_CFG,
+    )
+
+
+def nombres_de_cola() -> tuple[str, str]:
+    """(ai-jobs, notifications). Reusado por reset_local.py para purgar sin duplicar los ids."""
+    return ("subastin-dev-ai-jobs", "subastin-dev-notifications")
+
+
 def crear_colas_y_bucket(verbose: bool = True) -> None:
     """SQS y S3 en LocalStack. No bloquea si LocalStack no esta arriba (es opcional para tests)."""
-    endpoint = _env("SQS_ENDPOINT_URL", "http://localhost:4566")
     comunes = {
         "region_name": _env("AWS_REGION", "us-east-1"),
         "aws_access_key_id": _env("AWS_ACCESS_KEY_ID", "local"),
         "aws_secret_access_key": _env("AWS_SECRET_ACCESS_KEY", "local"),
         "config": _CFG,
     }
+    endpoint = _env("SQS_ENDPOINT_URL", "http://localhost:4566")
     try:
-        sqs = boto3.client("sqs", endpoint_url=endpoint, **comunes)
-        for cola in ("subastin-dev-ai-jobs", "subastin-dev-notifications"):
+        sqs = cliente_sqs()
+        for cola in nombres_de_cola():
             sqs.create_queue(QueueName=cola)
             if verbose:
                 print(f"  cola lista: {cola}")

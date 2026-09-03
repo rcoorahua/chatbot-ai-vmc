@@ -116,26 +116,46 @@ def _to_fragment(hit: Any) -> Fragment | None:
     )
 
 
-def search(
-    question: str, *, top_k: int | None = None, min_score: float | None = None
-) -> list[Fragment]:
-    """Fragmentos relevantes para la pregunta, de mas a menos. Lista vacia = sin evidencia.
+@dataclass(frozen=True, slots=True)
+class RagResult:
+    """Todo lo que trajo el indice, separado por el umbral.
 
-    Los resultados por debajo de `rag_min_score` se descartan: Pinecone SIEMPRE devuelve los
-    `top_k` mas cercanos, incluso para una pregunta que no tiene nada que ver con el Centro de
-    Ayuda, asi que sin umbral el redactor creeria tener evidencia para cualquier cosa — que es
-    justo lo que RF-018 prohibe.
+    `relevant` es la evidencia (lo unico que llega al redactor, RF-018). `discarded` son los
+    hits que NO superaron el umbral: no son evidencia, pero la consola de dev los muestra para
+    poder juzgar el retrieval cuando la respuesta cae en "sin evidencia" — sin esto, calibrar
+    RAG_MIN_SCORE obliga a reproducir la consulta a mano con `helpcenter_upload --verify`.
+    """
+
+    relevant: list[Fragment]
+    discarded: list[Fragment]
+    threshold: float
+
+    @property
+    def all_fragments(self) -> list[Fragment]:
+        """Relevantes primero (asi los recibe el redactor), descartados despues."""
+        return self.relevant + self.discarded
+
+
+def retrieve(
+    question: str, *, top_k: int | None = None, min_score: float | None = None
+) -> RagResult:
+    """Busca en Pinecone y separa por el umbral. `relevant` vacio = sin evidencia.
+
+    Los resultados por debajo de `rag_min_score` no cuentan como evidencia: Pinecone SIEMPRE
+    devuelve los `top_k` mas cercanos, incluso para una pregunta que no tiene nada que ver con
+    el Centro de Ayuda, asi que sin umbral el redactor creeria tener evidencia para cualquier
+    cosa — que es justo lo que RF-018 prohibe.
 
     `min_score=0.0` desactiva el corte. Sirve para calibrarlo (ver los scores reales de una
-    consulta); el pipeline nunca debe llamarlo asi.
+    consulta); el pipeline nunca debe llamarlo asi. Nunca lanza (contrato del modulo).
     """
+    settings = get_settings()
+    threshold = settings.rag_min_score if min_score is None else min_score
     text = (question or "").strip()
     if not text:
-        return []
+        return RagResult(relevant=[], discarded=[], threshold=threshold)
 
-    settings = get_settings()
     limit = top_k or settings.rag_top_k
-    threshold = settings.rag_min_score if min_score is None else min_score
     try:
         response = get_index().search(
             namespace=settings.pinecone_namespace,
@@ -144,10 +164,11 @@ def search(
         )
     except Exception:  # noqa: BLE001 — cualquier fallo se trata como falta de evidencia
         logger.exception("Fallo la busqueda en Pinecone; se deriva por falta de evidencia")
-        return []
+        return RagResult(relevant=[], discarded=[], threshold=threshold)
 
     fragments = [fragment for hit in _hits(response) if (fragment := _to_fragment(hit))]
     relevant = [f for f in fragments if f.score >= threshold]
+    discarded = [f for f in fragments if f.score < threshold]
     if fragments and not relevant:
         # Sin esto, calibrar el umbral obligaria a reproducir la consulta a mano.
         logger.info(
@@ -155,7 +176,18 @@ def search(
             threshold,
             max(f.score for f in fragments),
         )
-    return relevant
+    return RagResult(relevant=relevant, discarded=discarded, threshold=threshold)
+
+
+def search(
+    question: str, *, top_k: int | None = None, min_score: float | None = None
+) -> list[Fragment]:
+    """Fragmentos relevantes para la pregunta, de mas a menos. Lista vacia = sin evidencia.
+
+    Atajo sobre `retrieve()` para quien solo necesita la evidencia (scripts, calibracion);
+    el pipeline usa `retrieve()` porque tambien registra lo descartado en AIUsage.
+    """
+    return retrieve(question, top_k=top_k, min_score=min_score).relevant
 
 
 def as_context(fragments: list[Fragment]) -> list[str]:

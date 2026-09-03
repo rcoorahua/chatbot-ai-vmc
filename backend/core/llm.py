@@ -13,11 +13,16 @@ para que meter Anthropic o Bedrock sea agregar una subclase de `LLMClient` y una
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from backend.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class ModelTier(StrEnum):
@@ -35,31 +40,58 @@ class ModelTier(StrEnum):
 #
 # El precio se guarda junto al modelo a proposito: `estimated_cost_usd` de AIUsage se calcula
 # con el precio del momento de la ejecucion, no con uno recordado despues (regla de la skill
-# llm-cost-optimizer). `priced_until` documenta que estos son precios promocionales de Google:
-# a partir del 2027-01-01 el Flash de redaccion sube a 1.50/7.50 y hay que actualizar la tabla.
+# llm-cost-optimizer). Precios de ai.google.dev/gemini-api/docs/pricing al 2026-09-01, tarifa
+# estandar de pago; ya no hay precio promocional con vencimiento.
 #
-# Eleccion (2026-08-27): flash-lite para clasificar porque la tarea es elegir 1 de 4 etiquetas
-# y no necesita capacidad de razonamiento; 3.7-flash para redactar porque cuesta lo mismo que
-# 3.6-flash y Google lo describe como su Flash mas capaz.
+# Eleccion (2026-09-01, reemplaza a la de 2026-08-27): SOLO modelos con precio publicado en la
+# pagina oficial. `gemini-3.7-flash` existe en la API pero NO figura en la tabla de precios
+# (preview sin tarifa) y con key gratuita rechazaba sostenido ("high demand"): en la practica
+# todo caia al respaldo mientras el costo se estimaba con una tarifa que Google no publica.
+#   FAST   = 3.5-flash-lite (0.30/2.50): el lite GA mas nuevo; +0.05/M de input sobre
+#            3.1-flash-lite a cambio de mejor routing — y el routing es la primera defensa
+#            contra preguntas fuera de dominio (el margen de RAG_MIN_SCORE es angosto).
+#            Respaldo: 3.1-flash-lite, mas barato y de alta disponibilidad.
+#   ANSWER = 3.6-flash (1.50/7.50): el Flash mas capaz con precio GA publicado; mas barato en
+#            salida que 3.5-flash (9.00) siendo mas nuevo. Respaldo: 3.5-flash.
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
     name: str
     input_usd_per_million: float
     output_usd_per_million: float
-    priced_until: str | None = None
+    # Nivel de razonamiento (Gemini 3.x): el MINIMO que acepte cada modelo, porque esos tokens
+    # salen del mismo presupuesto que max_output_tokens y ninguna de nuestras tareas necesita
+    # razonamiento extendido. OJO: el piso varia POR MODELO y hay que PROBARLO al cambiar de
+    # modelo — 3.7-flash rechazaba "minimal" con APIError (tumbo al redactor el 2026-09-01),
+    # pero 3.5-flash-lite, 3.5-flash y 3.6-flash lo aceptan (sondeados el 2026-09-01; con
+    # "low", 3.6-flash gasto 12 tokens pensando y devolvio vacio en un tope chico).
+    thinking_level: str = "minimal"
+    # Modelo de RESPALDO para cuando el principal rechaza la llamada (visto 2026-09-01:
+    # "high demand" sostenido con key gratuita mientras otros modelos respondian normal).
+    # Un solo reintento, con log de ambos errores si tambien falla. Lleva su PROPIO precio:
+    # el costo en AIUsage se calcula con la tarifa del modelo que realmente respondio.
+    fallback: ModelSpec | None = None
 
 
 _MODELS: dict[ModelTier, ModelSpec] = {
     ModelTier.FAST: ModelSpec(
-        name="gemini-3.1-flash-lite",
-        input_usd_per_million=0.25,
-        output_usd_per_million=1.50,
+        name="gemini-3.5-flash-lite",
+        input_usd_per_million=0.30,
+        output_usd_per_million=2.50,
+        fallback=ModelSpec(
+            name="gemini-3.1-flash-lite",
+            input_usd_per_million=0.25,
+            output_usd_per_million=1.50,
+        ),
     ),
     ModelTier.ANSWER: ModelSpec(
-        name="gemini-3.7-flash",
-        input_usd_per_million=0.75,
-        output_usd_per_million=3.75,
-        priced_until="2026-12-31",  # desde 2027-01-01: 1.50 / 7.50
+        name="gemini-3.6-flash",
+        input_usd_per_million=1.50,
+        output_usd_per_million=7.50,
+        fallback=ModelSpec(
+            name="gemini-3.5-flash",
+            input_usd_per_million=1.50,
+            output_usd_per_million=9.00,
+        ),
     ),
 }
 
@@ -92,11 +124,15 @@ class LLMResponse:
     def estimated_cost_usd(self) -> float:
         """Costo de esta llamada con el precio vigente del modelo que la atendio.
 
+        Se resuelve por `model`, no por el tier: si la atendio el respaldo, se cobra con la
+        tarifa del respaldo — antes se usaba siempre la del principal y el costo del respaldo
+        quedaba subestimado en AIUsage.
+
         Los tokens cacheados se cobran distinto segun el proveedor; mientras no se active el
         caching (pendiente de D-004, que define el resumen de conversacion) se cuentan como
         input normal, que sobreestima antes que subestimar.
         """
-        spec = _MODELS[self.tier]
+        spec = spec_for_model(self.model, self.tier)
         billable_input = self.usage["input"] + self.usage["cached_read"]
         return (
             billable_input * spec.input_usd_per_million
@@ -146,6 +182,13 @@ class LLMClient:
         raise NotImplementedError
 
 
+# Tope por llamada HTTP a Gemini, en milisegundos. Holgado para una redaccion con 600 tokens de
+# salida (las medidas en local van de 1 a 7 s) y bastante menor que el timeout de la Lambda del
+# worker, para que una llamada colgada no se lleve el job entero. Constante y no Settings a
+# proposito: no es una politica de negocio y `core/config.py` lo esta tocando otra rama.
+_HTTP_TIMEOUT_MS = 30_000
+
+
 class GeminiClient(LLMClient):
     """Implementacion sobre el SDK `google-genai`."""
 
@@ -153,8 +196,17 @@ class GeminiClient(LLMClient):
 
     def __init__(self, api_key: str) -> None:
         from google import genai
+        from google.genai import types
 
-        self._client = genai.Client(api_key=api_key)
+        # Timeout EXPLICITO por llamada. El SDK trae `None` por defecto y una conexion que se
+        # queda muda cuelga al worker entero: paso el 2026-09-03 en local (13 minutos sin
+        # respuesta ni error, con todos los jobs siguientes esperando detras) y en Lambda
+        # agotaria el timeout de la funcion sin dejar rastro del motivo (DETAILS.md §4.18).
+        # Con timeout, la llamada muerta se convierte en un LLMError de conexion: cae al
+        # respaldo y, si tambien falla, el redactor responde con el texto fijo.
+        self._client = genai.Client(
+            api_key=api_key, http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_MS)
+        )
 
     def generate(
         self,
@@ -165,7 +217,7 @@ class GeminiClient(LLMClient):
         max_output_tokens: int,
         temperature: float | None = None,
     ) -> LLMResponse:
-        from google.genai import errors, types
+        from google.genai import types
 
         spec = _MODELS[tier]
         config: dict[str, Any] = {"max_output_tokens": max_output_tokens}
@@ -176,25 +228,52 @@ class GeminiClient(LLMClient):
 
         # Los Gemini 3.x razonan por defecto y esos tokens salen del MISMO presupuesto que
         # max_output_tokens: sin bajarlo, una clasificacion con tope de 24 tokens se gasta el
-        # presupuesto pensando y devuelve vacio. Ninguna de nuestras dos tareas necesita
-        # razonamiento extendido: clasificar es elegir una etiqueta y redactar es reformular
-        # evidencia que ya viene dada.
-        config["thinking_config"] = types.ThinkingConfig(thinking_level="minimal")
+        # presupuesto pensando y devuelve vacio. El nivel vive en el ModelSpec porque el piso
+        # aceptado varia por modelo (ver el comentario en la clase).
+        config["thinking_config"] = types.ThinkingConfig(thinking_level=spec.thinking_level)
+        # No usamos tools/function calling, pero el SDK lo trae ENCENDIDO por defecto y ademas
+        # loguea un warning por cada llamada ("Direct use of automatic function calling...").
+        # Se apaga la funcion, no el logger: silenciar el logger taparia warnings reales.
+        config["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
 
+        contents = self._to_contents(types, messages)
         started = time.perf_counter()
+        model_name = spec.name
         try:
             response = self._client.models.generate_content(
-                model=spec.name,
-                contents=self._to_contents(types, messages),
+                model=model_name,
+                contents=contents,
                 config=types.GenerateContentConfig(**config),
             )
-        except errors.APIError as exc:
-            raise self._normalize(exc) from exc
+        except Exception as exc:  # noqa: BLE001 — APIError y tambien timeouts/red del transporte
+            if not spec.fallback:
+                raise self._normalize(exc) from exc
+            # Reintento UNICO con el respaldo. Aplica a cualquier fallo del principal: si es
+            # un error que el respaldo comparte (key invalida), fallara igual y ambos quedan
+            # en el log; si es capacidad del modelo o una conexion colgada (los dos casos
+            # vistos), el respaldo salva la respuesta en vez de degradar al texto fijo.
+            logger.warning(
+                "llm.fallback", extra={"model": model_name, "error": str(self._normalize(exc))}
+            )
+            model_name = spec.fallback.name
+            # El respaldo lleva su propia config: el piso de thinking varia por modelo.
+            config["thinking_config"] = types.ThinkingConfig(
+                thinking_level=spec.fallback.thinking_level
+            )
+            try:
+                response = self._client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**config),
+                )
+            except Exception as exc2:  # noqa: BLE001 — mismo criterio que el principal
+                raise self._normalize(exc2) from exc2
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         return LLMResponse(
             text=self._extract_text(response),
-            model=spec.name,
+            # El modelo que REALMENTE respondio: si salvo el respaldo, AIUsage debe decirlo.
+            model=model_name,
             tier=tier,
             usage=self._to_usage(getattr(response, "usage_metadata", None)),
             latency_ms=latency_ms,
@@ -252,7 +331,13 @@ class GeminiClient(LLMClient):
 
     def _normalize(self, exc: Any) -> LLMError:
         code = getattr(exc, "code", None)
-        message = str(getattr(exc, "message", "") or exc)
+        message = str(getattr(exc, "message", "") or exc) or type(exc).__name__
+        if code is None:
+            # No vino del API (timeout, conexion cortada, DNS): es un fallo de transporte y se
+            # reintenta como tal. Se deja el tipo en el mensaje para verlo en el log.
+            return LLMError(
+                f"{type(exc).__name__}: {message}", provider=self.provider, is_connection=True
+            )
         lowered = message.lower()
         # Un 429 puede ser un pico de trafico (se reintenta) o la cuota del proyecto agotada
         # (reintentar no la devuelve); solo el mensaje los distingue.
@@ -280,7 +365,11 @@ def get_client() -> LLMClient:
     """
     global _client
     if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        # Settings lee `.env` (dev) o las variables que inyecta el entorno (AWS). Antes se leia
+        # solo `os.environ`, y pydantic NO exporta `.env` al proceso: la key en `.env` nunca
+        # llegaba aqui y el bot caia al fallback en silencio. `os.environ` queda como respaldo
+        # para quien exporta la variable a mano.
+        api_key = get_settings().gemini_api_key or os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise LLMError(
                 "Falta GEMINI_API_KEY (en AWS se lee de Secrets Manager, no del entorno en claro)",
@@ -300,3 +389,31 @@ def reset_client() -> None:
 def model_for(tier: ModelTier) -> ModelSpec:
     """Modelo y precio vigentes de un tier, sin construir cliente (logs y estimaciones)."""
     return _MODELS[tier]
+
+
+def spec_for_model(model: str | None, tier: ModelTier) -> ModelSpec:
+    """Spec (y precio) del modelo que REALMENTE atendio una llamada del tier.
+
+    Si `model` es el respaldo del tier, devuelve el spec del respaldo con su propia tarifa;
+    en cualquier otro caso (el principal, None, o un doble de tests) devuelve el principal.
+    """
+    spec = _MODELS[tier]
+    if model and spec.fallback and model == spec.fallback.name:
+        return spec.fallback
+    return spec
+
+
+def cost_for(model: str | None, usage: dict[str, int] | None, *, tier: ModelTier) -> float:
+    """Costo de una llamada con el precio del modelo que la atendio (ver `spec_for_model`).
+
+    Los tokens cacheados se cobran como input mientras el caching no este activo:
+    sobreestimar antes que subestimar (misma regla que `LLMResponse.estimated_cost_usd`).
+    """
+    if not usage:
+        return 0.0
+    spec = spec_for_model(model, tier)
+    billable_input = usage.get("input", 0) + usage.get("cached_read", 0)
+    return (
+        billable_input * spec.input_usd_per_million
+        + usage.get("output", 0) * spec.output_usd_per_million
+    ) / 1_000_000

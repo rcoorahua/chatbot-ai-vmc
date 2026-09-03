@@ -29,9 +29,30 @@ RESPONSE = "RESPONSE"
 # Proveedor de los caminos que no llamaron a ningun modelo (reglas, triviales, fallbacks).
 NO_PROVIDER = "NONE"
 
+logger = logging.getLogger(__name__)
+
+# Campos de la fila que NO van al log: la SK y el mes de facturacion son detalle de almacenamiento.
+_NOT_LOGGED = frozenset({"execution_key", "billing_month"})
+
 
 def _table():
     return dynamodb_resource().Table(get_settings().table_ai_usage)
+
+
+def list_executions(conversation_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Ejecuciones de una conversacion, de la mas reciente a la mas antigua (consola de dev en
+    `api/routers/dev.py` y auditoria). Devuelve dicts planos con numeros nativos: boto3 entrega
+    Decimal y los modelos de salida quieren int/float."""
+    from boto3.dynamodb.conditions import Key
+
+    from backend.core.dynamo_model import from_dynamo
+
+    response = _table().query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [from_dynamo(item) for item in response.get("Items", [])]
 
 
 def record_execution(
@@ -48,6 +69,8 @@ def record_execution(
     latency_ms: int,
     rag_used: bool = False,
     rag_results_count: int | None = None,
+    rag_fragments: list[dict[str, Any]] | None = None,
+    rag_min_score: float | None = None,
     handoff_triggered: bool = False,
     status: str = "SUCCESS",
 ) -> None:
@@ -82,9 +105,41 @@ def record_execution(
         item["intent"] = intent
     if rag_results_count is not None:
         item["rag_results_count"] = rag_results_count
+    if rag_fragments:
+        # Que trajo el RAG para esta respuesta (consola de dev, api/routers/dev.py): tema,
+        # score y fuente de cada fragmento recuperado — TAMBIEN los que no superaron el umbral
+        # (`relevant: False`), que es lo que permite juzgar el retrieval cuando la respuesta
+        # cayo en "sin evidencia". NUNCA el texto del fragmento — eso es contenido del Centro
+        # de Ayuda, no el mensaje del usuario, pero igual no hace falta para depurar el
+        # retrieval y agrandaria la fila sin necesidad.
+        item["rag_fragments"] = [
+            {
+                "topic": fragment["topic"],
+                "score": Decimal(str(round(fragment["score"], 4))),
+                "source_url": fragment["source_url"],
+                # Filas viejas no traen el flag; ausente = era relevante (antes solo se
+                # guardaban los que superaban el umbral).
+                "relevant": bool(fragment.get("relevant", True)),
+            }
+            for fragment in rag_fragments
+        ]
+    if rag_min_score is not None:
+        # El umbral VIGENTE al ejecutar: si se recalibra despues, la fila sigue contando la
+        # historia correcta de por que un fragmento fue (o no) evidencia.
+        item["rag_min_score"] = Decimal(str(round(rag_min_score, 4)))
+    # Un evento por ejecucion, con las mismas claves que la fila (RNF-006): en CloudWatch Logs
+    # Insights `filter event = "ai.execution" | stats sum(estimated_cost_usd) by source` da la
+    # foto de costos sin tocar DynamoDB. Sin contenido de mensajes: solo ids y metricas.
+    logger.info(
+        "ai.execution",
+        extra={
+            **{key: value for key, value in item.items() if key not in _NOT_LOGGED},
+            "estimated_cost_usd": float(estimated_cost_usd),
+        },
+    )
     try:
         _table().put_item(Item=item)
     except Exception:  # noqa: BLE001 — ver docstring: la respuesta ya salio, esto no la anula
-        logging.getLogger(__name__).exception(
+        logger.exception(
             "No se pudo registrar en AIUsage", extra={"conversation_id": conversation_id}
         )

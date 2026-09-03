@@ -3,87 +3,521 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Subastín — página de prueba del widget</title>
+<title>Subastín — banco de pruebas del widget</title>
 <style>
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f2e; background: #f6f6f9; }
-  header { background: #3b2a8c; color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; }
-  header strong { font-size: 18px; }
-  main { max-width: 760px; margin: 28px auto; padding: 0 20px; }
-  .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 10px rgba(24,16,64,.08); margin-bottom: 18px; }
-  h2 { margin: 0 0 12px; font-size: 17px; }
-  label { display: block; font-size: 13px; color: #555; margin: 10px 0 4px; }
-  input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid #d9d9e3; border-radius: 8px; font: inherit; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .mode { display: flex; gap: 18px; margin: 6px 0 4px; }
-  button.primary { background: #ff6a4d; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 16px; }
-  .warn { background: #fff1f0; color: #8a1c12; border: 1px solid #f5c2bd; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
-  pre { background: #1f1f2e; color: #e8e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; }
-  .muted { color: #6a6a7e; font-size: 13px; }
-  #status { font-size: 13px; margin-top: 8px; }
+  /* Paleta del design system (frontend/src/app/globals.css): vault + orange + teal de Concorde. */
+  :root {
+    --vault-400: #ae8eff; --vault-500: #8460e5; --vault-600: #5a35c2;
+    --vault-700: #3b1782; --vault-900: #22005c;
+    --orange-400: #fbc47d; --orange-600: #ed8936; --orange-700: #d46e20;
+    --teal-500: #00aeb1; --teal-600: #009095; --teal-ink: #00696c;
+    --ink: #191c1c; --ink-soft: #55556a; --ink-faint: #8a8aa3;
+    --line: #ececf3; --line-strong: #dcdce8;
+    --surface: #fff; --surface-soft: #f7f7fb; --surface-sunk: #f1f1f8;
+    --danger: #8a1c12; --danger-bg: #fff1f0; --danger-line: #f5c2bd;
+    --sans: "Plus Jakarta Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+    --ease: cubic-bezier(.25, .8, .25, 1);
+    --shadow: 0 1px 2px rgba(32,0,104,.05), 0 8px 24px rgba(32,0,104,.06);
+    --topbar-h: 54px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--sans); color: var(--ink); background: var(--surface-soft); font-size: 14px; line-height: 1.45; }
+  h1, h2, h3 { margin: 0; font-weight: 700; }
+  code { font-family: var(--mono); font-size: .92em; }
+  :focus-visible { outline: 2px solid var(--vault-500); outline-offset: 2px; border-radius: 4px; }
+
+  /* ── Barra superior ───────────────────────────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 20; height: var(--topbar-h);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 18px; color: #fff;
+    background-image: linear-gradient(115deg, var(--vault-700) 0%, var(--vault-900) 100%);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .brand h1 { font-size: 15px; letter-spacing: .01em; white-space: nowrap; }
+  .brand span { font-size: 12px; opacity: .7; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-meta { display: flex; align-items: center; gap: 8px; flex: none; }
+  .tpill {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-family: var(--mono);
+    background: rgba(255,255,255,.14); border-radius: 9999px; padding: 4px 11px; white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: none; }
+  .dot.live { background: #4ade80; box-shadow: 0 0 0 0 rgba(74,222,128,.6); animation: pulse 2s infinite; }
+  .dot.warn { background: var(--orange-400); }
+  .dot.down { background: #ff8a80; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); } 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); } }
+
+  /* ── Layout ───────────────────────────────────────────────────────────────────────────── */
+  .layout {
+    display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
+    gap: 18px; align-items: start; max-width: 1500px; margin: 18px auto; padding: 0 18px 40px;
+  }
+  @media (max-width: 1040px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  @media (min-width: 1041px) {
+    .side { position: sticky; top: calc(var(--topbar-h) + 18px); max-height: calc(100vh - var(--topbar-h) - 36px); overflow-y: auto; }
+  }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+
+  /* ── Paneles ──────────────────────────────────────────────────────────────────────────── */
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .panel-head h2 { font-size: 14px; }
+  .panel-head .endpoint { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); background: var(--surface-sunk); border-radius: 6px; padding: 3px 8px; }
+  .panel-body { padding: 15px 16px; }
+
+  /* ── Formulario ───────────────────────────────────────────────────────────────────────── */
+  label { display: block; font-size: 12px; color: var(--ink-soft); margin: 0 0 5px; font-weight: 600; }
+  .field + .field { margin-top: 11px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+  @media (max-width: 460px) { .grid2 { grid-template-columns: 1fr; } }
+  input[type=text] {
+    width: 100%; padding: 8px 11px; border: 1.5px solid transparent; border-radius: 10px; font: inherit; font-size: 13px; outline: none;
+    background-image: linear-gradient(#fff, #fff), linear-gradient(338deg, var(--vault-500) 0%, #fff8f1 100%);
+    background-origin: border-box; background-clip: padding-box, border-box;
+    transition: background-image .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  input[type=text]:focus {
+    background-image: linear-gradient(#fff, #fff), linear-gradient(148deg, var(--orange-600) 0%, var(--vault-500) 100%);
+    box-shadow: rgba(237,137,54,.16) 0 2px 8px;
+  }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .mode-opt { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 10px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); transition: border-color .18s var(--ease), background-color .18s var(--ease); }
+  .mode-opt:hover { background: var(--surface-soft); }
+  .mode-opt:has(input:checked) { border-color: var(--vault-500); background: rgba(132,96,229,.07); color: var(--vault-700); }
+  button.primary {
+    position: relative; overflow: hidden; color: #fff; border: 0; border-radius: 9999px; width: 100%;
+    padding: 10px 22px; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; margin-top: 14px;
+    background-image: linear-gradient(160deg, var(--orange-600) 0%, var(--orange-600) 40%, var(--vault-500) 100%);
+    box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(237,137,54,.3) 0 2px 8px;
+    transition: transform .2s var(--ease), box-shadow .25s var(--ease);
+  }
+  button.primary::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background-image: linear-gradient(220deg, var(--orange-400) 0%, var(--vault-400) 100%); opacity: 0; transition: opacity .3s var(--ease); }
+  /* La etiqueta va en un span propio: el ::before del degradado se pinta sobre el texto suelto. */
+  button.primary > span { position: relative; z-index: 1; }
+  button.primary:hover { transform: translateY(-1px); box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(132,96,229,.42) 0 8px 20px; }
+  button.primary:hover::before { opacity: 1; }
+  button.primary:active { transform: translateY(0) scale(.99); }
+  button.ghost { background: var(--surface); color: var(--vault-600); border: 1px solid var(--line-strong); border-radius: 9999px; padding: 5px 13px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; transition: background-color .18s var(--ease), border-color .18s var(--ease); }
+  button.ghost:hover { background: rgba(132,96,229,.08); border-color: var(--vault-400); }
+  .form-status { margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
+  .form-status.pending { color: var(--orange-700); font-weight: 600; }
+  .mode-hint { margin: 0 0 2px; font-size: 12px; color: var(--ink-soft); background: var(--surface-soft); border: 1px dashed var(--line-strong); border-radius: 10px; padding: 9px 11px; }
+  [hidden] { display: none !important; }
+
+  /* ── Detalles plegables (menos texto en pantalla) ─────────────────────────────────────── */
+  details.note { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+  details.note > summary { cursor: pointer; padding: 10px 14px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); list-style: none; display: flex; align-items: center; gap: 8px; }
+  details.note > summary::-webkit-details-marker { display: none; }
+  details.note > summary::before { content: "▸"; color: var(--ink-faint); font-size: 11px; transition: transform .2s var(--ease); }
+  details.note[open] > summary::before { transform: rotate(90deg); }
+  details.note > summary:hover { background: var(--surface-soft); }
+  .note-body { padding: 0 14px 13px; font-size: 12.5px; color: var(--ink-soft); }
+  .note-body p { margin: 0 0 8px; }
+  .caution { display: flex; gap: 8px; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-line); border-radius: 10px; padding: 9px 11px; font-size: 12px; }
+  pre { background: var(--vault-900); color: #e8e4f6; padding: 11px 12px; border-radius: 10px; font-size: 11.5px; font-family: var(--mono); overflow: auto; margin: 0; max-height: 260px; }
+
+  /* ── Consola: estado de la conversación ──────────────────────────────────────────────── */
+  .conv-strip { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 5px 12px; font-size: 13px; font-weight: 600; background: var(--surface-sunk); color: var(--ink-soft); border: 1px solid var(--line); }
+  .pill.mono { font-family: var(--mono); font-weight: 500; }
+  .pill.ok { background: rgba(0,174,177,.11); color: var(--teal-ink); border-color: rgba(0,174,177,.25); }
+  .pill.warn { background: rgba(237,137,54,.13); color: var(--orange-700); border-color: rgba(237,137,54,.28); }
+  .pill.alert { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
+  .pill.vault { background: rgba(132,96,229,.11); color: var(--vault-700); border-color: rgba(132,96,229,.25); }
+  .icon-btn { border: 0; background: none; padding: 0 0 0 2px; cursor: pointer; color: inherit; font-size: 11px; opacity: .6; }
+  .icon-btn:hover { opacity: 1; }
+
+  /* ── Consola: KPIs ────────────────────────────────────────────────────────────────────── */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(142px, 1fr)); gap: 9px; margin-top: 13px; }
+  .kpi { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); font-weight: 700; }
+  .kpi-value { font-size: 20px; font-weight: 700; line-height: 1.25; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi-value.money { font-size: 16px; font-family: var(--mono); }
+  .kpi-sub { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+  .meter { display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--line); margin-top: 7px; }
+  .meter i { display: block; height: 100%; }
+  .meter i.paid { background: linear-gradient(90deg, var(--orange-600), var(--orange-400)); }
+  .meter i.free { background: linear-gradient(90deg, var(--teal-500), #6fd8d9); }
+
+  /* ── Pestañas de la consola ───────────────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); }
+  .tab {
+    border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--ink-soft); padding: 8px 14px 10px; cursor: pointer; position: relative;
+    border-radius: 8px 8px 0 0; transition: color .2s var(--ease), background-color .2s var(--ease);
+  }
+  .tab:hover { color: var(--vault-600); background: var(--surface-soft); }
+  .tab.is-active { color: var(--vault-700); }
+  .tab.is-active::after {
+    content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px;
+    border-radius: 3px 3px 0 0; background: linear-gradient(90deg, var(--vault-500), var(--vault-700));
+  }
+
+  /* ── Pestaña Tablas ───────────────────────────────────────────────────────────────────── */
+  .tbl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tbl-hint { font-size: 13.5px; color: var(--ink-faint); margin: 10px 0 8px; }
+  .tbl-meta { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); margin-bottom: 8px; }
+  .tbl-scroll { overflow: auto; max-height: 60vh; border: 1px solid var(--line); border-radius: 10px; }
+  table.tbl { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13.5px; }
+  table.tbl th {
+    position: sticky; top: 0; z-index: 1; background: var(--surface-sunk); text-align: left;
+    padding: 11px 14px; color: var(--ink-soft); font-weight: 600; white-space: nowrap;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  table.tbl th.is-key { color: var(--vault-700); }
+  table.tbl td {
+    padding: 11px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
+    max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: top;
+  }
+  /* Cebra: una fila si y una no en gris, para que la vista no se pierda entre columnas. */
+  table.tbl tbody tr:nth-child(even) { background: var(--surface-soft); }
+  table.tbl tr:hover td { background: rgba(132, 96, 229, .07); }
+  table.tbl tr.is-new td { animation: fila-nueva 2.4s var(--ease) both; }
+  table.tbl tr.is-changed td { animation: fila-cambiada 2.4s var(--ease) both; }
+  @keyframes fila-nueva { from { background: rgba(34, 197, 94, .28); } to { background: transparent; } }
+  @keyframes fila-cambiada { from { background: rgba(237, 137, 54, .28); } to { background: transparent; } }
+
+  /* ── Pestaña Cola ─────────────────────────────────────────────────────────────────────── */
+  .q-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .q-card { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
+  .q-card h3 { margin: 0 0 7px; font-size: 13.5px; font-family: var(--mono); color: var(--vault-700); }
+  .q-nums { display: flex; gap: 14px; font-size: 13px; color: var(--ink-soft); }
+  .q-nums b { display: block; font-size: 18px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .q-card .q-error { color: var(--danger); font-size: 12px; }
+  .q-log { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+  .q-item { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: var(--surface); }
+  .q-item.is-new { animation: fila-nueva 2.4s var(--ease) both; }
+  .q-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .q-when { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); }
+  .q-item pre {
+    margin: 0; background: var(--surface-sunk); color: var(--ink); border-radius: 8px;
+    padding: 7px 9px; font-size: 11px; max-height: 130px; overflow: auto;
+  }
+  .q-empty { text-align: center; color: var(--ink-soft); font-size: 13.5px; padding: 18px 0; }
+
+  /* ── Consola: controles ───────────────────────────────────────────────────────────────── */
+  .controls { position: sticky; top: var(--topbar-h); z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; background: rgba(255,255,255,.92); backdrop-filter: blur(6px); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+  .f-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 9999px; padding: 6px 13px; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink-soft); cursor: pointer; transition: background-color .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease); }
+  .f-chip:hover { background: var(--surface-soft); }
+  .f-chip .count { font-family: var(--mono); font-size: 12.5px; opacity: .7; }
+  .f-chip[aria-pressed="true"] { background: var(--vault-500); border-color: var(--vault-500); color: #fff; }
+  .f-chip[aria-pressed="true"] .count { opacity: .85; }
+  .f-chip[disabled] { opacity: .45; cursor: default; }
+  .controls-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  /* Boton de sondeo en vivo: apagado por defecto — la consola solo pide datos cuando se pulsa
+     "Actualizar" o mientras esto esta encendido. El punto pulsante es la unica señal de que
+     hay peticiones saliendo cada REFRESH_MS. */
+  .live-btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 9999px; padding: 6px 13px; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; transition: background-color .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease); }
+  .live-btn:hover { background: var(--surface-soft); }
+  .live-btn:focus-visible { outline: 2px solid var(--vault-500); outline-offset: 2px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: none; }
+  .live-btn[aria-pressed="true"] { background: var(--teal-500); border-color: var(--teal-500); color: #fff; }
+  .live-btn[aria-pressed="true"] .live-dot { background: #fff; animation: pulse-live 2s infinite; }
+  @keyframes pulse-live { 0% { opacity: 1; } 50% { opacity: .35; } 100% { opacity: 1; } }
+  .console-status { font-size: 12.5px; color: var(--ink-faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+  /* ── Consola: banner de error ─────────────────────────────────────────────────────────── */
+  .banner { display: flex; gap: 9px; align-items: flex-start; margin: 13px 16px 0; padding: 10px 12px; border-radius: 10px; font-size: 13.5px; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-line); }
+  .banner.info { background: rgba(132,96,229,.07); color: var(--vault-700); border-color: rgba(132,96,229,.22); }
+  .banner b { font-weight: 700; }
+
+  /* ── Consola: turnos ──────────────────────────────────────────────────────────────────── */
+  .turns { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; }
+  .turn { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; transition: border-color .18s var(--ease), box-shadow .18s var(--ease); }
+  .turn:hover { border-color: var(--line-strong); }
+  .turn.is-handoff { border-left: 3px solid var(--orange-600); }
+  .turn.is-guard { border-left: 3px solid var(--vault-500); }
+  .turn.is-ai { border-left: 3px solid var(--teal-500); }
+  .turn.is-open { box-shadow: var(--shadow); }
+  .turn-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; width: 100%; padding: 10px 12px; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+  .turn-head:hover { background: var(--surface-soft); }
+  .turn-n { font-size: 13px; font-weight: 700; color: var(--ink); background: var(--surface-sunk); border-radius: 7px; padding: 3px 9px; font-variant-numeric: tabular-nums; flex: none; }
+  .turn-time { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); flex: none; }
+  .turn-metrics { margin-left: auto; display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 13px; color: var(--ink-soft); flex-wrap: wrap; justify-content: flex-end; }
+  .turn-metrics .m-cost { color: var(--orange-700); font-weight: 600; }
+  .chev { flex: none; color: var(--ink-faint); font-size: 10px; transition: transform .2s var(--ease); }
+  .turn.is-open .chev { transform: rotate(90deg); }
+  .turn-body { border-top: 1px dashed var(--line); background: var(--surface-soft); padding: 11px 12px; display: flex; flex-direction: column; gap: 9px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 7px; padding: 3px 9px; font-size: 12.5px; font-weight: 700; background: var(--surface-sunk); color: var(--ink-soft); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .badge.model { background: rgba(237,137,54,.16); color: var(--orange-700); }
+  .badge.free { background: rgba(0,174,177,.14); color: var(--teal-ink); }
+  .badge.guard { background: rgba(132,96,229,.16); color: var(--vault-700); }
+  .badge.handoff { background: #ffd9d2; color: var(--danger); }
+  .badge.intent { background: rgba(132,96,229,.09); color: var(--vault-600); font-family: var(--mono); font-weight: 600; }
+
+  .exec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
+  .exec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+  .exec-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .exec-stage { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); }
+  /* Estadisticas de la ejecucion, en una sola linea a la derecha (o abajo si no cabe). */
+  .exec-stats { margin-left: auto; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-family: var(--mono); font-size: 13px; color: var(--ink); }
+  .exec-stats .dim { color: var(--ink-faint); font-family: var(--sans); }
+  .exec-model { font-weight: 700; color: var(--orange-700); }
+
+  .rag { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 9px; }
+  .rag-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); font-weight: 700; margin-bottom: 6px; }
+  .rag-item + .rag-item { margin-top: 7px; }
+  .rag-row { display: flex; align-items: baseline; gap: 8px; }
+  .rag-topic { flex: 1; min-width: 0; font-size: 13.5px; color: var(--vault-700); overflow-wrap: anywhere; }
+  .rag-topic a { color: inherit; }
+  .rag-score { font-family: var(--mono); font-size: 13px; font-weight: 600; flex: none; }
+  .rag-score.high { color: var(--teal-ink); }
+  .rag-score.mid { color: var(--vault-600); }
+  .rag-score.low { color: var(--orange-700); }
+  .rag-bar { height: 3px; border-radius: 2px; background: var(--line); margin-top: 4px; overflow: hidden; }
+  .rag-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--vault-500), var(--teal-500)); }
+  .rag-note { font-size: 13.5px; color: var(--ink-faint); }
+  /* Hit bajo RAG_MIN_SCORE: se muestra igual (para juzgar el retrieval) pero atenuado. */
+  .rag-item.is-discarded { opacity: .62; }
+  .rag-item.is-discarded .rag-topic { color: var(--ink-faint); }
+  .rag-item.is-discarded .rag-bar i { background: var(--line-strong); }
+  .rag-score.off { color: var(--ink-faint); text-decoration: line-through; }
+  .rag-discarded-tag { font-size: 11px; font-weight: 700; color: var(--orange-700); text-transform: uppercase; letter-spacing: .04em; flex: none; }
+
+  /* ── Pestaña Logs ─────────────────────────────────────────────────────────────────────── */
+  .log-lines { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .log-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding: 6px 9px; border-radius: 8px; background: var(--surface-soft); border: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px; }
+  .log-line.is-free { opacity: .78; }
+  .log-time { color: var(--ink-faint); flex: none; }
+  .log-api { font-weight: 700; flex: none; border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+  .log-api.gemini { background: rgba(237,137,54,.16); color: var(--orange-700); }
+  .log-api.pinecone { background: rgba(0,174,177,.14); color: var(--teal-ink); }
+  .log-api.none { background: var(--surface-sunk); color: var(--ink-faint); }
+  .log-text { color: var(--ink-soft); overflow-wrap: anywhere; }
+  .log-text b { color: var(--ink); font-weight: 600; }
+  .log-cost { color: var(--orange-700); font-weight: 600; margin-left: auto; flex: none; }
+
+  .empty { text-align: center; padding: 34px 18px; color: var(--ink-soft); }
+  .empty strong { display: block; font-size: 14px; color: var(--ink); margin-bottom: 4px; }
+  .empty span { font-size: 13.5px; }
+
+  .legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 14px; font-size: 12px; color: var(--ink-soft); }
+  .legend-grid div { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  /* Igual que en el widget: se quita el movimiento, no la respuesta visual (ver la nota en
+     widget/subastin.js). Anular toda transicion dejaba la consola inerte en equipos con las
+     animaciones del sistema apagadas. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .18s !important; animation-duration: .2s !important; }
+    .f-chip:hover, .turn-head:hover, button.ghost:hover, button.primary:hover,
+    button.primary:active, .icon-btn:hover { transform: none !important; }
+    .dot.live { animation: none !important; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <strong>VMC Subastas — simulación de la página anfitriona</strong>
-  <span style="opacity:.8;font-size:13px">Subastín · widget/test.html</span>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>VMC Subastas</h1>
+    <span>simulación de la página anfitriona · widget/test.html</span>
+  </div>
+  <div class="topbar-meta">
+    <span class="tpill" id="top-mode">—</span>
+    <span class="tpill"><span class="dot" id="top-dot"></span><span id="top-api">localhost:8000</span></span>
+  </div>
 </header>
 
-<main>
-  <div class="card">
-    <h2>Cómo usar esta página</h2>
-    <p class="muted">
-      Simula una página de <code>vmcsubastas.com</code> con el widget embebido. Necesita la API local
-      corriendo (<code>uvicorn backend.api.main:app --reload --port 8000</code>) con
-      <code>VMC_IDENTITY_SECRET</code> en <code>.env</code>. Elige un modo, aplica y usa el botón morado
-      abajo a la derecha.
-    </p>
-    <p class="warn">
-      <strong>Solo para pruebas locales.</strong> Aquí el JWT de identidad se firma en el navegador con el
-      secreto de dev para simular lo que en producción hace el <em>servidor</em> de VMC. El secreto real
-      jamás va en una página web.
-    </p>
-  </div>
+<main class="layout">
 
-  <form class="card" id="config" method="get">
-    <h2>Configuración</h2>
-    <div class="mode">
-      <label><input type="radio" name="mode" value="anon"> Visitante anónimo</label>
-      <label><input type="radio" name="mode" value="auth"> Usuario autenticado en VMC</label>
-    </div>
-    <div class="row">
-      <div>
-        <label for="id">ID de usuario VMC (<code>sub</code>)</label>
-        <input type="text" id="id" name="id" value="215011">
+  <!-- ───────────────────────────── Columna de configuración ───────────────────────────── -->
+  <aside class="side">
+    <form class="panel" id="config" method="get">
+      <div class="panel-head"><h2>Configuración</h2></div>
+      <div class="panel-body">
+        <div class="modes">
+          <label class="mode-opt"><input type="radio" name="mode" value="anon"> Anónimo</label>
+          <label class="mode-opt"><input type="radio" name="mode" value="auth"> Autenticado</label>
+        </div>
+        <div id="identity-fields">
+          <div class="grid2">
+            <div class="field">
+              <label for="id">ID VMC (<code>sub</code>)</label>
+              <input type="text" id="id" name="id" value="215011">
+            </div>
+            <div class="field">
+              <label for="name">Nombre</label>
+              <input type="text" id="name" name="name" value="Aaron">
+            </div>
+          </div>
+          <div class="field">
+            <label for="email">Correo</label>
+            <input type="text" id="email" name="email" value="aaron@example.test">
+          </div>
+          <div class="field">
+            <label for="secret">Secreto compartido (= <code>VMC_IDENTITY_SECRET</code>)</label>
+            <input type="text" id="secret" name="secret" value="dev-vmc-identity-secret">
+          </div>
+        </div>
+        <p class="mode-hint" id="anon-hint">El visitante anónimo no manda identidad: sesión de
+          pestaña (24 h) y solo FAQ — sin handoff ni ticket (D-002).</p>
+        <div class="field">
+          <label for="api">URL de la API</label>
+          <input type="text" id="api" name="api" value="http://localhost:8000">
+        </div>
+        <button class="primary" type="submit"><span>Aplicar y cargar el widget</span></button>
+        <div id="status" class="form-status"></div>
+        <!-- Cambios de sesion SIN recargar, como los haria la SPA de VMC (DETAILS.md §4.8):
+             el widget debe olvidar por completo al usuario anterior. -->
+        <div class="field" style="margin-top:12px">
+          <label>Cambiar de sesión sin recargar (<code>window.Subastin.setIdentity</code>)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="ghost" type="button" id="switch-user">Entrar como otro usuario</button>
+            <button class="ghost" type="button" id="switch-logout">Cerrar sesión</button>
+            <button class="ghost" type="button" id="switch-reset">Reset</button>
+          </div>
+          <p class="mode-hint" id="switch-hint">Con el widget cargado: «otro usuario» firma un JWT
+            para <code>sub</code> = ID + «-b»; «cerrar sesión» lo deja anónimo; «reset» olvida
+            sesión y mensajes y vuelve a empezar con la identidad vigente.</p>
+        </div>
       </div>
-      <div>
-        <label for="name">Nombre</label>
-        <input type="text" id="name" name="name" value="Aaron">
-      </div>
-    </div>
-    <div class="row">
-      <div>
-        <label for="email">Correo</label>
-        <input type="text" id="email" name="email" value="aaron@example.test">
-      </div>
-      <div>
-        <label for="secret">Secreto compartido (dev, = <code>VMC_IDENTITY_SECRET</code>)</label>
-        <input type="text" id="secret" name="secret" value="dev-vmc-identity-secret">
-      </div>
-    </div>
-    <label for="api">URL de la API</label>
-    <input type="text" id="api" name="api" value="http://localhost:8000">
-    <button class="primary" type="submit">Aplicar y cargar el widget</button>
-    <div id="status" class="muted"></div>
-  </form>
+    </form>
 
-  <div class="card">
-    <h2>Lo que la página deja para el widget</h2>
-    <p class="muted">Así queda <code>window.subastinSettings</code> con la configuración actual:</p>
-    <pre id="settings-dump">(sin cargar)</pre>
-  </div>
+    <details class="note">
+      <summary>Cómo usar esta página</summary>
+      <div class="note-body">
+        <p>Necesita la API (<code>uvicorn backend.api.main:app --reload --port 8000</code>) y el worker
+          (<code>python -m scripts.run_ai_worker</code>) corriendo. Elige un modo, aplica, y abre el
+          widget con el botón morado de abajo a la derecha.</p>
+        <p class="caution"><span>⚠</span><span><b>Solo pruebas locales.</b> Aquí el JWT de identidad se
+          firma en el navegador; en producción lo firma el <em>servidor</em> de VMC y el secreto nunca
+          llega a una página web.</span></p>
+      </div>
+    </details>
+
+    <details class="note">
+      <summary>window.subastinSettings</summary>
+      <div class="note-body"><pre id="settings-dump">(sin cargar)</pre></div>
+    </details>
+  </aside>
+
+  <!-- ─────────────────────────── Consola de observabilidad ─────────────────────────────── -->
+  <section class="panel" id="console-panel">
+    <div class="panel-head">
+      <h2>Consola de observabilidad</h2>
+      <span class="endpoint" id="console-endpoint">GET /dev/conversations/{id}/ai-usage</span>
+    </div>
+
+    <div class="tabs" role="tablist" id="console-tabs">
+      <button type="button" class="tab is-active" data-tab="ia" role="tab">Consola IA</button>
+      <button type="button" class="tab" data-tab="tablas" role="tab">Tablas</button>
+      <button type="button" class="tab" data-tab="cola" role="tab">Cola</button>
+      <button type="button" class="tab" data-tab="logs" role="tab"
+        title="Log de las APIs llamadas en cada etapa del pipeline">≣ Logs</button>
+    </div>
+
+    <div class="panel-body" id="console-summary">
+      <div class="conv-strip" id="conv-state"></div>
+      <div class="kpis" id="kpis"></div>
+    </div>
+
+    <div class="controls">
+      <div class="filters" id="filters"></div>
+      <div class="controls-right">
+        <button type="button" class="ghost" id="toggle-all">Expandir todo</button>
+        <button type="button" class="ghost" id="console-refresh">Actualizar</button>
+        <button type="button" class="live-btn" id="console-live" aria-pressed="false"
+          title="Consulta la API cada 3 s mientras la pestaña esté visible. Apagado, la consola solo se actualiza con el botón Actualizar.">
+          <span class="live-dot"></span><span>Ver en vivo</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="console-banner"></div>
+    <div class="turns" id="turns"></div>
+
+    <!-- ── Pestaña Tablas: scan en vivo de las 5 tablas de dynamodb-local ── -->
+    <div class="panel-body" id="tab-tablas" hidden>
+      <div class="tbl-chips" id="tbl-chips"></div>
+      <div class="tbl-meta" id="tbl-meta"></div>
+      <div class="tbl-scroll">
+        <table class="tbl" id="tbl-grid"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ── Pestaña Cola: estado de SQS + historial de jobs encolados ── -->
+    <div class="panel-body" id="tab-cola" hidden>
+      <div class="q-cards" id="q-cards"></div>
+      <p class="tbl-hint">Un job pasa sus primeros segundos <b>retrasado</b> (el debounce de
+        D-020, DelaySeconds) y el worker suele consumirlo apenas se hace visible — por eso
+        «visibles» casi siempre marca 0. El historial de abajo se captura <b>al encolar</b>
+        (la API lo registra), así no se escapa ninguno.</p>
+      <div class="q-log" id="q-log"></div>
+    </div>
+
+    <!-- ── Pestaña Logs: las APIs llamadas en cada etapa, en orden cronológico ── -->
+    <div class="panel-body" id="tab-logs" hidden>
+      <p class="tbl-hint">Cada línea es una llamada (o un atajo sin llamada) del pipeline, la
+        más reciente arriba: <b>Gemini</b> al clasificar o redactar (el modelo mostrado es el
+        que <i>realmente</i> respondió — si salvó el respaldo, aquí se ve), <b>Pinecone</b> en
+        la búsqueda RAG, y <b>sin API</b> cuando una regla, trivial o guardrail resolvió
+        gratis. Sale de las mismas filas de AIUsage que la Consola IA.</p>
+      <div class="log-lines" id="log-lines"></div>
+    </div>
+
+    <div class="panel-body" id="console-legend" style="border-top:1px solid var(--line)">
+      <details class="note" style="border:0">
+        <summary style="padding-left:0">Cómo leer esta consola</summary>
+        <div class="note-body" style="padding-left:0">
+          <div class="legend-grid">
+            <div><span class="swatch" style="background:var(--teal-500)"></span> Turno con llamada a IA (pagó tokens)</div>
+            <div><span class="swatch" style="background:var(--vault-500)"></span> Guardrail: respuesta fija, sin IA</div>
+            <div><span class="swatch" style="background:var(--orange-600)"></span> Derivó a un asesor humano</div>
+            <div><span class="swatch" style="background:var(--line-strong)"></span> Respuesta fija (trivial / fuera de dominio)</div>
+          </div>
+          <p style="margin-top:9px">Un <b>turno</b> agrupa las ejecuciones de un mismo mensaje: primero
+            <i>clasifica</i> (qué intención) y luego <i>responde</i>. En "Decidió" ves la capa exacta que
+            resolvió. El bloque <b>RAG</b> lista los artículos del Centro de Ayuda recuperados con su score
+            de similitud — también los que quedaron <b>bajo el umbral</b> <code>RAG_MIN_SCORE</code>
+            (atenuados y marcados «descartado»): no fueron evidencia, pero muestran cómo enrutó
+            el retrieval. Nunca se muestra el texto de los mensajes, solo métricas.</p>
+        </div>
+      </details>
+    </div>
+  </section>
 </main>
 
 <script>
+  // ═══════════════════════════ Utilidades de DOM y formato ═══════════════════════════
+  // Regla del repo: todo se construye con nodos y textContent. Nada de HTML crudo, nunca.
+
+  function node(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+
+  function replaceChildren(parent, children) {
+    while (parent.firstChild) parent.removeChild(parent.firstChild);
+    for (const child of children) if (child) parent.appendChild(child);
+  }
+
+  const nf = new Intl.NumberFormat("es-PE");
+
+  function fmtInt(value) { return nf.format(Number(value) || 0); }
+
+  function fmtMoney(value) { return Number(value || 0).toFixed(6); }
+
+  function fmtMs(ms) {
+    const value = Number(ms) || 0;
+    if (!value) return "0 ms";
+    return value < 1000 ? value + " ms" : (value / 1000).toFixed(2) + " s";
+  }
+
+  function hora(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? String(iso).slice(11, 19) : d.toLocaleTimeString("es-PE", { hour12: false });
+  }
+
+  function shortId(value) { return value ? String(value).slice(0, 8) : "—"; }
+
+  // ═══════════════════════════ Configuración y arranque del widget ═══════════════════════════
+
   // Firma HS256 en el navegador. SOLO simulacion: en produccion esto vive en el backend de VMC.
   async function signJwt(payload, secret) {
     const enc = new TextEncoder();
@@ -98,17 +532,45 @@
 
   const params = new URLSearchParams(location.search);
   const form = document.getElementById("config");
-  const mode = params.get("mode") || "anon";
+  const mode = params.get("mode") === "auth" ? "auth" : "anon";
   form.querySelector(`input[name=mode][value=${mode}]`).checked = true;
   for (const field of ["id", "name", "email", "secret", "api"]) {
     if (params.has(field)) form.elements[field].value = params.get(field);
   }
 
+  function apiUrl() {
+    return form.elements.api.value.trim().replace(/\/+$/, "");
+  }
+
+  function selectedMode() {
+    return form.querySelector("input[name=mode]:checked").value;
+  }
+
+  function syncModeFields() {
+    const seleccionado = selectedMode();
+    document.getElementById("identity-fields").hidden = seleccionado !== "auth";
+    document.getElementById("anon-hint").hidden = seleccionado !== "anon";
+    const status = document.getElementById("status");
+    if (seleccionado !== mode) {
+      status.className = "form-status pending";
+      status.textContent = seleccionado === "auth"
+        ? "Pulsa «Aplicar» para recargar como usuario autenticado."
+        : "Pulsa «Aplicar» para recargar como visitante anónimo.";
+    }
+  }
+
+  for (const radio of form.querySelectorAll("input[name=mode]")) {
+    radio.addEventListener("change", syncModeFields);
+  }
+  syncModeFields();
+
+  document.getElementById("top-mode").textContent = mode === "auth" ? "modo: autenticado" : "modo: anónimo";
+  document.getElementById("top-api").textContent = apiUrl().replace(/^https?:\/\//, "");
+
   async function boot() {
     const status = document.getElementById("status");
     const dump = document.getElementById("settings-dump");
-    const apiUrl = form.elements.api.value.trim();
-    const settings = { apiUrl };
+    const settings = { apiUrl: apiUrl() };
 
     if (mode === "auth") {
       if (!window.crypto || !crypto.subtle) {
@@ -123,9 +585,11 @@
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
       settings.userJwt = await signJwt(payload, form.elements.secret.value);
-      status.textContent = `Modo autenticado: JWT firmado para sub=${payload.sub} (expira en 1 h).`;
+      status.className = "form-status";
+      status.textContent = `JWT firmado para sub=${payload.sub} (expira en 1 h).`;
     } else {
-      status.textContent = "Modo visitante: sin userJwt, el widget abre una sesión anónima.";
+      status.className = "form-status";
+      status.textContent = "Sin userJwt: el widget abrirá una sesión anónima.";
     }
 
     dump.textContent = JSON.stringify(settings, null, 2);
@@ -136,7 +600,857 @@
     document.body.appendChild(script);
   }
 
+  // ═══════════════════════════ Consola de observabilidad (dev/stage) ═══════════════════════════
+  // Lee la sesion que el widget guarda en sessionStorage (mismo origen) y consulta /dev/.../ai-usage.
+
+  const SESSION_KEY = "subastin.session.v1";
+  const REFRESH_MS = 3000;
+
+  // Etiquetas legibles de `source` (la capa que resolvio el mensaje). El vocabulario lo produce
+  // backend/workers/ai_worker.py; lo que no este aqui se muestra tal cual.
+  const SOURCE_LABELS = {
+    trivial_greeting: "Saludo (fijo)",
+    trivial_thanks: "Agradecimiento (fijo)",
+    trivial_identity: "Identidad (fijo)",
+    trivial_repeat: "Repetido: aviso",
+    trivial_repeat_silent: "Repetido: silencio",
+    fixed_other: "Fuera de dominio (fijo)",
+    fixed_catalog: "Catálogo (fijo, D-011)",
+    fixed_anonymous_advisor: "Anónimo pide asesor (fijo)",
+    model: "Modelo",
+    rules: "Reglas",
+    fallback: "Fallback (sin modelo)",
+  };
+
+  const INTENT_LABELS = { FAQ: "FAQ", CATALOG: "Catálogo", ADVISOR: "Asesor", OTHER: "Otro" };
+
+  const FILTERS = [
+    { key: "all", label: "Todo", test: () => true },
+    { key: "ai", label: "Con IA", test: (e) => isPaid(e) },
+    { key: "free", label: "Sin IA", test: (e) => !isPaid(e) },
+    { key: "guardrail", label: "Guardrails", test: (e) => String(e.source || "").startsWith("guardrail:") },
+    { key: "handoff", label: "Handoff", test: (e) => !!e.handoff_triggered },
+    { key: "rag", label: "Con RAG", test: (e) => (e.rag_fragments || []).length > 0 || !!e.rag_used },
+  ];
+
+  // `live` arranca APAGADO a proposito: con el sondeo encendido por defecto, el log de uvicorn
+  // se llena de GET repetidos y cuesta ver la peticion que uno esta depurando. Se enciende a
+  // mano con "Ver en vivo"; mientras tanto, "Actualizar" trae los datos de a una.
+  const state = { filter: "all", expanded: new Set(), expandAll: false, lastPayload: null, turns: [], executions: [], live: false };
+
+  const els = {
+    convState: document.getElementById("conv-state"),
+    kpis: document.getElementById("kpis"),
+    filters: document.getElementById("filters"),
+    turns: document.getElementById("turns"),
+    banner: document.getElementById("console-banner"),
+    status: null,
+    dot: document.getElementById("top-dot"),
+    toggleAll: document.getElementById("toggle-all"),
+    live: document.getElementById("console-live"),
+  };
+
+  function isPaid(execution) {
+    return !!execution.provider && execution.provider !== "NONE";
+  }
+
+  function readSession() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Categoria visual de una ejecucion: define color de badge y del borde del turno. */
+  function kindOf(execution) {
+    const source = String(execution.source || "");
+    if (execution.handoff_triggered || source.startsWith("handoff:")) return "handoff";
+    if (source.startsWith("guardrail:")) return "guard";
+    if (isPaid(execution)) return "model";
+    return "free";
+  }
+
+  function sourceLabel(source) {
+    const raw = String(source || "");
+    if (SOURCE_LABELS[raw]) return SOURCE_LABELS[raw];
+    if (raw.startsWith("guardrail:")) return "Guardrail · " + raw.slice("guardrail:".length).replace(/:/g, " · ");
+    if (raw.startsWith("handoff:")) return "Handoff · " + raw.slice("handoff:".length);
+    if (raw.startsWith("flow:")) return "Flujo · " + raw.slice("flow:".length).replace(/:/g, " · ");
+    return raw || "—";
+  }
+
+  /** Agrupa las ejecuciones por mensaje. La API las devuelve de la mas reciente a la mas
+   *  antigua, asi que el turno mas reciente queda primero y dentro de cada turno se ordena
+   *  cronologicamente (clasifica → responde), que es como se leen. */
+  function groupTurns(executions) {
+    const turns = [];
+    const byKey = new Map();
+    for (const execution of executions) {
+      const key = execution.message_id || "sin-mensaje";
+      let turn = byKey.get(key);
+      if (!turn) {
+        turn = { key, executions: [] };
+        byKey.set(key, turn);
+        turns.push(turn);
+      }
+      turn.executions.push(execution);
+    }
+    for (const turn of turns) {
+      turn.executions.reverse();
+      const last = turn.executions[turn.executions.length - 1];
+      turn.at = turn.executions[0].created_at;
+      turn.intent = (turn.executions.find((e) => e.intent) || {}).intent || null;
+      turn.decided = last.source;
+      turn.kind = kindOf(last);
+      turn.handoff = turn.executions.some((e) => e.handoff_triggered);
+      turn.aiCalls = turn.executions.filter(isPaid).length;
+      turn.inputTokens = turn.executions.reduce((sum, e) => sum + (e.input_tokens || 0), 0);
+      turn.outputTokens = turn.executions.reduce((sum, e) => sum + (e.output_tokens || 0), 0);
+      turn.cost = turn.executions.reduce((sum, e) => sum + (e.estimated_cost_usd || 0), 0);
+      turn.latency = turn.executions.reduce((sum, e) => sum + (e.latency_ms || 0), 0);
+      turn.ragCount = turn.executions.reduce((sum, e) => sum + (e.rag_fragments || []).length, 0);
+    }
+    return turns;
+  }
+
+  // ───────────────────────────────── Render: estado y KPIs ─────────────────────────────────
+
+  function pill(text, kind, mono) {
+    return node("span", "pill" + (kind ? " " + kind : "") + (mono ? " mono" : ""), text);
+  }
+
+  function renderConversation(conv) {
+    const idPill = pill("conv " + shortId(conv.conversation_id), "", true);
+    const copy = node("button", "icon-btn", "⧉");
+    copy.type = "button";
+    copy.title = "Copiar el id completo: " + conv.conversation_id;
+    copy.setAttribute("aria-label", "Copiar el id de la conversación");
+    copy.addEventListener("click", () => {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(conv.conversation_id).then(
+          () => { copy.textContent = "✓"; setTimeout(() => { copy.textContent = "⧉"; }, 1200); },
+          () => {}
+        );
+      }
+    });
+    idPill.appendChild(copy);
+
+    const statusKind = conv.status === "BOT_ATTENDING" ? "ok"
+      : conv.status === "PENDING_ADVISOR" ? "warn"
+      : conv.status === "IN_ATTENTION" ? "vault" : "";
+
+    replaceChildren(els.convState, [
+      idPill,
+      pill(conv.status, statusKind, true),
+      pill(conv.bot_enabled ? "bot ON" : "bot OFF", conv.bot_enabled ? "ok" : "alert"),
+      pill(conv.message_count + " mensajes"),
+      conv.handoff_reason ? pill("handoff: " + conv.handoff_reason, "alert", true) : null,
+      conv.wait_message_sent ? pill("aviso de espera enviado", "warn") : null,
+    ]);
+  }
+
+  function kpi(label, value, sub, extra, valueClass) {
+    const card = node("div", "kpi");
+    card.appendChild(node("div", "kpi-label", label));
+    card.appendChild(node("div", "kpi-value" + (valueClass ? " " + valueClass : ""), value));
+    if (sub) card.appendChild(node("div", "kpi-sub", sub));
+    if (extra) card.appendChild(extra);
+    return card;
+  }
+
+  function renderKpis(totals, turns) {
+    const freePct = totals.executions ? Math.round((100 * totals.free_executions) / totals.executions) : 0;
+    const meter = node("div", "meter");
+    const paid = node("i", "paid");
+    const free = node("i", "free");
+    paid.style.width = (100 - freePct) + "%";
+    free.style.width = freePct + "%";
+    meter.append(paid, free);
+    meter.setAttribute("role", "img");
+    meter.setAttribute("aria-label", freePct + "% de las ejecuciones no llamaron a la IA");
+
+    const avgCost = turns.length ? totals.estimated_cost_usd / turns.length : 0;
+    const avgLatency = totals.ai_calls ? Math.round(totals.total_latency_ms / totals.ai_calls) : 0;
+    const tokensTotal = (totals.input_tokens || 0) + (totals.output_tokens || 0);
+
+    replaceChildren(els.kpis, [
+      kpi("Turnos", fmtInt(turns.length), totals.executions + " ejecuciones"),
+      kpi("Llamadas IA", fmtInt(totals.ai_calls), totals.free_executions + " sin IA (" + freePct + "%)", meter),
+      kpi("Tokens", fmtInt(tokensTotal),
+        "in " + fmtInt(totals.input_tokens) + " · out " + fmtInt(totals.output_tokens) +
+        (totals.cached_tokens ? " · cache " + fmtInt(totals.cached_tokens) : "")),
+      // Con 1 solo turno o 1 sola llamada, "promedio" es el mismo numero que el total: se
+      // omite el subtitulo en vez de repetirlo (el usuario lo señalo como ruido).
+      kpi("Costo US$", fmtMoney(totals.estimated_cost_usd),
+        turns.length > 1 ? "≈ " + fmtMoney(avgCost) + " por turno" : null, null, "money"),
+      kpi("Latencia IA", fmtMs(totals.total_latency_ms),
+        totals.ai_calls > 1 ? "media " + fmtMs(avgLatency) + " por llamada"
+          : totals.ai_calls === 0 ? "sin llamadas" : null),
+    ]);
+  }
+
+  function renderFilters(turns) {
+    const chips = FILTERS.map((filter) => {
+      const matches = turns.filter((turn) => turn.executions.some(filter.test)).length;
+      const chip = node("button", "f-chip");
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", String(state.filter === filter.key));
+      chip.appendChild(node("span", null, filter.label));
+      chip.appendChild(node("span", "count", matches));
+      if (!matches && filter.key !== "all") chip.disabled = true;
+      chip.addEventListener("click", () => {
+        state.filter = filter.key;
+        renderAll();
+      });
+      return chip;
+    });
+    replaceChildren(els.filters, chips);
+  }
+
+  // ─────────────────────────────────── Render: turnos ───────────────────────────────────
+
+  function ragBlock(execution) {
+    const fragments = execution.rag_fragments || [];
+    const block = node("div", "rag");
+    if (fragments.length) {
+      // Filas nuevas traen TODOS los hits con su flag `relevant`; en filas viejas el flag no
+      // existe (solo se guardaban los que superaban el umbral) y ausente = relevante.
+      const used = fragments.filter((f) => f.relevant !== false).length;
+      const discarded = fragments.length - used;
+      const threshold = Number(execution.rag_min_score) || 0;
+      let title = "RAG · " + used + (used === 1 ? " usado" : " usados");
+      if (discarded) {
+        title += " · " + discarded + " bajo el umbral" + (threshold ? " (" + threshold.toFixed(2) + ")" : "");
+      }
+      if (!used) title = "RAG · sin evidencia: " + discarded + " bajo el umbral" + (threshold ? " (" + threshold.toFixed(2) + ")" : "");
+      block.appendChild(node("div", "rag-title", title));
+      for (const fragment of fragments) {
+        const isDiscarded = fragment.relevant === false;
+        const item = node("div", "rag-item" + (isDiscarded ? " is-discarded" : ""));
+        const row = node("div", "rag-row");
+        const topic = node("div", "rag-topic");
+        if (fragment.source_url) {
+          const link = node("a", null, fragment.topic);
+          link.href = fragment.source_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          topic.appendChild(link);
+        } else {
+          topic.textContent = fragment.topic;
+        }
+        row.appendChild(topic);
+        if (isDiscarded) row.appendChild(node("span", "rag-discarded-tag", "descartado"));
+        const score = Number(fragment.score) || 0;
+        const level = isDiscarded ? "off" : score >= 0.9 ? "high" : score >= 0.86 ? "mid" : "low";
+        row.appendChild(node("span", "rag-score " + level, score.toFixed(3)));
+        // Barra escalada entre 0.70 y 1.00: en ese rango vive la similitud util de
+        // multilingual-e5-large, asi que estirarla hace visible la diferencia real.
+        const bar = node("div", "rag-bar");
+        const fill = node("i");
+        fill.style.width = Math.max(2, Math.min(100, ((score - 0.7) / 0.3) * 100)) + "%";
+        bar.appendChild(fill);
+        item.append(row, bar);
+        block.appendChild(item);
+      }
+      return block;
+    }
+    if (execution.rag_used) {
+      block.appendChild(node("div", "rag-title", "RAG"));
+      block.appendChild(node("div", "rag-note", (execution.rag_results_count ?? "?") + " fragmentos (fila antigua, sin detalle)"));
+      return block;
+    }
+    if (execution.execution_type === "RESPONSE" && execution.intent === "FAQ") {
+      block.appendChild(node("div", "rag-title", "RAG"));
+      block.appendChild(node("div", "rag-note", "El índice no devolvió ningún hit (RF-018)"));
+      return block;
+    }
+    return null;
+  }
+
+  /** Una ejecucion, en UNA linea: la hora y el intent ya se dijeron una vez en la cabecera
+   *  del turno (evitar repetirlos aqui es el punto). Pagada = modelo + tokens + costo +
+   *  latencia en la misma linea; sin modelo = una frase, no una grilla de casillas vacias. */
+  function execCard(execution) {
+    const card = node("article", "exec");
+    const row = node("div", "exec-row");
+    row.appendChild(node("span", "exec-stage", execution.execution_type === "CLASSIFICATION" ? "Clasifica" : "Responde"));
+    const kind = kindOf(execution);
+    const badge = node("span", "badge " + kind, sourceLabel(execution.source));
+    badge.title = "source: " + (execution.source || "—");
+    row.appendChild(badge);
+    if (execution.handoff_triggered) row.appendChild(node("span", "badge handoff", "derivó"));
+    // La unica señal de "Estado" que vale la pena mostrar es cuando NO fue bien.
+    if (execution.status && execution.status !== "SUCCESS") {
+      row.appendChild(node("span", "badge handoff", execution.status));
+    }
+
+    const paid = isPaid(execution);
+    const stats = node("span", "exec-stats");
+    if (paid) {
+      stats.appendChild(node("span", "exec-model", execution.model || "modelo"));
+      stats.appendChild(node("span", null, fmtInt(execution.input_tokens) + "→" + fmtInt(execution.output_tokens) + " tok"));
+      stats.appendChild(node("span", "m-cost", "US$ " + fmtMoney(execution.estimated_cost_usd)));
+      if (execution.latency_ms) stats.appendChild(node("span", null, fmtMs(execution.latency_ms)));
+    } else {
+      stats.appendChild(node("span", "dim", "sin llamada a modelo"));
+    }
+    row.appendChild(stats);
+    card.appendChild(row);
+
+    const rag = ragBlock(execution);
+    if (rag) card.appendChild(rag);
+    return card;
+  }
+
+  function turnCard(turn, numero) {
+    const open = state.expandAll || state.expanded.has(turn.key);
+    const article = node("article", "turn is-" + turn.kind + (open ? " is-open" : ""));
+    const bodyId = "turn-body-" + numero;
+
+    const head = node("button", "turn-head");
+    head.type = "button";
+    head.setAttribute("aria-expanded", String(open));
+    head.setAttribute("aria-controls", bodyId);
+    head.appendChild(node("span", "chev", "▶"));
+    head.appendChild(node("span", "turn-n", "#" + numero));
+    const time = node("span", "turn-time", hora(turn.at));
+    time.title = turn.at;
+    head.appendChild(time);
+    if (turn.intent) head.appendChild(node("span", "badge intent", INTENT_LABELS[turn.intent] || turn.intent));
+    const decided = node("span", "badge " + turn.kind, sourceLabel(turn.decided));
+    decided.title = "source: " + (turn.decided || "—");
+    head.appendChild(decided);
+    if (turn.ragCount) head.appendChild(node("span", "badge free", "RAG " + turn.ragCount));
+
+    const metrics = node("span", "turn-metrics");
+    metrics.appendChild(node("span", null, turn.aiCalls ? turn.aiCalls + " IA" : "sin IA"));
+    if (turn.inputTokens || turn.outputTokens) {
+      metrics.appendChild(node("span", null, fmtInt(turn.inputTokens + turn.outputTokens) + " tok"));
+    }
+    if (turn.cost) metrics.appendChild(node("span", "m-cost", "US$ " + fmtMoney(turn.cost)));
+    metrics.appendChild(node("span", null, fmtMs(turn.latency)));
+    head.appendChild(metrics);
+
+    head.addEventListener("click", () => {
+      const nowOpen = !(state.expandAll || state.expanded.has(turn.key));
+      if (state.expandAll) {
+        // Al tocar un turno con "expandir todo" activo, se pasa a control manual.
+        state.expandAll = false;
+        for (const t of state.turns) state.expanded.add(t.key);
+        state.expanded.delete(turn.key);
+      } else if (nowOpen) {
+        state.expanded.add(turn.key);
+      } else {
+        state.expanded.delete(turn.key);
+      }
+      renderTurns();
+      syncToggleAll();
+    });
+    article.appendChild(head);
+
+    if (open) {
+      const body = node("div", "turn-body");
+      body.id = bodyId;
+      for (const execution of turn.executions) body.appendChild(execCard(execution));
+      article.appendChild(body);
+    }
+    return article;
+  }
+
+  function currentFilter() {
+    return FILTERS.find((f) => f.key === state.filter) || FILTERS[0];
+  }
+
+  function renderTurns() {
+    const filter = currentFilter();
+    const visible = state.turns
+      .map((turn, index) => ({ turn, numero: state.turns.length - index }))
+      .filter(({ turn }) => turn.executions.some(filter.test));
+
+    if (!state.turns.length) {
+      const empty = node("div", "empty");
+      empty.appendChild(node("strong", null, "Todavía no hay ejecuciones"));
+      empty.appendChild(node("span", null, "Abre el widget con el botón morado y escribe un mensaje."));
+      replaceChildren(els.turns, [empty]);
+      return;
+    }
+    if (!visible.length) {
+      const empty = node("div", "empty");
+      empty.appendChild(node("strong", null, "Ningún turno coincide con el filtro"));
+      empty.appendChild(node("span", null, "Prueba con “Todo”."));
+      replaceChildren(els.turns, [empty]);
+      return;
+    }
+    replaceChildren(els.turns, visible.map(({ turn, numero }) => turnCard(turn, numero)));
+  }
+
+  function syncToggleAll() {
+    const allOpen = state.expandAll || (state.turns.length > 0 && state.turns.every((t) => state.expanded.has(t.key)));
+    els.toggleAll.textContent = allOpen ? "Colapsar todo" : "Expandir todo";
+  }
+
+  function renderAll() {
+    renderFilters(state.turns);
+    renderTurns();
+    syncToggleAll();
+  }
+
+  // ─────────────────────────────────── Render: pestaña Logs ───────────────────────────────────
+  // El log de las APIs llamadas en cada etapa, derivado de las MISMAS filas de AIUsage que la
+  // Consola IA: una fila CLASSIFICATION/RESPONSE se descompone en sus llamadas (Gemini al
+  // clasificar, Pinecone en el RAG, Gemini al redactar) y en los atajos que no llamaron a nada.
+
+  function logLine(execution, api, apiClass, text, opts) {
+    const line = node("div", "log-line" + (apiClass === "none" ? " is-free" : ""));
+    const time = node("span", "log-time", hora(execution.created_at));
+    time.title = execution.created_at;
+    line.appendChild(time);
+    line.appendChild(node("span", "log-api " + apiClass, api));
+    const detail = node("span", "log-text");
+    detail.appendChild(node("b", null, (opts && opts.stage) || ""));
+    detail.appendChild(document.createTextNode((opts && opts.stage ? " · " : "") + text));
+    line.appendChild(detail);
+    if (opts && opts.cost) line.appendChild(node("span", "log-cost", "US$ " + fmtMoney(opts.cost)));
+    return line;
+  }
+
+  function logEntriesFor(execution) {
+    const entries = [];
+    const paid = isPaid(execution);
+    const stage = execution.execution_type === "CLASSIFICATION" ? "clasificar" : "responder";
+    const fragments = execution.rag_fragments || [];
+
+    // La busqueda RAG ocurre ANTES de la redaccion dentro del mismo RESPONSE; como el log va
+    // de lo mas reciente a lo mas antiguo, la linea del redactor se agrega primero.
+    if (paid) {
+      entries.push(logLine(
+        execution, "Gemini", "gemini",
+        (execution.model || "modelo") +
+          " · " + fmtInt(execution.input_tokens) + "→" + fmtInt(execution.output_tokens) + " tok" +
+          (execution.latency_ms ? " · " + fmtMs(execution.latency_ms) : "") +
+          (execution.intent ? " · intent " + execution.intent : ""),
+        { stage: stage, cost: execution.estimated_cost_usd }
+      ));
+    } else {
+      entries.push(logLine(
+        execution, "sin API", "none",
+        sourceLabel(execution.source) + (execution.handoff_triggered ? " · derivó" : ""),
+        { stage: stage }
+      ));
+    }
+    if (execution.execution_type === "RESPONSE" && (fragments.length || execution.rag_used ||
+        execution.intent === "FAQ")) {
+      const used = fragments.filter((f) => f.relevant !== false).length;
+      const best = fragments.reduce((max, f) => Math.max(max, Number(f.score) || 0), 0);
+      const threshold = Number(execution.rag_min_score) || 0;
+      entries.push(logLine(
+        execution, "Pinecone", "pinecone",
+        fragments.length
+          ? fragments.length + " hits · " + used + " sobre el umbral" +
+            (threshold ? " " + threshold.toFixed(2) : "") + " · mejor " + best.toFixed(3)
+          : "0 hits" + (execution.rag_used ? " (fila antigua, sin detalle)" : ""),
+        { stage: "búsqueda RAG" }
+      ));
+    }
+    return entries;
+  }
+
+  function renderLogs() {
+    const container = document.getElementById("log-lines");
+    if (!state.executions.length) {
+      const empty = node("div", "empty");
+      empty.appendChild(node("strong", null, "Todavía no hay llamadas registradas"));
+      empty.appendChild(node("span", null, "Abre el widget con el botón morado y escribe un mensaje."));
+      replaceChildren(container, [empty]);
+      return;
+    }
+    // Las ejecuciones ya vienen de la mas reciente a la mas antigua.
+    replaceChildren(container, state.executions.flatMap(logEntriesFor));
+  }
+
+  function banner(message, kind) {
+    if (!message) {
+      replaceChildren(els.banner, []);
+      return;
+    }
+    const box = node("div", "banner" + (kind === "info" ? " info" : ""));
+    box.setAttribute("role", "status");
+    box.appendChild(node("span", null, kind === "info" ? "ℹ" : "⚠"));
+    box.appendChild(node("span", null, message));
+    replaceChildren(els.banner, [box]);
+  }
+
+  function setDot(kind) {
+    els.dot.className = "dot" + (kind ? " " + kind : "");
+  }
+
+  function setStatus(text, conMarcaDePausa = true) {
+    if (!els.status) {
+      els.status = node("span", "console-status");
+      els.status.setAttribute("aria-live", "polite");
+      document.querySelector(".controls-right").appendChild(els.status);
+    }
+    // Sin esta marca, un dato viejo se ve identico a uno recien traido: la unica diferencia es
+    // la hora, y nadie la compara contra el reloj.
+    els.status.textContent = text + (conMarcaDePausa && !state.live ? " · en pausa" : "");
+  }
+
+  // ─────────────────────────────────── Carga de datos ───────────────────────────────────
+
+  async function refreshConsole() {
+    const session = readSession();
+    if (!session || !session.conversationId || !session.token) {
+      setDot("warn");
+      banner("Sin sesión todavía: abre el widget (botón morado abajo a la derecha) y envía un mensaje.", "info");
+      setStatus("en espera");
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${apiUrl()}/dev/conversations/${encodeURIComponent(session.conversationId)}/ai-usage?limit=100`,
+        { headers: { Accept: "application/json", Authorization: `Bearer ${session.token}` } }
+      );
+      if (response.status === 404) {
+        setDot("down");
+        // Dos causas distintas con el mismo codigo: la ruta apagada (gate DEV_OBSERVABILITY) o
+        // la conversacion de esta sesion ya no existe — lo mas comun en dev, porque
+        // dynamodb-local corre en memoria y `seed_data` se vuelve a cargar. El backend lo
+        // distingue en `detail`, asi que se lee en vez de adivinar.
+        const detalle = await response.json().catch(() => null);
+        const motivo = detalle && detalle.detail ? String(detalle.detail) : "";
+        banner(
+          /conversac/i.test(motivo)
+            ? "La conversación de esta pestaña ya no existe en la base (se limpió o se reinició" +
+              " el contenedor). Recarga la página para abrir una sesión nueva."
+            : "La API respondió 404" + (motivo ? " (" + motivo + ")" : "") +
+              ": DEV_OBSERVABILITY apagado o versión sin /dev."
+        );
+        return;
+      }
+      if (response.status === 401) {
+        setDot("down");
+        banner("Sesión expirada o inválida: recarga la página.");
+        return;
+      }
+      if (!response.ok) {
+        setDot("down");
+        banner("Error " + response.status + " al consultar la consola.");
+        return;
+      }
+      const data = await response.json();
+      setDot(state.live ? "live" : "");
+      banner(null);
+
+      const serialized = JSON.stringify(data);
+      if (serialized !== state.lastPayload) {
+        state.lastPayload = serialized;
+        const previousCount = state.turns.length;
+        state.executions = data.executions;
+        state.turns = groupTurns(data.executions);
+        // El turno más reciente se abre solo: es el que se está mirando al probar.
+        if (state.turns.length && state.turns.length !== previousCount && !state.expandAll) {
+          state.expanded.add(state.turns[0].key);
+        }
+        renderConversation(data.conversation);
+        renderKpis(data.totals, state.turns);
+        renderAll();
+        if (activeTab === "logs") renderLogs();
+      }
+      setStatus("↻ " + hora(new Date().toISOString()) + " · " + data.executions.length + " ejecuciones");
+    } catch (error) {
+      setDot("down");
+      banner("No se pudo conectar con la API (" + (error && error.message ? error.message : "sin detalle") + "). ¿Está corriendo uvicorn?");
+      setStatus("sin conexión");
+    }
+  }
+
+  // ─────────────────────────────── Pestañas Tablas y Cola ───────────────────────────────
+  // Piden a /dev/tables y /dev/queues (solo existen con STAGE=dev): scan en vivo de las cinco
+  // tablas y el trafico de SQS con el historial de lo encolado.
+
+  let activeTab = "ia";
+  const tablasState = { seleccion: "messages", firmas: new Map(), primeraCarga: true };
+  const colaState = { eventos: new Map(), vistos: new Set() };
+  const TABLA_LABELS = {
+    conversations: "Conversations", messages: "Messages", tickets: "Tickets",
+    advisors: "Advisors", "ai-usage": "AIUsage",
+  };
+
+  function setTab(nombre) {
+    activeTab = nombre;
+    for (const boton of document.querySelectorAll("#console-tabs .tab")) {
+      boton.classList.toggle("is-active", boton.dataset.tab === nombre);
+    }
+    const esIA = nombre === "ia";
+    for (const id of ["console-summary", "console-banner", "turns", "console-legend"]) {
+      document.getElementById(id).hidden = !esIA;
+    }
+    els.filters.hidden = !esIA;
+    els.toggleAll.hidden = !esIA;
+    document.getElementById("tab-tablas").hidden = nombre !== "tablas";
+    document.getElementById("tab-cola").hidden = nombre !== "cola";
+    document.getElementById("tab-logs").hidden = nombre !== "logs";
+    document.getElementById("console-endpoint").textContent =
+      nombre === "tablas" ? "GET /dev/tables/{tabla}"
+      : nombre === "cola" ? "GET /dev/queues"
+      : "GET /dev/conversations/{id}/ai-usage";
+    if (nombre === "logs") renderLogs(); // pinta al instante con lo ya cargado; el sondeo refresca
+    refreshActive();
+  }
+
+  for (const boton of document.querySelectorAll("#console-tabs .tab")) {
+    boton.addEventListener("click", () => setTab(boton.dataset.tab));
+  }
+  // ?tab=tablas|cola|logs abre la pestaña directamente (la URL de la pagina ya guarda el modo).
+  if (["tablas", "cola", "logs"].includes(params.get("tab"))) setTab(params.get("tab"));
+
+  function refreshActive() {
+    if (activeTab === "tablas") refreshTables();
+    else if (activeTab === "cola") refreshQueues();
+    else refreshConsole(); // "ia" y "logs" leen el mismo endpoint de ai-usage
+  }
+
+  /** Firma estable de un item para detectar filas nuevas o cambiadas entre sondeos. */
+  function firmaDe(item, claves) {
+    return claves.map((k) => String(item[k])).join("\u0000");
+  }
+
+  async function refreshTables() {
+    try {
+      const [resumen, datos] = await Promise.all([
+        fetch(apiUrl() + "/dev/tables").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
+        fetch(apiUrl() + "/dev/tables/" + tablasState.seleccion + "?limit=200")
+          .then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
+      ]);
+      banner(null);
+      setDot(state.live ? "live" : "");
+
+      // Chips con el conteo real de cada tabla.
+      replaceChildren(
+        document.getElementById("tbl-chips"),
+        resumen.tables.map((t) => {
+          const chip = node("button", "f-chip");
+          chip.type = "button";
+          chip.setAttribute("aria-pressed", String(t.key === tablasState.seleccion));
+          chip.appendChild(node("span", null, TABLA_LABELS[t.key] || t.key));
+          chip.appendChild(node("span", "count", t.error ? "×" : t.count));
+          chip.addEventListener("click", () => {
+            tablasState.seleccion = t.key;
+            tablasState.firmas = new Map();
+            tablasState.primeraCarga = true;
+            refreshTables();
+          });
+          return chip;
+        })
+      );
+
+      // Columnas: las claves primero, luego el resto en orden alfabetico.
+      const claves = datos.key_attributes;
+      const resto = new Set();
+      for (const item of datos.items) {
+        for (const campo of Object.keys(item)) if (!claves.includes(campo)) resto.add(campo);
+      }
+      const columnas = [...claves, ...[...resto].sort()];
+
+      const thead = document.querySelector("#tbl-grid thead");
+      const fila = node("tr");
+      for (const col of columnas) {
+        fila.appendChild(node("th", claves.includes(col) ? "is-key" : null, col));
+      }
+      replaceChildren(thead, [fila]);
+
+      // Mas reciente primero cuando hay created_at; si no, orden del scan.
+      const items = [...datos.items];
+      if (items.some((i) => i.created_at)) {
+        items.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+      }
+
+      const firmasNuevas = new Map();
+      const cuerpo = node("tbody");
+      for (const item of items) {
+        const clave = firmaDe(item, claves);
+        const contenido = JSON.stringify(item);
+        firmasNuevas.set(clave, contenido);
+        const previa = tablasState.firmas.get(clave);
+        const tr = node("tr", !tablasState.primeraCarga && previa === undefined ? "is-new"
+          : !tablasState.primeraCarga && previa !== contenido ? "is-changed" : null);
+        for (const col of columnas) {
+          const valor = item[col];
+          const texto = valor === undefined ? "" :
+            typeof valor === "object" ? JSON.stringify(valor) : String(valor);
+          const td = node("td", null, texto);
+          if (texto.length > 40) td.title = texto;
+          tr.appendChild(td);
+        }
+        cuerpo.appendChild(tr);
+      }
+      const grid = document.getElementById("tbl-grid");
+      grid.replaceChild(cuerpo, grid.querySelector("tbody"));
+      tablasState.firmas = firmasNuevas;
+      tablasState.primeraCarga = false;
+
+      document.getElementById("tbl-meta").textContent =
+        datos.name + " · " + datos.count + " items" + (datos.truncated ? " (recortado a 200)" : "");
+      setStatus(hora(new Date().toISOString()) + " · " + datos.count + " items");
+    } catch (error) {
+      setDot("down");
+      banner(
+        error === 404
+          ? "La API respondió 404: el inspector de tablas solo existe con STAGE=dev."
+          : "No se pudo leer las tablas (" + error + "). ¿API y contenedores arriba?"
+      );
+    }
+  }
+
+  async function refreshQueues() {
+    try {
+      const datos = await fetch(apiUrl() + "/dev/queues")
+        .then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
+      banner(null);
+      setDot(state.live ? "live" : "");
+
+      replaceChildren(
+        document.getElementById("q-cards"),
+        datos.queues.map((q) => {
+          const card = node("div", "q-card");
+          card.appendChild(node("h3", null, q.key));
+          if (q.error) {
+            card.appendChild(node("div", "q-error", q.error));
+            return card;
+          }
+          const nums = node("div", "q-nums");
+          for (const [etiqueta, valor] of [["visibles", q.visible], ["en vuelo", q.in_flight], ["retrasados", q.delayed]]) {
+            const celda = node("span");
+            celda.appendChild(node("b", null, valor));
+            celda.appendChild(node("span", null, etiqueta));
+            nums.appendChild(celda);
+          }
+          card.appendChild(nums);
+          return card;
+        })
+      );
+
+      // Historial: lo encolado (capturado por la API) + lo visto en la cola, deduplicado.
+      for (const job of datos.recent_jobs || []) {
+        const clave = "enq:" + job.enqueued_at + ":" + (job.body && job.body.message_id);
+        if (!colaState.eventos.has(clave)) {
+          colaState.eventos.set(clave, {
+            cuando: job.enqueued_at, cola: job.queue, body: job.body,
+            delay: job.delay_seconds, tipo: "encolado", nuevo: true,
+          });
+        }
+      }
+      for (const q of datos.queues) {
+        for (const m of q.peek || []) {
+          const clave = "sqs:" + m.message_id;
+          if (!colaState.eventos.has(clave)) {
+            let body = m.body;
+            try { body = JSON.parse(m.body); } catch (_) { /* texto plano, se muestra tal cual */ }
+            colaState.eventos.set(clave, {
+              cuando: new Date(m.sent_at_ms).toISOString(), cola: q.key, body,
+              tipo: "visible en cola", nuevo: true,
+            });
+          }
+        }
+      }
+
+      const eventos = [...colaState.eventos.values()]
+        .sort((a, b) => String(b.cuando).localeCompare(String(a.cuando)))
+        .slice(0, 50);
+      if (!eventos.length) {
+        const vacio = node("div", "q-empty");
+        vacio.appendChild(node("strong", null, "Nada capturado todavía. "));
+        vacio.appendChild(node("span", null, "Envía un mensaje en el widget y aparecerá aquí al instante."));
+        replaceChildren(document.getElementById("q-log"), [vacio]);
+      } else {
+        replaceChildren(
+          document.getElementById("q-log"),
+          eventos.map((e) => {
+            const item = node("div", "q-item" + (e.nuevo && !colaState.vistos.has(e.cuando + e.tipo) ? " is-new" : ""));
+            colaState.vistos.add(e.cuando + e.tipo);
+            const head = node("div", "q-item-head");
+            head.appendChild(node("span", "badge intent", e.cola));
+            head.appendChild(node("span", "badge " + (e.tipo === "encolado" ? "free" : "model"), e.tipo));
+            if (e.delay) head.appendChild(node("span", "badge", "debounce " + e.delay + " s"));
+            head.appendChild(node("span", "q-when", hora(e.cuando)));
+            item.appendChild(head);
+            const pre = node("pre", null, JSON.stringify(e.body, null, 2));
+            item.appendChild(pre);
+            return item;
+          })
+        );
+      }
+      setStatus(hora(new Date().toISOString()) + " · " + colaState.eventos.size + " eventos");
+    } catch (error) {
+      setDot("down");
+      banner(
+        error === 404
+          ? "La API respondió 404: el inspector de colas solo existe con STAGE=dev."
+          : "No se pudo leer las colas (" + error + "). ¿API y localstack arriba?"
+      );
+    }
+  }
+
+  document.getElementById("console-refresh").addEventListener("click", refreshActive);
+  els.toggleAll.addEventListener("click", () => {
+    const allOpen = state.expandAll || (state.turns.length > 0 && state.turns.every((t) => state.expanded.has(t.key)));
+    state.expandAll = !allOpen;
+    state.expanded.clear();
+    if (!state.expandAll && state.turns.length) state.expanded.add(state.turns[0].key);
+    renderTurns();
+    syncToggleAll();
+  });
+  els.live.addEventListener("click", () => {
+    state.live = !state.live;
+    els.live.setAttribute("aria-pressed", String(state.live));
+    setDot(state.live ? "live" : "");
+    // Encenderlo trae datos YA: esperar hasta REFRESH_MS parece que el boton no hizo nada.
+    if (state.live) refreshActive();
+    else setStatus("en pausa · pulsa Ver en vivo o Actualizar", false);
+  });
+
+  setInterval(() => {
+    if (state.live && document.visibilityState === "visible") refreshActive();
+  }, REFRESH_MS);
+
+  renderAll();
+  refreshConsole();
   boot();
+
+  // ── Cambios de sesion sin recargar (simulan la SPA de VMC) ──
+  const switchHint = document.getElementById("switch-hint");
+  function requireWidget() {
+    if (window.Subastin && typeof window.Subastin.setIdentity === "function") return true;
+    switchHint.textContent = "Primero carga el widget con «Aplicar».";
+    return false;
+  }
+  document.getElementById("switch-user").addEventListener("click", async () => {
+    if (!requireWidget()) return;
+    const sub = form.elements.id.value.trim() + "-b";
+    const jwt = await signJwt({
+      sub,
+      name: form.elements.name.value.trim() + " (otro)",
+      email: "otro-" + form.elements.email.value.trim(),
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }, form.elements.secret.value);
+    window.Subastin.setIdentity(jwt);
+    window.Subastin.open();
+    switchHint.textContent = `Ahora eres sub=${sub}: la conversación y el saludo deben ser de ese usuario.`;
+  });
+  document.getElementById("switch-logout").addEventListener("click", () => {
+    if (!requireWidget()) return;
+    window.Subastin.setIdentity(null);
+    window.Subastin.open();
+    switchHint.textContent = "Sesión cerrada: el widget debe estar como visitante, sin mensajes previos.";
+  });
+  document.getElementById("switch-reset").addEventListener("click", () => {
+    if (!requireWidget()) return;
+    window.Subastin.reset();
+    switchHint.textContent = "Reset: sesión y mensajes olvidados; vuelve a arrancar con la identidad vigente.";
+  });
 </script>
 </body>
 </html>
