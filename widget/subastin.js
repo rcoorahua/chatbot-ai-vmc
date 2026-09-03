@@ -132,7 +132,6 @@
     statusPending: "Esperando asesor",
     statusAttending: "Un asesor te atiende",
     statusClosed: "Cerrada",
-    waitingBanner: "Un asesor te responderá aquí. Puedes seguir escribiendo detalles mientras tanto.",
     closedCase: "Este caso está cerrado.",
     closedAnon: "Esta conversación se cerró.",
     newConversation: "Nueva conversación",
@@ -1588,7 +1587,11 @@
     // El re-render reemplaza el compositor: sin rescatar el borrador, un mensaje del bot que
     // llega mientras el usuario escribe le borraria lo tecleado (RF-037 protege el envio, no
     // el texto sin enviar).
-    const previousComposer = current ? current.querySelector("textarea") : null;
+    // OJO con el selector: tiene que ser el textarea DEL COMPOSITOR. Con `textarea` a secas
+    // agarraba el primero de la pantalla, que con el formulario de asesor abierto es su campo
+    // "Cuentanos que paso": al enviarlo, ese texto reaparecia dentro del cuadro de mensajes
+    // (Aaron, 2026-09-03).
+    const previousComposer = current ? current.querySelector(".composer textarea") : null;
     const draft = previousComposer ? previousComposer.value : "";
     const caret = previousComposer ? previousComposer.selectionStart : 0;
 
@@ -1621,7 +1624,7 @@
         thread.scrollTop = previousTop + (crecioArriba > 0 && previousTop < 40 ? crecioArriba : 0);
       }
     }
-    const composer = view.querySelector("textarea");
+    const composer = view.querySelector(".composer textarea");
     if (composer && state.view === "messages") {
       if (draft) {
         composer.value = draft;
@@ -1923,7 +1926,6 @@
       { class: "screen messages" },
       renderThreadHeader(),
       renderBanner(),
-      renderStatusBanner(),
       renderAnonBanner(),
       h(
         "div",
@@ -2001,11 +2003,6 @@
       h("div", { class: "bar-title" }, h("strong", { text: conversationLabel(conv) }), subtitulo),
       h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
     );
-  }
-
-  function renderStatusBanner() {
-    if (!waitingAdvisor(state.conversation)) return null;
-    return h("div", { class: "banner banner-info", text: TEXT.waitingBanner });
   }
 
   /** Conversacion cerrada (D-029): de solo lectura. El anonimo abre otra sesion; el
@@ -3239,7 +3236,6 @@
     .form-card .is-invalid { border-color: #d64545; }
     .form-card textarea { min-height: 72px; resize: vertical; }
     .form-error { margin: 0; color: #8a1c12; font-size: 12.5px; }
-    .banner-info { background: rgba(132, 96, 229, .08); color: var(--vault-700); }
     .status-dot.is-off { background: #b3b3b3; animation: none; box-shadow: none; }
     .older { align-self: center; margin: 0 0 10px; font-size: 13px; }
     .closed-bar {
