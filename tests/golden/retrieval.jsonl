@@ -1,0 +1,157 @@
+# Golden set de RECUPERACION (RF-017 / RF-018 / RB-009). Lo corre `python -m scripts.eval_retrieval`
+# contra Pinecone real (sin Gemini); `tests/test_golden_retrieval.py` solo valida la forma.
+# Campos: query = lo que se manda al indice · kind = parafrasis | errata | corta | canonica |
+# sin_respuesta | ajena · topics = titulos EXACTOS de los articulos que responden (vacio = no debe
+# haber evidencia) · note = por que esta el caso. Ver BENCHMARK.md.
+#
+# ── Registro ──
+{"query": "quiero crear mi cuenta en vmc", "kind": "parafrasis", "topics": ["¡Registrarte es fácil y rápido!"], "note": "registro sin la palabra registro"}
+{"query": "como me inscribo para poder pujar", "kind": "parafrasis", "topics": ["¡Registrarte es fácil y rápido!"], "note": "inscribir = registrar"}
+{"query": "puedo registrarme con el ruc de mi empresa", "kind": "parafrasis", "topics": ["¡Registrarte es fácil y rápido!"], "note": "persona juridica preguntada con RUC"}
+{"query": "me olvide mi clave y no puedo entrar", "kind": "parafrasis", "topics": ["¡Registrarte es fácil y rápido!"], "note": "clave = contraseña"}
+{"query": "no me deja registrarme dice que mi correo ya existe", "kind": "parafrasis", "topics": ["¡Registrarte es fácil y rápido!"], "note": "formulario impide el registro"}
+# ── Comision ──
+{"query": "cuanto me cobran por ganar un carro", "kind": "parafrasis", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "comision sin decir comision"}
+{"query": "el precio que ofrezco ya tiene la comision adentro", "kind": "parafrasis", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "bid incluye la comision"}
+{"query": "de que forma pago la comision de vmc", "kind": "parafrasis", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "como se paga"}
+{"query": "donde veo el porcentaje de comision de una oferta", "kind": "parafrasis", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "donde ver el porcentaje"}
+# ── Fee de pasarela ──
+{"query": "por que me cobran un extra al pagar con tarjeta", "kind": "parafrasis", "topics": ["Fee por el uso de pasarela", "SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?"], "note": "fee de pasarela descrito por el sintoma"}
+{"query": "hay manera de meter plata sin pagar el fee", "kind": "parafrasis", "topics": ["Fee por el uso de pasarela"], "note": "agregar fondos sin fee"}
+{"query": "me dan boleta por el fee de la pasarela", "kind": "parafrasis", "topics": ["Fee por el uso de pasarela"], "note": "comprobante del fee"}
+# ── SubasCoins ──
+{"query": "que son las monedas esas subascoins y para que sirven", "kind": "parafrasis", "topics": ["SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "subascoins coloquial"}
+{"query": "cual es lo minimo que puedo comprar de subascoins", "kind": "parafrasis", "topics": ["SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?"], "note": "monto minimo y maximo"}
+{"query": "puedo pagar subascoins con una tarjeta de debito", "kind": "parafrasis", "topics": ["SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?"], "note": "cualquier tarjeta"}
+{"query": "que es el recibo vmc que me llego", "kind": "parafrasis", "topics": ["SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?"], "note": "recibo VMC"}
+# ── SubasPass ──
+{"query": "que es eso del subaspass", "kind": "parafrasis", "topics": ["SubasPass: Tu pase. Tu estrategia. Tu momento."], "note": "subaspass"}
+{"query": "cuanto cuesta el pase para entrar directo a las subastas", "kind": "parafrasis", "topics": ["SubasPass: Tu pase. Tu estrategia. Tu momento."], "note": "costo de subaspass sin nombrarlo"}
+{"query": "me conviene mas canjear mis puntos o comprar el subaspass", "kind": "parafrasis", "topics": ["SubasPass: Tu pase. Tu estrategia. Tu momento."], "note": "comparacion"}
+# ── Puntos VMC ──
+{"query": "como canjeo mis puntos vmc", "kind": "parafrasis", "topics": ["Canjea Puntos VMC y mejora tu Riesgo Usuario"], "note": "canje de puntos"}
+{"query": "para que sirven los puntos que acumulo", "kind": "parafrasis", "topics": ["Canjea Puntos VMC y mejora tu Riesgo Usuario", "El Riesgo Usuario y sus categorías"], "note": "puntos VMC sin nombrarlos bien"}
+# ── Riesgo Usuario ──
+{"query": "por que mi riesgo sale alto", "kind": "parafrasis", "topics": ["El Riesgo Usuario y sus categorías", "¿Cuándo me devuelven la consignación?"], "note": "riesgo usuario alto"}
+{"query": "donde veo en que categoria de riesgo estoy", "kind": "parafrasis", "topics": ["El Riesgo Usuario y sus categorías"], "note": "ver categoria"}
+{"query": "como hago para bajar mi riesgo de usuario", "kind": "parafrasis", "topics": ["El Riesgo Usuario y sus categorías", "Canjea Puntos VMC y mejora tu Riesgo Usuario"], "note": "mejorar la categoria"}
+{"query": "puedo perder mis puntos vmc", "kind": "parafrasis", "topics": ["El Riesgo Usuario y sus categorías"], "note": "perdida de puntos"}
+# ── Recarga ──
+{"query": "como le pongo saldo a mi billetera", "kind": "parafrasis", "topics": ["La Recarga: ¿Cómo funciona?", "¡Consignar es necesario para participar!", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "recarga descrita como saldo"}
+{"query": "donde saco mi codigo unico de usuario", "kind": "parafrasis", "topics": ["La Recarga: ¿Cómo funciona?", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "CUU"}
+{"query": "que es una recarga en vmc", "kind": "parafrasis", "topics": ["La Recarga: ¿Cómo funciona?", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "recarga literal"}
+# ── Codigo de pago Pacifico ──
+{"query": "como pago con el codigo de pacifico", "kind": "parafrasis", "topics": ["¿Cómo uso el código de pago de Pacífico?"], "note": "codigo de pago"}
+{"query": "me dieron un codigo del banco pacifico para pagar el auto que hago", "kind": "parafrasis", "topics": ["¿Cómo uso el código de pago de Pacífico?"], "note": "pagar la oferta con el codigo"}
+# ── Devolucion de saldo ──
+{"query": "quiero que me devuelvan la plata que recargue", "kind": "parafrasis", "topics": ["Devolución de mi saldo"], "note": "devolucion de saldo"}
+{"query": "recargue y ahora me aparecen subascoins en vez de dolares", "kind": "parafrasis", "topics": ["Devolución de mi saldo", "¿Cuándo me devuelven la consignación?"], "note": "recarga convertida"}
+{"query": "como pido la devolucion de mi saldo en dolares", "kind": "parafrasis", "topics": ["Devolución de mi saldo"], "note": "como solicitar"}
+# ── Consignacion ──
+{"query": "cuanto tengo que dejar de garantia para pujar", "kind": "parafrasis", "topics": ["¡Consignar es necesario para participar!"], "note": "consignacion = garantia"}
+{"query": "cuanto consigno para una negociable", "kind": "parafrasis", "topics": ["¡Consignar es necesario para participar!"], "note": "consignacion negociable"}
+{"query": "cuando me regresan la consignacion si no gane", "kind": "parafrasis", "topics": ["¿Cuándo me devuelven la consignación?", "La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?"], "note": "devolucion de consignacion"}
+{"query": "consigne en dolares y me devolvieron subascoins", "kind": "parafrasis", "topics": ["¿Cuándo me devuelven la consignación?"], "note": "consignacion devuelta en subascoins"}
+# ── En Vivo: informacion ──
+{"query": "que es el precio base de un carro", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "precio base"}
+{"query": "que significa precio reserva", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "precio reserva"}
+{"query": "a que hora empieza la subasta en vivo", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "inicio del proceso"}
+{"query": "como entro a la sala de la subasta", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "ingresar a la sala"}
+{"query": "que necesito para participar hoy en una subasta", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas", "¡Consignar es necesario para participar!"], "note": "participar hoy"}
+# ── En Vivo: participar ──
+{"query": "puedo pujar desde el celular", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: ¡Es hora de participar!"], "note": "movil"}
+{"query": "que es un bid", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: ¡Es hora de participar!"], "note": "bid literal"}
+{"query": "cuantas veces puedo ofertar en la sala", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: ¡Es hora de participar!"], "note": "cuantos bids"}
+{"query": "la subasta ya empezo, todavia puedo entrar", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: ¡Es hora de participar!"], "note": "entrar tarde"}
+{"query": "cuando se acaba el proceso en vivo", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: ¡Es hora de participar!"], "note": "fin del proceso"}
+# ── En Vivo: termino ──
+{"query": "quede segundo, tengo alguna chance de comprar", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?"], "note": "segundo con precio reserva"}
+{"query": "que es una oportunidad de compra", "kind": "parafrasis", "topics": ["La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?", "¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "oportunidad de compra"}
+# ── Gane ──
+{"query": "gane la subasta y ahora que hago", "kind": "parafrasis", "topics": ["Gané una oferta “En Vivo”: ¿Cuáles son los siguientes pasos?"], "note": "ganador, pasos"}
+{"query": "que diferencia hay entre ganador directo y mejor postor", "kind": "parafrasis", "topics": ["Gané una oferta “En Vivo”: ¿Cuáles son los siguientes pasos?"], "note": "ganador directo vs mejor postor"}
+{"query": "sali mejor postor, eso significa que gane", "kind": "parafrasis", "topics": ["Gané una oferta “En Vivo”: ¿Cuáles son los siguientes pasos?"], "note": "mejor postor"}
+{"query": "que es la habilitacion", "kind": "parafrasis", "topics": ["Gané una oferta “En Vivo”: ¿Cuáles son los siguientes pasos?"], "note": "habilitacion"}
+# ── Habilitado ──
+{"query": "ya me habilitaron, que documentos tengo que mandar", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "documentos"}
+{"query": "donde veo hasta cuando tengo plazo para pagar", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "plazo de pago"}
+{"query": "ya pague el carro, que sigue ahora", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "despues del pago"}
+{"query": "puedo usar el saldo de mi billetera para pagar el vehiculo", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "fondos en billetera"}
+{"query": "necesito la factura de mi compra a quien se la pido", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "comprobante"}
+{"query": "hay que pagar algo mas aparte del precio y la comision", "kind": "parafrasis", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "pagos adicionales"}
+# ── Negociable ──
+{"query": "como funciona una oferta negociable", "kind": "parafrasis", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "negociable literal"}
+{"query": "como le mando una propuesta al vendedor", "kind": "parafrasis", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "iniciar negociacion"}
+{"query": "el vendedor me contraoferto, que hago", "kind": "parafrasis", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "contrapropuesta"}
+{"query": "el vendedor acepto mi propuesta y ahora", "kind": "parafrasis", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "propuesta aceptada"}
+{"query": "que pasa si rechazo la contrapropuesta", "kind": "parafrasis", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "rechazo"}
+# ── Visitas ──
+{"query": "puedo ir a ver el carro antes de la subasta", "kind": "parafrasis", "topics": ["Las visitas e inspecciones físicas"], "note": "agendar visita sin decir visita"}
+{"query": "puedo llevar a mi mecanico a revisar el auto", "kind": "parafrasis", "topics": ["Las visitas e inspecciones físicas"], "note": "inspeccion mecanica / acompañantes"}
+{"query": "que tengo que llevar el dia de la visita", "kind": "parafrasis", "topics": ["Las visitas e inspecciones físicas"], "note": "que llevar"}
+{"query": "puedo visitar el vehiculo el mismo dia de la subasta", "kind": "parafrasis", "topics": ["Las visitas e inspecciones físicas"], "note": "mismo dia"}
+# ── Sanciones ──
+{"query": "que me pasa si no pago el carro que gane", "kind": "parafrasis", "topics": ["Responsabilidades de los ganadores habilitados y sanciones por incumplimiento", "¡He sido habilitado para comprar! ¿Qué hago ahora?", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "incumplir como ganador"}
+{"query": "abandone la compra, por que igual debo la comision", "kind": "parafrasis", "topics": ["Responsabilidades de los ganadores habilitados y sanciones por incumplimiento"], "note": "comision tras abandonar"}
+{"query": "quiero poner un reclamo", "kind": "parafrasis", "topics": ["Responsabilidades de los ganadores habilitados y sanciones por incumplimiento"], "note": "reclamo"}
+{"query": "se me fue el internet y no pude entrar a la sala, me van a sancionar", "kind": "parafrasis", "topics": ["Responsabilidades de los participantes y sanciones por incumplimiento"], "note": "conexion caida"}
+{"query": "que es una sancion", "kind": "parafrasis", "topics": ["Responsabilidades de los participantes y sanciones por incumplimiento", "Responsabilidades de los ganadores habilitados y sanciones por incumplimiento"], "note": "sancion literal (dos articulos la definen)"}
+{"query": "entre a la sala pero cerro sin que pueda bidear, que pasa con mi consignacion", "kind": "parafrasis", "topics": ["Responsabilidades de los participantes y sanciones por incumplimiento"], "note": "sala cerrada"}
+# ── Deuda ──
+{"query": "tengo una deuda con vmc y quiero participar otra vez", "kind": "parafrasis", "topics": ["¿Tienes una deuda y quieres participar en una oferta?"], "note": "deuda"}
+{"query": "por que me aparece que debo plata", "kind": "parafrasis", "topics": ["¿Tienes una deuda y quieres participar en una oferta?"], "note": "origen de la deuda"}
+{"query": "tengo que pagar toda la deuda o puedo pagar una parte", "kind": "parafrasis", "topics": ["¿Tienes una deuda y quieres participar en una oferta?"], "note": "pago parcial"}
+#
+# ── Consultas canonicas de los flujos (D-028): las que se buscan al resolver un paso ──
+{"query": "Si quiero participar en una oferta En Vivo hoy, ¿qué tengo que hacer?", "kind": "canonica", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "F-PART · En Vivo"}
+{"query": "¿Cómo inicio una negociación en una oferta Negociable?", "kind": "canonica", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "F-PART · Negociable"}
+{"query": "¿Cómo y cuánto debo consignar para poder participar en una oferta En Vivo?", "kind": "canonica", "topics": ["¡Consignar es necesario para participar!"], "note": "F-CONS · En Vivo"}
+{"query": "Gané una oferta En Vivo, ¿cuáles son los siguientes pasos?", "kind": "canonica", "topics": ["Gané una oferta “En Vivo”: ¿Cuáles son los siguientes pasos?"], "note": "F-LIVE · ganador"}
+{"query": "¿Qué documentos debo adjuntar después de ser habilitado?", "kind": "canonica", "topics": ["¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "F-HAB · documentos"}
+{"query": "El vendedor me ha enviado una contrapropuesta, ¿qué hago?", "kind": "canonica", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "F-NEGO · contrapropuesta"}
+#
+# ── Erratas: lo que escribe alguien apurado en el celular ──
+{"query": "hola como me regitro", "kind": "errata", "topics": ["¡Registrarte es fácil y rápido!"], "note": "caso real 03/09; con expansion por tema entran los pasos"}
+{"query": "komision cuanto sale", "kind": "errata", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "k por c en la palabra clave"}
+{"query": "como agendo una bisita", "kind": "errata", "topics": ["Las visitas e inspecciones físicas"], "note": "b por v"}
+{"query": "olvide mi contrasena", "kind": "errata", "topics": ["¡Registrarte es fácil y rápido!"], "note": "sin ñ"}
+{"query": "kiero participar en una subasta", "kind": "errata", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas", "La oferta “En Vivo”: ¡Es hora de participar!", "¡Consignar es necesario para participar!"], "note": "kiero"}
+{"query": "q es el subaspas", "kind": "errata", "topics": ["SubasPass: Tu pase. Tu estrategia. Tu momento."], "note": "abreviatura + nombre mal escrito"}
+{"query": "cuanto es la comision x ganar", "kind": "errata", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "x = por"}
+{"query": "como ago una recarga", "kind": "errata", "topics": ["La Recarga: ¿Cómo funciona?", "¿Tienes una deuda y quieres participar en una oferta?"], "note": "ago sin h"}
+{"query": "cuando me debuelven la consignacion", "kind": "errata", "topics": ["¿Cuándo me devuelven la consignación?", "La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?"], "note": "b por v"}
+{"query": "q pasa si no pago la comicion", "kind": "errata", "topics": ["Responsabilidades de los ganadores habilitados y sanciones por incumplimiento", "La Comisión, ¿Por qué, cuánto y cómo se paga?", "¡He sido habilitado para comprar! ¿Qué hago ahora?"], "note": "comicion"}
+#
+# ── Cortas: dos o tres palabras, sin verbo ──
+{"query": "comision", "kind": "corta", "topics": ["La Comisión, ¿Por qué, cuánto y cómo se paga?"], "note": "una palabra"}
+{"query": "registro", "kind": "corta", "topics": ["¡Registrarte es fácil y rápido!"], "note": "una palabra"}
+{"query": "precio reserva", "kind": "corta", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas"], "note": "dos palabras"}
+{"query": "subascoins minimo", "kind": "corta", "topics": ["SubasCoins: ¿Qué son, para qué sirven y cómo se adquieren?"], "note": "dos palabras"}
+{"query": "visitas", "kind": "corta", "topics": ["Las visitas e inspecciones físicas"], "note": "una palabra"}
+{"query": "devolucion consignacion", "kind": "corta", "topics": ["¿Cuándo me devuelven la consignación?", "La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?"], "note": "dos palabras"}
+{"query": "en vivo", "kind": "corta", "topics": ["La oferta “En Vivo”: Aquí está la información que buscabas", "La oferta “En Vivo”: ¡Es hora de participar!", "La oferta “En Vivo”: El proceso terminó. ¿Ahora, qué sigue?"], "note": "el motivo de las consultas canonicas de D-028: a secas recupera poco"}
+{"query": "oferta negociable", "kind": "corta", "topics": ["La oferta “Negociable”: ¿Cómo funciona?"], "note": "dos palabras"}
+#
+# ── Sin respuesta en el corpus: se parecen a un tema pero NADA las responde. Evidencia = 0 ──
+{"query": "en el formulario de registro pongo ruc o dni", "kind": "sin_respuesta", "topics": [], "note": "caso real 03/09: el corpus no menciona RUC"}
+{"query": "puedo cambiar el correo de mi cuenta", "kind": "sin_respuesta", "topics": [], "note": "no hay articulo de edicion de perfil"}
+{"query": "cuanto cuesta el envio del carro a provincia", "kind": "sin_respuesta", "topics": [], "note": "no hay articulo de traslado"}
+{"query": "aceptan pago en cuotas con tarjeta", "kind": "sin_respuesta", "topics": [], "note": "no hay cuotas en el corpus"}
+{"query": "el carro viene con soat y revision tecnica", "kind": "sin_respuesta", "topics": [], "note": "estado del vehiculo no esta en el Centro de Ayuda"}
+{"query": "puedo vender mi auto en vmc", "kind": "sin_respuesta", "topics": [], "note": "el corpus es del comprador"}
+{"query": "como borro mi cuenta", "kind": "sin_respuesta", "topics": [], "note": "no hay baja de cuenta"}
+{"query": "tienen una hilux 2019", "kind": "sin_respuesta", "topics": [], "note": "catalogo (CATALOG lo intercepta por reglas; el RAG no debe inventar)"}
+#
+# ── Ajenas: fuera de dominio total. Evidencia = 0 ──
+{"query": "cuanto esta el dolar hoy", "kind": "ajena", "topics": [], "note": "calibracion 28/08: 0.835 con e5"}
+{"query": "receta de pastel de chocolate", "kind": "ajena", "topics": [], "note": "calibracion 28/08"}
+{"query": "quien gano el partido de anoche", "kind": "ajena", "topics": [], "note": "deportes"}
+{"query": "como cambio la llanta de mi carro", "kind": "ajena", "topics": [], "note": "automotriz pero no de subastas"}
+{"query": "cuanto cuesta un seguro vehicular", "kind": "ajena", "topics": [], "note": "seguros"}
+{"query": "que documentos necesito para sacar brevete", "kind": "ajena", "topics": [], "note": "tramite vehicular ajeno"}
+{"query": "dame el telefono de la sunarp", "kind": "ajena", "topics": [], "note": "entidad publica"}
+{"query": "cual es la capital de australia", "kind": "ajena", "topics": [], "note": "trivia"}
+{"query": "escribeme un poema sobre subastas", "kind": "ajena", "topics": [], "note": "tarea creativa con vocabulario del dominio"}
+{"query": "como invierto en bolsa", "kind": "ajena", "topics": [], "note": "finanzas"}
+{"query": "cuanto cuesta tramitar placas en marte", "kind": "ajena", "topics": [], "note": "C19 de TEST.md"}
+{"query": "hola buenas tardes", "kind": "ajena", "topics": [], "note": "saludo (triviales lo atajan antes; el RAG no debe dar evidencia)"}
