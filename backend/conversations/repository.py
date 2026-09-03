@@ -135,25 +135,38 @@ def create_conversation(conversation: Conversation) -> bool:
     return True
 
 
-def create_conversation_with_messages(conversation: Conversation, messages: list[Message]) -> bool:
+def create_conversation_with_messages(
+    conversation: Conversation, messages: list[Message], *, link_message: Message | None = None
+) -> bool:
     """Crea un caso (D-029) con sus primeros mensajes, todo o nada. La conversacion llega
     con sus campos desnormalizados YA calculados (message_count, preview, no leidos): aqui no
-    se suma nada, solo se escribe. Devuelve False si el id ya existia."""
+    se suma nada, solo se escribe. Devuelve False si el id ya existia.
+
+    `link_message` (DETAILS.md §4.5 / Paso 6) es la nota `CASE_OPENED` que enlaza al hilo de
+    ORIGEN (otra conversacion, ya existente) — va en la MISMA transaccion, con el touch de sus
+    contadores (`_touch_conversation_update`), para que nunca exista un caso sin su enlace en
+    el hilo: antes era un `put_message` aparte despues del commit del caso."""
     table_messages = get_settings().table_messages
     client = dynamodb_resource().meta.client
-    try:
-        client.transact_write_items(
-            TransactItems=[
-                {
-                    "Put": {
-                        "TableName": get_settings().table_conversations,
-                        "Item": conversation.to_item(),
-                        "ConditionExpression": "attribute_not_exists(conversation_id)",
-                    }
-                },
-                *({"Put": {"TableName": table_messages, "Item": m.to_item()}} for m in messages),
-            ]
+    items: list[dict[str, Any]] = [
+        {
+            "Put": {
+                "TableName": get_settings().table_conversations,
+                "Item": conversation.to_item(),
+                "ConditionExpression": "attribute_not_exists(conversation_id)",
+            }
+        },
+        *({"Put": {"TableName": table_messages, "Item": m.to_item()}} for m in messages),
+    ]
+    if link_message is not None:
+        items.append({"Put": {"TableName": table_messages, "Item": link_message.to_item()}})
+        items.append(
+            _touch_conversation_update(
+                link_message.conversation_id, link_message, count_as_unread=False
+            )
         )
+    try:
+        client.transact_write_items(TransactItems=items)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "TransactionCanceledException":
             raise
