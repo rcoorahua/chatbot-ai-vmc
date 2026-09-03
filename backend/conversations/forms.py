@@ -92,7 +92,7 @@ def handoff_form_spec(*, anonymous: bool, needs_email: bool) -> dict:
             "type": HANDOFF_FORM,
             "version": HANDOFF_FORM_VERSION,
             "fields": fields,
-            "submit": "Enviar al asesor",
+            "submit": "Contactar",
         }
     }
 
