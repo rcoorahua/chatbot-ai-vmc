@@ -1,0 +1,253 @@
+import type { AIExecution } from "./types";
+
+/**
+ * Lo que queda por mockear tras conectar `/advisor/*` a la API real (feature/cliente-api-asesor):
+ * la taxonomía de tickets (D-008 sin cerrar) y las métricas de IA (sin endpoint, D-013/
+ * ANALISIS-METRICAS-DASHBOARD.md). Conversaciones/mensajes/asesor ya salen de la API real —
+ * si necesitas datos de prueba, corre `scripts.seed_data` contra dynamodb-local.
+ */
+
+/**
+ * Taxonomía de tipos de ticket — MOCK, D-008 (taxonomía real) sigue abierta. Vive separada de
+ * `Conversation` a propósito: ese tipo es espejo exacto del backend y no lleva campos inventados.
+ * Solo cubre conversaciones con ticket real (`handoff_requested_at` no nulo) — el anónimo nunca
+ * tiene ticket (D-002). Se reemplaza por `problem_type` cuando el backend lo defina.
+ */
+export const MOCK_TICKET_TYPE: Record<string, string> = {
+  conv_1001: "Pagos",
+  conv_1002: "Documentación y retiro",
+  conv_1004: "Catálogo / HERALD",
+  conv_0997: "Reclamos",
+};
+
+/**
+ * Espejo de `AIUsage` en `develop` (ver `types.ts` y ANALISIS-METRICAS-DASHBOARD.md, Tarea A) —
+ * NO existe todavía en esta rama ni hay endpoint que lo agregue entre conversaciones. Una fila
+ * por conversación (el real trae varias por conversación — clasificación + respuesta — pero
+ * para las métricas agregadas de la Tarea B una basta; simular el pipeline completo no aporta).
+ * `topic` en `rag_fragments` es ilustrativo: el Centro de Ayuda real no tiene esta taxonomía
+ * documentada todavía, es la misma cautela que ya vale para `MOCK_TICKET_TYPE`.
+ */
+export const MOCK_AI_EXECUTIONS: AIExecution[] = [
+  {
+    conversation_id: "conv_1001",
+    execution_id: "exec_01",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0021,
+    rag_used: true,
+    rag_fragments: [{ topic: "pagos", score: 0.6 }],
+    created_at: "2026-08-27T14:02:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_1002",
+    execution_id: "exec_02",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-08-27T12:50:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_1003",
+    execution_id: "exec_03",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0016,
+    rag_used: true,
+    rag_fragments: [{ topic: "registro", score: 0.9 }],
+    created_at: "2026-08-27T13:59:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_0997",
+    execution_id: "exec_04",
+    intent: "ADVISOR",
+    source: "model",
+    estimated_cost_usd: 0.0014,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-08-26T17:00:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_1004",
+    execution_id: "exec_05",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.002,
+    rag_used: true,
+    rag_fragments: [{ topic: "historial-compras", score: 0.47 }],
+    created_at: "2026-08-27T11:29:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_2001",
+    execution_id: "exec_06",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0018,
+    rag_used: true,
+    rag_fragments: [{ topic: "registro", score: 0.92 }],
+    created_at: "2026-08-24T09:07:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_2002",
+    execution_id: "exec_07",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0019,
+    rag_used: true,
+    rag_fragments: [{ topic: "subastas-en-vivo", score: 0.88 }],
+    created_at: "2026-08-22T16:37:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_2003",
+    execution_id: "exec_08",
+    intent: "CATALOG",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-08-21T09:59:00Z",
+    billing_month: "2026-08",
+  },
+  {
+    conversation_id: "conv_2004",
+    execution_id: "exec_09",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0022,
+    rag_used: true,
+    rag_fragments: [{ topic: "pagos", score: 0.61 }],
+    created_at: "2026-07-19T08:20:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2005",
+    execution_id: "exec_10",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-07-17T13:57:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2006",
+    execution_id: "exec_11",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-07-15T11:15:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2007",
+    execution_id: "exec_12",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.002,
+    rag_used: true,
+    rag_fragments: [{ topic: "documentos-retiro", score: 0.93 }],
+    created_at: "2026-07-12T15:02:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2008",
+    execution_id: "exec_13",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-07-09T10:25:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2009",
+    execution_id: "exec_14",
+    intent: null,
+    source: "trivial",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-06-07T19:00:00Z",
+    billing_month: "2026-06",
+  },
+  {
+    conversation_id: "conv_2010",
+    execution_id: "exec_15",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-06-03T13:08:00Z",
+    billing_month: "2026-06",
+  },
+  {
+    conversation_id: "conv_2011",
+    execution_id: "exec_16",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0021,
+    rag_used: true,
+    rag_fragments: [{ topic: "pagos", score: 0.58 }],
+    created_at: "2026-07-29T09:35:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2012",
+    execution_id: "exec_17",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-07-23T17:25:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2013",
+    execution_id: "exec_18",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-07-16T11:50:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2014",
+    execution_id: "exec_19",
+    intent: "FAQ",
+    source: "model",
+    estimated_cost_usd: 0.0019,
+    rag_used: true,
+    rag_fragments: [{ topic: "devoluciones-saldo", score: 0.87 }],
+    created_at: "2026-07-08T10:12:00Z",
+    billing_month: "2026-07",
+  },
+  {
+    conversation_id: "conv_2015",
+    execution_id: "exec_20",
+    intent: "ADVISOR",
+    source: "rules",
+    estimated_cost_usd: 0,
+    rag_used: false,
+    rag_fragments: [],
+    created_at: "2026-06-30T08:45:00Z",
+    billing_month: "2026-06",
+  },
+];
+

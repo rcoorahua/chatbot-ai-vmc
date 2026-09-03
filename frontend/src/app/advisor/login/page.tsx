@@ -38,7 +38,12 @@ export default function AdvisorLoginPage() {
           Acceso solo por invitación. Inicia sesión con la cuenta que te asignó tu supervisor.
         </p>
         <Link href="/advisor/inbox" className="mt-7 flex justify-center">
-          <Button variant="primary">Continuar con Cognito</Button>
+          {/* ponytail: padding fijo del botón (56px, spec Figma) rompe a 2 líneas en
+              pantallas angostas con este texto largo — clamp() lo reduce solo ahí sin
+              tocar el componente compartido ni los breakpoints de otros botones. */}
+          <Button variant="primary" style={{ padding: "0 clamp(16px, 6vw, 56px)" }}>
+            Continuar con Cognito
+          </Button>
         </Link>
         <p className="mt-5 text-xs text-neutral-400">
           Rol único en el MVP: <code className="text-neutral-500">ADVISOR</code> (RF-007)

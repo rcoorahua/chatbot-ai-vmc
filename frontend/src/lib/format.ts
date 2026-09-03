@@ -1,4 +1,4 @@
-import type { ConversationStatus, SenderType } from "./types";
+import type { ConversationStatus, HandoffReason, SenderType } from "./types";
 
 /** T7: los estados viven en inglés en el backend; el texto visible vive solo en el frontend. */
 export const STATUS_LABEL: Record<ConversationStatus, string> = {
@@ -13,6 +13,20 @@ export const SENDER_LABEL: Record<SenderType, string> = {
   BOT: "Subastín",
   ADVISOR: "Asesor",
   SYSTEM: "Sistema",
+};
+
+/** T7: motivo de derivación — código de regla/backend, label en español para el asesor. */
+export const HANDOFF_REASON_LABEL: Record<HandoffReason, string> = {
+  advisor_request: "Pidió hablar con una persona",
+  bot_rejection: "Rechazó seguir hablando con el bot",
+  voice_channel: "Pidió un número para llamar",
+  legal_threat: "Amenaza con Indecopi / libro de reclamaciones",
+  fraud_accusation: "Acusación de estafa o fraude",
+  hostility: "Tono hostil hacia el servicio",
+  peruvian_complaint: "Reclamo informal (\"floreo\")",
+  funds_claim: "Reclama que le devuelvan dinero/garantía",
+  advisor_intent: "El modelo detectó intención de hablar con un asesor",
+  faq_no_evidence: "El Centro de Ayuda no tenía evidencia para responder",
 };
 
 /** Traduce el código SystemEvent (RF-050) que viaja como contenido de un mensaje SYSTEM. */

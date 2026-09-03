@@ -168,10 +168,18 @@ export default function ConversationDetailPage() {
               <ArrowLeftIcon width={18} height={18} />
             </Link>
             <AvatarZone size="sm" title={conversation.user_name ?? "Anónimo"} />
-            <p className="min-w-0 flex-1 truncate text-base font-semibold text-[#191C1C]">
-              {conversation.user_name ?? "Usuario anónimo"}
-            </p>
-            <span className="flex-shrink-0">
+            {/* ponytail: el badge de estado (nowrap) le ganaba el espacio al nombre en mobile
+                y lo truncaba a 2-3 letras ("Jorge S…") — bajarlo a su propia línea le devuelve
+                el ancho al nombre, que es el dato que el asesor realmente necesita ver. */}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold text-[#191C1C]">
+                {conversation.user_name ?? "Usuario anónimo"}
+              </p>
+              <span className="mt-0.5 inline-flex sm:hidden">
+                <StatusBadge status={conversation.status} />
+              </span>
+            </div>
+            <span className="hidden flex-shrink-0 sm:inline-flex">
               <StatusBadge status={conversation.status} />
             </span>
           </div>
@@ -207,18 +215,18 @@ export default function ConversationDetailPage() {
           })}
 
           {sendFailure && canReply && (
-            <div className="flex flex-col items-end gap-1">
-              <div className="max-w-md rounded-2xl border border-dashed border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-600">
+            <div className="flex justify-end">
+              <div className="alert-card max-w-md rounded-2xl px-4 py-3 text-sm">
                 No se pudo enviar: &quot;{sendFailure.content}&quot; — {sendFailure.message}
+                <button
+                  type="button"
+                  onClick={() => void sendMessage(sendFailure.clientMessageId, sendFailure.content)}
+                  disabled={sending}
+                  className="mt-1 block text-xs font-semibold underline decoration-2 underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
+                >
+                  Reintentar (RF-037/038 · mismo client_message_id, no duplica)
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void sendMessage(sendFailure.clientMessageId, sendFailure.content)}
-                disabled={sending}
-                className="px-1 text-xs font-semibold text-red-500 underline disabled:opacity-50"
-              >
-                Reintentar (mismo client_message_id, no duplica)
-              </button>
             </div>
           )}
         </div>

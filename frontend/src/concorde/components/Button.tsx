@@ -497,6 +497,11 @@ const BUTTON_STYLES = `
   font-weight: 700;
   opacity: 0.92;
 }
+/* Debajo de sm el nombre se esconde (mismo patrón que "Bienvenido,") — sin texto,
+   el padding derecho de 16px sobra y deja el círculo descentrado dentro del pill. */
+@media (max-width: 639.98px) {
+  .pvbtn-auth-d { padding: 0 4px; gap: 0; }
+}
 
 /* ── prefers-reduced-motion ──────────────────────────────────────────── */
 /* ── negotiable (teal → vault) · sync EXACTO del SVG export de Figma ────
@@ -906,10 +911,13 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     content = (
       <>
         {icon ? <span className="pvbtn-auth-d-icon">{icon}</span> : null}
-        {/* "Bienvenido, " se oculta bajo `sm` — en header angosto el saludo completo
-            no cabe junto al nav y termina solo en su propia fila, desproporcionado. */}
+        {/* Bajo `sm` solo queda el avatar: "Bienvenido, {nombre}" completo ya no cabe
+            junto al nav y forzaba el pill a su propia fila (ver globals.css/mobile).
+            El nombre usa sr-only (no hidden): sigue anunciándose a lectores de pantalla
+            aunque visualmente desaparezca — "hidden" lo sacaría también del árbol de a11y
+            y el botón quedaría sin nombre accesible en mobile. */}
         <span className="hidden sm:inline">Bienvenido,&nbsp;</span>
-        <span className="pvbtn-auth-d-username">{username ?? children}</span>
+        <span className="pvbtn-auth-d-username sr-only sm:not-sr-only sm:inline">{username ?? children}</span>
       </>
     );
   } else {

@@ -2,22 +2,25 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import Table from "@/concorde/components/Table";
-import AvatarZone from "@/concorde/components/AvatarZone";
-import StatCard from "@/components/StatCard";
+import QueueRow from "@/components/QueueRow";
 import StatusBadge from "@/components/StatusBadge";
-import { ChevronRightIcon } from "@/components/icons";
 import { apiErrorMessage, getConversations } from "@/lib/api";
-import { formatWaitTime, STATUS_LABEL } from "@/lib/format";
+import { useAdvisor } from "@/lib/advisor-context";
+import { STATUS_LABEL } from "@/lib/format";
 import type { Conversation, ConversationStatus } from "@/lib/types";
 
 /**
- * Dashboard operativo (RF-047/048). D-013 sigue abierta: este es el set mínimo que el spec
- * ya pide (volumen, pendientes, en atención, cerrados, espera) — nada de costos IA ni panel de
- * configuración (RF-049, fuera de alcance del MVP).
+ * Dashboard operativo del asesor (RF-047/048): qué atender ahora — la cola de hoy, no un
+ * histórico. El rendimiento de la IA (costo, RAG, intents) responde otra pregunta, la de negocio
+ * (Silvana/Julio), no la de quien atiende la bandeja — se sacó de aquí (ver
+ * ANALISIS-METRICAS-DASHBOARD.md, D-013) en vez de mostrarle a un asesor datos que no le sirven
+ * para su turno.
  *
- * Una sola columna, de arriba a abajo — se probó un layout de contenido+rail fijo y resultó
- * confuso; el escaneo vertical simple es lo que de verdad es fácil de usar acá.
+ * Mismo esqueleto que la bandeja (inbox/layout.tsx + inbox/[id]/page.tsx): panel flexible +
+ * aside fijo de 320px, cada uno UNA sola card (rounded-2xl bg-white shadow-sm) con header propio
+ * y filas divididas por dentro — no un mosaico de tiles sueltos, cada uno con su propia sombra.
+ * `QueueRow`/`StatusBadge` se reusan tal cual (mismo componente, no una reinterpretación) para
+ * que "el caso que más espera" y "mis casos en atención" se vean idénticos a como se ven ahí.
  *
  * ponytail: sin endpoint de métricas (D-013 abierta) y sin filtro, `GET /advisor/conversations`
  * es LA BANDEJA (`service.list_inbox`): sin `status` solo trae PENDING_ADVISOR + IN_ATTENTION,
@@ -31,7 +34,8 @@ const BAR_COLOR: Record<ConversationStatus, string> = {
   PENDING_ADVISOR: "#ED8936",
   IN_ATTENTION: "#00AEB1",
   BOT_ATTENDING: "#8460E5",
-  CLOSED: "#C7C9CC",
+  // Mismo tono que StatusBadge.DOT_COLOR.CLOSED — antes decía #C7C9CC, un gris inventado aparte.
+  CLOSED: "#99A1AF",
 };
 
 /** Mismo tono oscuro que StatusBadge usa como texto — el único seguro en contraste sobre blanco. */
@@ -50,6 +54,7 @@ const FILTER_PARAM: Record<ConversationStatus, string> = {
 };
 
 export default function DashboardPage() {
+  const { advisor } = useAdvisor();
   const [now] = useState(() => Date.now());
   const [result, setResult] = useState<{ conversations: Conversation[] } | { error: string } | null>(null);
 
@@ -103,65 +108,91 @@ export default function DashboardPage() {
           ) / pending.length,
         );
 
-  const recent = [...conversations].sort((a, b) => (a.last_message_at < b.last_message_at ? 1 : -1));
   const presentStatuses = STATUSES.filter((s) => countByStatus[s] > 0);
 
+  const myOpenCases = conversations.filter(
+    (c) => c.assigned_advisor_id === advisor?.advisor_id && c.status === "IN_ATTENTION",
+  );
+
+  // Mismo criterio que "Más urgente" en la bandeja (inbox/layout.tsx): el pendiente con el
+  // last_message_at más antiguo — quien lleva más tiempo esperando, no el primero de la lista.
+  const mostUrgent = [...pending].sort((a, b) => a.last_message_at.localeCompare(b.last_message_at))[0] ?? null;
+
   return (
-    <div className="flex flex-col gap-3">
-      {/* Señales vitales: un solo instrumento con dos lecturas, no dos cards repetidas. */}
-      <div className="flex flex-col divide-y divide-black/5 rounded-2xl bg-white shadow-sm ring-1 ring-inset ring-[color:var(--vmc-color-orange-600)]/20 sm:flex-row sm:divide-x sm:divide-y-0">
-        <StatCard
-          bare
-          size="hero"
-          label="Pendientes de asesor"
-          value={String(countByStatus.PENDING_ADVISOR)}
-          dot={BAR_COLOR.PENDING_ADVISOR}
-          valueColor={countByStatus.PENDING_ADVISOR > 0 ? DEEP_COLOR.PENDING_ADVISOR : undefined}
-          pulse={countByStatus.PENDING_ADVISOR > 0}
-          hint={countByStatus.PENDING_ADVISOR > 0 ? "Nadie los ha tomado todavía" : "La cola está al día"}
-          href="/advisor/inbox?estado=pendientes"
-        />
-        <StatCard
-          bare
-          size="hero"
-          label="Espera promedio"
-          value={avgWaitMinutes === null ? "—" : `${avgWaitMinutes} min`}
-          dot={BAR_COLOR.PENDING_ADVISOR}
-          valueColor={avgWaitMinutes !== null ? DEEP_COLOR.PENDING_ADVISOR : undefined}
-          hint="Solo casos pendientes de asesor"
-          href="/advisor/inbox?estado=pendientes"
-        />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-full lg:flex-row lg:overflow-hidden">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
+        <header className="flex items-center justify-between gap-3 border-b border-black/5 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-[#191C1C]">Cola de hoy</h2>
+            <p className="mt-0.5 text-sm text-neutral-500">Qué atender ahora, no un histórico.</p>
+          </div>
+          <Link
+            href="/advisor/inbox"
+            className="flex-shrink-0 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-700"
+          >
+            Ver bandeja
+          </Link>
+        </header>
 
-      {/* Contexto: volumen general, no exige acción inmediata. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Conversaciones" value={String(total)} href="/advisor/inbox" />
-        <StatCard
-          label="En atención"
-          value={String(countByStatus.IN_ATTENTION)}
-          dot={BAR_COLOR.IN_ATTENTION}
-          valueColor={countByStatus.IN_ATTENTION > 0 ? DEEP_COLOR.IN_ATTENTION : undefined}
-          href="/advisor/inbox?estado=atencion"
-        />
-        <StatCard
-          label="Cerradas"
-          value={String(countByStatus.CLOSED)}
-          dot={BAR_COLOR.CLOSED}
-          href="/advisor/inbox?estado=cerradas"
-        />
-        <StatCard label="Casos derivados" value={String(handoffs.length)} hint="Proxy de tickets (D-008)" />
-      </div>
+        <div className="flex min-h-0 flex-1 flex-col divide-y divide-black/5 overflow-y-auto">
+          <Link
+            href="/advisor/inbox?estado=pendientes"
+            className="flex items-center justify-between gap-4 px-5 py-5 transition hover:bg-neutral-50"
+          >
+            <div>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-neutral-500">
+                <span className="relative flex h-2 w-2">
+                  {countByStatus.PENDING_ADVISOR > 0 && (
+                    <span
+                      className="absolute inline-flex h-full w-full rounded-full opacity-75 motion-safe:animate-ping"
+                      style={{ background: BAR_COLOR.PENDING_ADVISOR }}
+                    />
+                  )}
+                  <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: BAR_COLOR.PENDING_ADVISOR }} />
+                </span>
+                Pendientes de asesor
+              </p>
+              <p className="mt-1 text-sm text-neutral-500">
+                {countByStatus.PENDING_ADVISOR > 0 ? "Nadie los ha tomado todavía" : "La cola está al día"}
+              </p>
+            </div>
+            <p
+              className="flex-shrink-0 text-5xl font-bold leading-none tracking-tight"
+              style={{ color: countByStatus.PENDING_ADVISOR > 0 ? DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
+            >
+              {countByStatus.PENDING_ADVISOR}
+            </p>
+          </Link>
 
-      <div className="rounded-2xl bg-white p-3.5 shadow-sm">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Distribución por estado</h2>
-        {/* Medidor segmentado, no una barra continua — cada estado es su propio bloque redondeado
-            con espacio real entre ellos. Grid + fr reparte el ancho ya restando los gaps. */}
-        {total === 0 ? (
-          <p className="mt-2.5 text-sm text-neutral-500">Sin conversaciones todavía.</p>
-        ) : (
-          <>
+          <div className="flex flex-col divide-y divide-black/5 sm:flex-row sm:divide-x sm:divide-y-0">
+            <div className="flex flex-1 flex-col justify-center gap-1 px-5 py-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-neutral-500">Espera promedio</p>
+              <p
+                className="text-3xl font-bold leading-none tracking-tight"
+                style={{ color: avgWaitMinutes !== null ? DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
+              >
+                {avgWaitMinutes === null ? "—" : `${avgWaitMinutes} min`}
+              </p>
+              <p className="text-xs text-neutral-500">Solo casos pendientes de asesor</p>
+            </div>
+            <div className="flex flex-1 flex-col justify-center">
+              {mostUrgent ? (
+                <QueueRow conversation={mostUrgent} active={false} mostUrgent now={now} isMine={false} />
+              ) : (
+                <p className="px-5 py-4 text-sm text-neutral-500">Nadie está esperando en la cola ahora.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="px-5 py-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Distribución</h3>
+              <Link href="/advisor/inbox" className="text-xs font-semibold text-neutral-500 transition hover:text-[#191C1C]">
+                {total} · {handoffs.length} deriv.
+              </Link>
+            </div>
             <div
-              className="mt-2.5 grid h-2.5 gap-1"
+              className="mt-3 grid h-3 gap-1"
               style={{ gridTemplateColumns: presentStatuses.map((s) => `${countByStatus[s]}fr`).join(" ") }}
             >
               {presentStatuses.map((status) => (
@@ -174,74 +205,50 @@ export default function DashboardPage() {
                 />
               ))}
             </div>
-            <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
               {STATUSES.map((status) => (
                 <Link
                   key={status}
                   href={`/advisor/inbox?estado=${FILTER_PARAM[status]}`}
-                  className="flex items-center gap-1.5 rounded-full text-neutral-600 transition hover:text-[#191C1C]"
+                  className="flex items-center justify-between gap-2 transition hover:opacity-80"
                 >
-                  <span className="h-2 w-2 rounded-full" style={{ background: BAR_COLOR[status] }} />
-                  {STATUS_LABEL[status]}
-                  <span className="font-bold" style={{ color: DEEP_COLOR[status] }}>
+                  <StatusBadge status={status} />
+                  <span className="text-sm font-bold" style={{ color: DEEP_COLOR[status] }}>
                     {countByStatus[status]}
                   </span>
                 </Link>
               ))}
             </div>
-          </>
-        )}
-      </div>
+          </div>
+        </div>
+      </section>
 
-      <div>
-        <h2 className="mb-2.5 text-xs font-bold uppercase tracking-wide text-neutral-500">
-          Conversaciones recientes
-        </h2>
-        {recent.length === 0 ? (
-          <p className="rounded-2xl bg-white p-6 text-center text-sm text-neutral-500 shadow-sm">
-            Sin conversaciones todavía.
+      <aside className="flex min-h-0 w-full flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:w-80">
+        <div className="flex-shrink-0">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Mi turno</h2>
+          <p className="mt-2.5 flex items-baseline gap-2">
+            <span
+              className="text-5xl font-bold leading-none tracking-tight"
+              style={{ color: myOpenCases.length > 0 ? DEEP_COLOR.IN_ATTENTION : "#191C1C" }}
+            >
+              {myOpenCases.length}
+            </span>
+            <span className="text-sm text-neutral-500">
+              {myOpenCases.length === 1 ? "caso en atención" : "casos en atención"}
+            </span>
           </p>
-        ) : (
-          <Table
-            caption="Conversaciones recientes"
-            columns={[
-              { header: "Usuario" },
-              { header: "Último mensaje", className: "hidden md:table-cell" },
-              { header: "Estado", align: "center" },
-              { header: "Espera", align: "center" },
-              { header: "", align: "right", width: 40 },
-            ]}
-            rows={recent.map((conv) => [
-              <div key="user" className="flex items-center gap-3">
-                <span
-                  className="h-2 w-2 flex-shrink-0 rounded-full"
-                  style={{ background: BAR_COLOR[conv.status] }}
-                  aria-hidden
-                />
-                <AvatarZone size="sm" title={conv.user_name ?? "Anónimo"} />
-                <div>
-                  <p className="font-semibold text-[#191C1C]">{conv.user_name ?? "Anónimo"}</p>
-                  {conv.user_id && <p className="text-xs text-neutral-500">{conv.user_id}</p>}
-                </div>
-              </div>,
-              <span key="preview" className="line-clamp-1 max-w-xs text-neutral-600">
-                {conv.last_message_preview}
-              </span>,
-              <StatusBadge key="status" status={conv.status} />,
-              <span key="wait">{formatWaitTime(conv.last_message_at, now)}</span>,
-              <div key="open" className="flex justify-end">
-                <Link
-                  href={`/advisor/inbox/${conv.conversation_id}`}
-                  aria-label={`Abrir conversación con ${conv.user_name ?? "usuario anónimo"}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 transition hover:bg-[color:var(--vmc-color-vault-500)]/10 hover:text-[color:var(--vmc-color-vault-700)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)]"
-                >
-                  <ChevronRightIcon />
-                </Link>
-              </div>,
-            ])}
-          />
-        )}
-      </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col divide-y divide-black/5 overflow-y-auto">
+          {myOpenCases.length === 0 ? (
+            <p className="py-3 text-sm text-neutral-500">Nada asignado a ti ahora mismo.</p>
+          ) : (
+            myOpenCases.map((conv) => (
+              <QueueRow key={conv.conversation_id} conversation={conv} active={false} now={now} isMine />
+            ))
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
