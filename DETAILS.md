@@ -760,6 +760,17 @@ a procesarse o cuyos side effects ya ocurrieron.
 - Batch con primer job lento y siguientes válidos.
 - Verificar que sólo se reintentan los no completados y que no hay duplicados.
 
+### Estado (2026-09-03) — 🟡 parcial
+
+- ✅ **Timeout explícito hacia Gemini** (`core/llm.py`, 30 s por llamada, `HttpOptions`).
+  Se encontró en vivo: el SDK trae `None` y una conexión muda dejó al worker local colgado
+  13 minutos en una sola llamada, con todos los jobs siguientes esperando detrás y sin un
+  solo error en el log. Ahora cualquier fallo del transporte (timeout, conexión cortada) se
+  normaliza como `LLMError` de conexión: cae al respaldo del tier y, si también falla, el
+  redactor responde con el texto fijo. Tests en `tests/test_agent_llm.py`.
+- ⏳ **No hecho:** timeout de Pinecone, `get_remaining_time_in_millis`, `batch_size=1` (toca
+  `infra/`, que lo están cambiando otras ramas) y los tests de batch con job lento.
+
 ---
 
 ## 4.19 P2 — Widget sobrecargado y dependencia CDN sin SRI
