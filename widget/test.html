@@ -49,15 +49,18 @@
   @keyframes pulse { 70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); } 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); } }
 
   /* ── Layout ───────────────────────────────────────────────────────────────────────────── */
+  /* Una sola columna de contenido con una franja RESERVADA a la derecha del ancho del widget
+     (400 px de panel + su margen): todo se junta a la izquierda y el chat abierto nunca tapa
+     la consola. En angosto (≤ 1040 px) el widget pasa a pantalla completa y la reserva sobra.
+     Configuración va ARRIBA, al ancho del contenido, no como columna: una columna fija se
+     comía espacio de la consola (pedido de Aaron, 2026-09-03). */
   .layout {
-    display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
-    gap: 18px; align-items: start; max-width: 1500px; margin: 18px auto; padding: 0 18px 40px;
+    display: flex; flex-direction: column; gap: 18px;
+    max-width: 1500px; margin: 18px auto; padding: 0 18px 40px;
   }
-  @media (max-width: 1040px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-  @media (min-width: 1041px) {
-    .side { position: sticky; top: calc(var(--topbar-h) + 18px); max-height: calc(100vh - var(--topbar-h) - 36px); overflow-y: auto; }
-  }
-  .side { display: flex; flex-direction: column; gap: 14px; }
+  @media (min-width: 1041px) { .layout { padding-right: calc(18px + 440px); } }
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+  .side #config { grid-column: 1 / -1; } /* Configuración a todo el ancho; las notas, debajo */
 
   /* ── Paneles ──────────────────────────────────────────────────────────────────────────── */
   .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
