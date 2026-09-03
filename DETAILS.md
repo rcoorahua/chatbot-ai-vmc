@@ -234,6 +234,17 @@ antes de invocar FastAPI. Incluso corrigiendo eso, el middleware actual rechazar
   4. `PATCH /tickets/{id}`.
 - El test debe comprobar headers `Access-Control-Allow-Origin`, métodos y headers.
 
+### Estado (2026-09-03) — ✅ corregido en `infra/stacks/subastin_stack.py` / `backend/api/main.py`
+
+- `cors_preflight` nativo en `HttpApi` (`CorsPreflightOptions`): API Gateway responde el
+  `OPTIONS` a nivel de API, antes de llegar a rutas ni al `cognito_authorizer` — el preflight
+  nunca pasa por el JWT. `PATCH` sumado ahí y en el `CORSMiddleware` de FastAPI.
+- `infra/tests/test_cors_preflight.py` prueba el mecanismo con `aws_cdk.assertions` (sin
+  Docker): confirma `CorsConfiguration` con `PATCH` y que `/advisor/{proxy+}` sigue siendo una
+  sola ruta `ANY` con `AuthorizationType: JWT` (no aparece una ruta `OPTIONS` aparte). Corre en
+  el job `synth` de CI. **Pendiente:** el E2E real desde el dominio del frontend (no hay
+  frontend desplegado todavía para probarlo).
+
 ---
 
 ## 4.4 P1 — Tickets y asesores no tienen unicidad real
@@ -272,6 +283,20 @@ el mismo Cognito `sub`.
 - Aserción final: exactamente una fila física, no sólo que el servicio devuelva una.
 - Test de migración con dos duplicados y una regla determinista para elegir/fusionar el registro
   canónico.
+
+### Estado (2026-09-03) — ✅ corregido en `backend/tickets/` y `backend/advisors/`
+
+- `ticket_id_for_conversation()` / `advisor_id_for_cognito_sub()` (`uuid5`, mismo patrón que
+  `_USER_CONVERSATION_NAMESPACE` de D-002/D-003): el `attribute_not_exists(pk)` de la creación
+  condicional pasa a ser la exclusión mutua real, sin depender de la consistencia del GSI ni
+  para leer (ahora `get_item` por PK con `ConsistentRead=True`) ni para crear. `find_by_cognito_sub`
+  quedó sin caller, se borró.
+- `tests/test_tickets_advisors_uniqueness.py`: 12 threads con `threading.Barrier` contra
+  dynamodb-local real, aserción de una sola fila física (no solo que el servicio devuelva una).
+- **Sin script de migración**: el stack nunca se desplegó (`ESQUELETO — NO DESPLEGADO NUNCA`) y
+  los únicos creadores de estas filas son `resolve_advisor`/`open_ticket`, así que no hay (ni
+  puede haber) datos reales con el id viejo. El seed local (`scripts/seed_data.py`) sí tenía IDs
+  fijos que no coincidían con la derivación — se corrigió ahí, no con una migración aparte.
 
 ---
 
@@ -494,6 +519,20 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - Sintetizar stage/prod y afirmar valores no cero de `AI_QUOTA_*`.
 - Formulario inválido no debe consumir slot.
 - Retry con la misma idempotency key no debe consumir un segundo slot.
+
+### Estado (2026-09-03) — 🟡 parcial, solo la parte de infra
+
+- ✅ `AI_QUOTA_ANON_PER_HOUR/DAY` y `AI_QUOTA_AUTH_PER_HOUR/DAY` ahora se inyectan explícitos en
+  `common_env` (`infra/stacks/subastin_stack.py`) con los valores de negocio de D-027
+  (10/20 anónimo, 20/40 autenticado) en vez de caer al default `0 = ilimitado`. De paso se
+  encontró `MAX_MESSAGE_CHARS` hardcodeado en `"2000"` en el mismo dict, pisando el `500` de
+  D-005 — corregido junto con lo anterior.
+- ✅ `infra/tests/test_business_env.py` sintetiza los valores por stage (vía `BUSINESS_ENV`,
+  extraído a módulo sin objetos CDK) y afirma los no-cero — exactamente el test que pedía este
+  punto.
+- ⏳ **No hecho:** rate limit de `POST /chat/sessions` por IP hasheada, throttling de API
+  Gateway/WAF, y "validar formulario e idempotencia antes de consumir el slot" — esto último es
+  el Paso 6 (idempotencia del handoff), que sigue sin implementarse.
 
 ---
 
@@ -1131,6 +1170,9 @@ npm run build
 
 - GET/POST/PATCH del panel funcionan desde el dominio real del frontend.
 
+**Estado (2026-09-03): ✅ hecho** — ver §4.3 "Estado". Falta el E2E real (sin frontend
+desplegado todavía).
+
 ## Paso 4 — Unificar configuración y fijar dependencias
 
 ### Implementación
@@ -1151,6 +1193,13 @@ npm run build
 
 - Local, stage y documentación usan los mismos límites intencionales.
 
+**Estado (2026-09-03): ✅ hecho** — cuotas IA + fix de `MAX_MESSAGE_CHARS` (ver §4.9 "Estado");
+CDK CLI pineado a `2.1139.0`, `aws-cdk-lib`/alpha en lockstep a `2.268.0`; `requirements-lock.txt`
+(pip freeze) para `pyproject.toml[dev]`, el job `test` de CI instala desde ahí. **Alcance
+acotado a propósito:** el lock no cubre `backend/requirements.txt` (lo que bundlea a Lambda) ni
+`infra/requirements.txt` (ya pineado directo, sin lock aparte) — decisión explícita, no
+supuesto silencioso.
+
 ## Paso 5 — Garantizar unicidad de tickets y asesores
 
 ### Implementación
@@ -1168,6 +1217,8 @@ npm run build
 ### Criterio de salida
 
 - Un ticket por conversación y un advisor por Cognito `sub` bajo cualquier retry razonable.
+
+**Estado (2026-09-03): ✅ hecho** — ver §4.4 "Estado".
 
 ## Paso 6 — Añadir idempotencia al handoff
 
