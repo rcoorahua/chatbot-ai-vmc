@@ -45,6 +45,35 @@ from aws_cdk.aws_lambda_python_alpha import PythonFunction  # bundling requiere 
 from config import StageConfig
 from constructs import Construct
 
+# Limites de negocio identicos en TODOS los stages (a diferencia de CORS_ALLOWED_ORIGINS o
+# LOG_LEVEL, que si varian por StageConfig). Modulo-level y sin objetos CDK a proposito: se
+# importa desde infra/tests/test_business_env.py sin bundlear nada ni levantar Docker, y es lo
+# que detecta un valor que se desvia del decidido (paso DETAILS.md §4 / Paso 4: "500 vs 2000").
+# Guardrails y ventana de contexto (RNF-007: configuracion, no constantes) — D-004/D-005.
+# Cuotas de IA (D-027) y limites de casos/handoff/imagenes (D-029, RF-040..042).
+BUSINESS_ENV = {
+    "AI_DEBOUNCE_SECONDS": "6",
+    "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
+    "AI_ANSWER_MAX_TOKENS": "600",
+    "AI_CONTEXT_MESSAGES": "20",
+    "AI_CONTEXT_WINDOW_MINUTES": "60",
+    "MAX_MESSAGE_CHARS": "500",
+    "MAX_MESSAGES_PER_MINUTE": "10",
+    # En dev (core/config.py) el tope de IA va en 0 (D-027, apagado a proposito); aqui van los
+    # numeros de negocio para que se enciendan en stage y prod.
+    "AI_QUOTA_ANON_PER_HOUR": "10",
+    "AI_QUOTA_ANON_PER_DAY": "20",
+    "AI_QUOTA_AUTH_PER_HOUR": "20",
+    "AI_QUOTA_AUTH_PER_DAY": "40",
+    "MAX_OPEN_CASES_PER_USER": "5",
+    "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
+    "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
+    "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
+    "MAX_IMAGES_PER_MESSAGE": "3",
+    "MAX_IMAGES_PER_HOUR": "20",
+    "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
+}
+
 
 class SubastinStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, *, cfg: StageConfig, **kwargs) -> None:
@@ -268,26 +297,7 @@ class SubastinStack(Stack):
             "TABLE_RATE_LIMITS": rate_limits.table_name,
             "IMAGES_BUCKET": images_bucket.bucket_name,
             "CORS_ALLOWED_ORIGINS": cfg.cors_allowed_origins,
-            # Guardrails y ventana de contexto (RNF-007: configuracion, no constantes). Van
-            # explicitos aunque coincidan con los defaults de core/config.py para poder ajustarlos
-            # en la consola de Lambda durante un incidente, sin desplegar codigo.
-            # Valores de D-004 y D-005, cerradas el 2026-08-28.
-            "AI_DEBOUNCE_SECONDS": "6",
-            "TRIVIAL_REPEAT_WINDOW_MINUTES": "10",
-            "AI_ANSWER_MAX_TOKENS": "600",
-            "AI_CONTEXT_MESSAGES": "20",
-            "AI_CONTEXT_WINDOW_MINUTES": "60",
-            "MAX_MESSAGE_CHARS": "2000",
-            "MAX_MESSAGES_PER_MINUTE": "10",
-            # D-029: casos abiertos por usuario, handoffs anonimos por IP y dia, y TTL de la
-            # conversacion anonima. En dev (core/config.py) el tope por IP va en 0.
-            "MAX_OPEN_CASES_PER_USER": "5",
-            "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
-            "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
-            "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
-            "MAX_IMAGES_PER_MESSAGE": "3",
-            "MAX_IMAGES_PER_HOUR": "20",
-            "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
+            **BUSINESS_ENV,
         }
 
         api_fn = PythonFunction(
@@ -360,8 +370,19 @@ class SubastinStack(Stack):
             self,
             "HttpApi",
             api_name=f"{prefix}-api",
-            # El preflight CORS lo responde FastAPI (CORSMiddleware con CORS_ALLOWED_ORIGINS):
-            # la ruta $default tambien recibe OPTIONS, asi que no hace falta cors_preflight aqui.
+            # /advisor y /dashboard llevan cognito_authorizer (abajo), que por default cubre TODOS
+            # los metodos incluido OPTIONS: el preflight del navegador no manda Authorization y el
+            # authorizer lo rechazaba con 401 antes de llegar a FastAPI (DETAILS.md §4.3). Nativo
+            # de API Gateway: responde el preflight el gateway mismo, nunca pasa por el authorizer.
+            cors_preflight=apigwv2.CorsPreflightOptions(
+                allow_origins=cfg.cors_allowed_origins.split(","),
+                allow_methods=[
+                    apigwv2.CorsHttpMethod.GET,
+                    apigwv2.CorsHttpMethod.POST,
+                    apigwv2.CorsHttpMethod.PATCH,
+                ],
+                allow_headers=["Authorization", "Content-Type"],
+            ),
         )
         api_integration = integrations.HttpLambdaIntegration("ApiIntegration", api_fn)
         cognito_authorizer = authorizers.HttpJwtAuthorizer(
