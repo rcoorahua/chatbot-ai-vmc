@@ -1,0 +1,4 @@
+# Dependencias reales de la Lambda `worker-notify` (backend/workers/notify_worker.py) — hoy es
+# un stub (`_notify` -> NotImplementedError, D-016 abierta). Solo lo que ya se importa; sumar
+# el SDK de Slack cuando D-016 se implemente, no antes.
+pydantic-settings
