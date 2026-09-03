@@ -155,7 +155,7 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
 - El test debe fallar si el import depende accidentalmente de la raíz del checkout.
 - Añadir este smoke al job `synth` de CI.
 
-### Estado (2026-09-03) — 🟡 parcial: empaquetado corregido, falta el smoke del artefacto
+### Estado (2026-09-03) — ✅ hecho, incluido el smoke del artefacto
 
 - ✅ **Opción 1 de la corrección recomendada**: `entry`/raíz pasa a ser la raíz del repo
   (`_lambda_code()` en `infra/stacks/subastin_stack.py`), con `exclude` explícito de lo que no
@@ -171,10 +171,23 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
   que ni `api/` ni lo que importa tocan `anthropic`/`google-genai`/`pinecone`/`httpx`.
 - ✅ Verificado con `cdk synth -c stage=stage` real (Docker, CI) — antes nadie lo había corrido
   con Docker de verdad en esta serie de sesiones.
-- ⏳ **No hecho**: el smoke test del ARTEFACTO que pide este punto (importar los tres handlers
-  desde `cdk.out/asset.*` después de `synth`, no solo desde el checkout) — sigue sin estar en
-  CI. La verificación de este fix fue estructural (inspección del `command` de bundling +
-  `synth` real), no un test automatizado que falle si alguien vuelve a romper el paquete.
+- ✅ **Smoke del ARTEFACTO** (`infra/tests/artifact_smoke.py`, corre después del `cdk synth`
+  real en el job `synth` de CI, no dentro de `pytest tests -q` que corre antes y sin Docker):
+  lee `cdk.out/subastin-stage.template.json`, ubica el asset bundleado de cada Lambda por su
+  `Handler` y corre `python -S -c "import <módulo>"` con el asset como ÚNICO directorio en
+  `sys.path` (`-S` descarta site-packages, `cwd`=asset — nada del checkout ni de un venv local
+  puede colar un import que en Lambda real fallaría). Validado a mano contra un asset viejo
+  (pre-fix, sin paquete `backend/`): reproduce el `ModuleNotFoundError: backend` original: y
+  contra una copia con el layout corregido: importa limpio.
+- **El smoke atrapó un bug real en su primera corrida en CI** (sin Docker local no se pudo ver
+  antes): `backend/requirements-worker-ai.txt` no traía `fastapi`. El worker no sirve HTTP,
+  pero `ai_worker.py` → `conversations.service` → `core.auth` importa `fastapi` de forma
+  transitiva — `core/auth.py` define en el mismo módulo los tipos puros (`ChatSession`,
+  `VmcIdentity`) y los `Depends()` de la API, así que importar lo primero ejecuta también el
+  `from fastapi import ...` de arriba. Cold start real habría fallado con
+  `ModuleNotFoundError: fastapi`, invisible para `cdk synth`. Arreglo mínimo: sumar `fastapi` a
+  `requirements-worker-ai.txt` (no separar `core/auth.py` en esta pasada — es código de
+  identidad/auth, un refactor ahí merece su propia revisión, no ir colgado de un fix de CI).
 
 ---
 
@@ -573,7 +586,7 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - Formulario inválido no debe consumir slot.
 - Retry con la misma idempotency key no debe consumir un segundo slot.
 
-### Estado (2026-09-03) — 🟡 parcial, solo la parte de infra
+### Estado (2026-09-03) — 🟡 parcial: cuotas, rate limit por IP y throttling hechos; faltan alarmas
 
 - ✅ `AI_QUOTA_ANON_PER_HOUR/DAY` y `AI_QUOTA_AUTH_PER_HOUR/DAY` ahora se inyectan explícitos en
   `common_env` (`infra/stacks/subastin_stack.py`) con los valores de negocio de D-027
@@ -583,9 +596,36 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
 - ✅ `infra/tests/test_business_env.py` sintetiza los valores por stage (vía `BUSINESS_ENV`,
   extraído a módulo sin objetos CDK) y afirma los no-cero — exactamente el test que pedía este
   punto.
-- ⏳ **No hecho:** rate limit de `POST /chat/sessions` por IP hasheada, throttling de API
-  Gateway/WAF, y "validar formulario e idempotencia antes de consumir el slot" — esto último es
-  el Paso 6 (idempotencia del handoff), que sigue sin implementarse.
+- ✅ **Rate limit de `POST /chat/sessions` por IP hasheada** (`api/routers/chat.py`,
+  `core/config.py`: `anon_sessions_per_ip_per_day`, default 0 en dev/tests, `30` en
+  stage/prod vía `BUSINESS_ENV`). Reusa `quota.take_daily_slot` tal cual (mismo mecanismo que
+  D-029 para handoffs, misma tabla RateLimits, cero infra nueva) — solo aplica al anónimo
+  (`identity is None`); el autenticado ya se cuenta por `user_id` (D-027) y un JWT de VMC
+  válido no es falsificable en volumen. Corre ANTES de crear la conversación (el 429 no deja
+  fila huérfana, mismo criterio que el handoff). Tests:
+  `tests/test_chat_cases.py::test_con_el_tope_por_ip_la_segunda_sesion_del_dia_es_429` y
+  `test_el_tope_de_sesiones_no_aplica_al_autenticado`.
+- **Hallazgo de code-review sobre el PR (corregido antes de mergear)**: el bloque de arriba
+  copió el `Retry-After: 3600` fijo del handoff (D-029) — pero la ventana de `take_daily_slot`
+  es un día CALENDARIO UTC, no una hora rodante desde el bloqueo: bloquear a las 23:59 UTC
+  libera en 1 s, a las 00:01 UTC en casi 24 h. Un cliente que respeta el header reintenta cada
+  hora y sigue recibiendo 429 casi un día entero. Fix: `quota.seconds_until_daily_reset()`
+  (segundos reales hasta medianoche UTC) + `_enforce_ip_daily_limit()` en `api/routers/chat.py`
+  para no duplicar el mismo bug en el handoff y en sesiones. Tests:
+  `tests/test_quota_reset.py` (puro, sin DynamoDB).
+- ✅ **Throttling nativo de API Gateway** (`infra/stacks/subastin_stack.py`: `HttpStage`
+  explícito con `ThrottleSettings(rate_limit=50, burst_limit=100)` sobre el stage `$default`).
+  Freno GLOBAL barato (sin WAF) contra un pico volumétrico — complementa, no reemplaza, los
+  topes por IP/usuario de arriba. **WAF deliberadamente fuera de alcance**: agrega un servicio
+  nuevo (reglas, Web ACL, costo aparte) para lo que el rate limit por IP ya cubre
+  ("un actor no genera costo/filas ilimitadas"); se revisa si el tráfico real de producción lo
+  pide. Test (sin Docker, réplica aislada como `test_cors_preflight.py`):
+  `infra/tests/test_throttle.py`.
+- ⏳ **No hecho:** alarmas CloudWatch de abuso/costo (tasa de sesiones, DynamoDB writes,
+  invocaciones IA, 429) — es observabilidad/detección, no prevención; el "Criterio de salida"
+  del Paso 11 ("un actor no puede generar costo o filas ilimitadas") ya lo cierran los dos
+  puntos de arriba. Y "validar formulario e idempotencia antes de consumir el slot" del
+  handoff sigue siendo el Paso 7 (toma/cierre), sin tocar.
 
 ---
 
@@ -866,8 +906,22 @@ a procesarse o cuyos side effects ya ocurrieron.
   `test.html` la muestra, para no confundir nunca un timeout nuestro con un 504 de Gemini ni
   con "no había evidencia". Tests en `tests/test_agent_llm.py` y
   `tests/test_ai_worker_resilience.py`.
-- ⏳ **No hecho:** timeout de Pinecone, `get_remaining_time_in_millis`, `batch_size=1` (toca
-  `infra/`, que lo están cambiando otras ramas) y los tests de batch con job lento.
+- ✅ **Timeout explícito a Pinecone** (`agent/rag.py`: `Pinecone(api_key=..., timeout=10.0)`,
+  `_PINECONE_TIMEOUT_S`). El SDK instalado (`pinecone` 9.x/10.x) ya trae un default de 30 s a
+  nivel de cliente (a diferencia del `None` de Gemini que causó el cuelgue de 13 min) — no es
+  el bug de colgarse para siempre, pero 30 s sin acotar no deja margen: el peor caso de Gemini
+  en un turno ya son 110 s (2×15 clasificar + 2×40 redactar, con respaldo) sobre un worker de
+  120 s, y `rag.retrieve()` puede llamarse DOS veces en el mismo turno (rama
+  `responde_al_bot` de `ai_worker.py`). Se explicita en 10 s, generoso para una búsqueda
+  vectorial normal (responde en milisegundos). Al vencer, `Index.search()` lanza
+  `PineconeTimeoutError`, que `retrieve()` ya atrapaba como cualquier fallo del proveedor (sin
+  evidencia → handoff, RF-018) — no hizo falta tocar el manejo de errores. Test:
+  `tests/test_agent_rag.py::test_get_index_pasa_un_timeout_explicito`.
+- ⏳ **No hecho:** `get_remaining_time_in_millis`, `batch_size=1` (toca `infra/`, que lo están
+  cambiando otras ramas) y los tests de batch con job lento. El presupuesto de 120 s del
+  worker sigue sin acotar de punta a punta (Gemini 110 s + hasta 2×10 s de Pinecone puede
+  superarlo en el peor caso simultáneo) — eso es justamente lo que resolvería
+  `get_remaining_time_in_millis`, no un timeout fijo por proveedor.
 
 ---
 
@@ -1189,9 +1243,8 @@ npm run build
 - Los tres handlers importan sin depender del checkout.
 - El asset no contiene el repositorio completo ni dependencias innecesarias.
 
-**Estado (2026-09-03): 🟡 parcial** — ver §4.1 "Estado". El empaquetado real y el split de
-deps están hechos y verificados con `cdk synth` + Docker; falta el smoke que importa cada
-handler desde `cdk.out/asset.*` en CI (items 2-4 de "Pruebas").
+**Estado (2026-09-03): ✅ hecho** — ver §4.1 "Estado". Empaquetado real, split de deps y smoke
+del artefacto (`infra/tests/artifact_smoke.py`, job `synth` de CI) verificados.
 
 ## Paso 2 — Implementar secretos y validación de configuración
 
@@ -1408,6 +1461,10 @@ casos atómico hechos (PR #119, #120); `client_handoff_id` pendiente (toca el wi
 ### Criterio de salida
 
 - Un actor no puede generar costo o filas ilimitadas con endpoints públicos.
+
+**Estado (2026-09-03): 🟡 parcial** — ver §4.9 "Estado". Cuotas IA, rate limit de sesiones por
+IP y throttling nativo de API Gateway hechos. Falta: alarmas CloudWatch de abuso/costo (item 4
+de "Implementación"); WAF deliberadamente fuera de alcance (ver §4.9).
 
 ## Paso 12 — Migrar índices y consultas activas
 

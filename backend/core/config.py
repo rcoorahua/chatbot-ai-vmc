@@ -159,6 +159,11 @@ class Settings(BaseSettings):
     # pestañas para inundar la bandeja con correos falsos. 0 = sin tope, y asi queda en dev
     # (misma politica que AI_QUOTA_*); en stage/prod se enciende por variable de entorno.
     anon_handoffs_per_ip_per_day: int = 0
+    # DETAILS.md §4.9: sin esto, un script puede llamar POST /chat/sessions sin limite y cada
+    # llamada crea una fila Conversation nueva (`service.open_conversation`, sin dedup para el
+    # anonimo) retenida 30 dias. Mismo mecanismo y politica que la linea de arriba (0 = sin
+    # tope en dev, se enciende por variable de entorno en stage/prod).
+    anon_sessions_per_ip_per_day: int = 0
     # La conversacion anonima (y sus mensajes) caduca sola por TTL de DynamoDB: sin cuenta no
     # hay forma de volver a ella, asi que conservarla mas alla de un margen operativo solo
     # acumula chats muertos. 0 = sin TTL. El valor definitivo de retencion lo fija D-014.

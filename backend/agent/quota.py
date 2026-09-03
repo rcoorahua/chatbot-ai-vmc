@@ -27,9 +27,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from datetime import timedelta
 
 from backend.core.aws import dynamodb_resource
-from backend.core.clock import epoch_seconds, utc_now_iso
+from backend.core.clock import epoch_seconds, utc_now, utc_now_iso
 from backend.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,19 @@ def _windows() -> list[tuple[str, int]]:
     """[(SK, limite_idx)]: la ventana horaria (idx 0) y la diaria (idx 1), en hora UTC."""
     now = utc_now_iso()  # "2026-09-01T19:27:10.699Z"
     return [(f"H#{now[:13]}", 0), (f"D#{now[:10]}", 1)]
+
+
+def seconds_until_daily_reset() -> int:
+    """Segundos hasta que `take_daily_slot`/`exhausted` liberen el cupo del dia (medianoche UTC).
+
+    La ventana diaria es un DIA CALENDARIO UTC (`D#2026-09-01`), no una hora rodante desde el
+    bloqueo: un `Retry-After` fijo (p.ej. 3600) miente en los dos sentidos — bloquear a las
+    23:55 UTC libera en 5 min, a las 00:05 UTC en casi 24 h. Un cliente que respeta el header
+    reintenta cada hora y sigue recibiendo 429 durante casi un dia entero.
+    """
+    now = utc_now()
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(1, int((tomorrow - now).total_seconds()))
 
 
 def enabled(*, anonymous: bool) -> bool:

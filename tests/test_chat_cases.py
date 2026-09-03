@@ -526,6 +526,41 @@ def test_con_el_tope_en_cero_no_se_cuenta_nada(client, limpiar, monkeypatch, tab
     assert contados == []
 
 
+# ────────────── DETAILS.md §4.9 / Paso 11: tope de sesiones anonimas por IP ──────────────
+
+
+def test_con_el_tope_por_ip_la_segunda_sesion_del_dia_es_429(client, limpiar, monkeypatch):
+    ip = f"10.3.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
+    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
+    monkeypatch.setenv("ANON_SESSIONS_PER_IP_PER_DAY", "1")
+    reset_settings()
+    limpiar.limite(f"SESSION#IP#{quota.hash_ip(ip)}")
+
+    primera = client.post("/chat/sessions", json={})
+    assert primera.status_code == 201
+    limpiar.conversacion(primera.json()["conversation"]["conversation_id"])
+
+    segunda = client.post("/chat/sessions", json={})
+    assert segunda.status_code == 429 and segunda.headers["Retry-After"]
+
+
+def test_el_tope_de_sesiones_no_aplica_al_autenticado(client, limpiar, monkeypatch):
+    # El autenticado ya se cuenta por user_id (D-027); un JWT de VMC valido no es facil de
+    # falsificar en volumen, asi que no comparte el tope por IP del anonimo.
+    ip = f"10.4.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
+    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
+    monkeypatch.setenv("ANON_SESSIONS_PER_IP_PER_DAY", "1")
+    reset_settings()
+    limpiar.limite(f"SESSION#IP#{quota.hash_ip(ip)}")
+
+    anonima = client.post("/chat/sessions", json={})
+    assert anonima.status_code == 201
+    limpiar.conversacion(anonima.json()["conversation"]["conversation_id"])
+
+    autenticada = _sesion(client, limpiar, autenticado=True)
+    assert autenticada
+
+
 # ──────────────────── DETAILS.md §4.5 / Paso 6: idempotencia del handoff ────────────────────
 
 
