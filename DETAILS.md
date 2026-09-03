@@ -155,6 +155,27 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
 - El test debe fallar si el import depende accidentalmente de la raíz del checkout.
 - Añadir este smoke al job `synth` de CI.
 
+### Estado (2026-09-03) — 🟡 parcial: empaquetado corregido, falta el smoke del artefacto
+
+- ✅ **Opción 1 de la corrección recomendada**: `entry`/raíz pasa a ser la raíz del repo
+  (`_lambda_code()` en `infra/stacks/subastin_stack.py`), con `exclude` explícito de lo que no
+  hace falta bundlear (frontend, widget, tests, node_modules...) y un `command` de bundling que
+  hace `pip install -r backend/requirements-{api,worker-ai,worker-notify}.txt -t /asset-output
+  && cp -r backend /asset-output/backend` — `backend/` queda como paquete real dentro del
+  asset (antes `PythonFunction(entry="../backend", ...)` copiaba el CONTENIDO de `backend/` a
+  la raíz del asset, sin el paquete que el propio código importa con `from backend.algo import
+  X`: `ModuleNotFoundError: backend` en cold start real, invisible para `cdk synth`).
+  `handler` pasa a `backend.api.main.handler` (antes `api.main.handler`).
+- ✅ De paso, dependencias separadas por función (`backend/requirements-{api,worker-ai,
+  worker-notify}.txt`, reemplazan el `backend/requirements.txt` único): verificado por import
+  que ni `api/` ni lo que importa tocan `anthropic`/`google-genai`/`pinecone`/`httpx`.
+- ✅ Verificado con `cdk synth -c stage=stage` real (Docker, CI) — antes nadie lo había corrido
+  con Docker de verdad en esta serie de sesiones.
+- ⏳ **No hecho**: el smoke test del ARTEFACTO que pide este punto (importar los tres handlers
+  desde `cdk.out/asset.*` después de `synth`, no solo desde el checkout) — sigue sin estar en
+  CI. La verificación de este fix fue estructural (inspección del `command` de bundling +
+  `synth` real), no un test automatizado que falle si alguien vuelve a romper el paquete.
+
 ---
 
 ## 4.2 P0 — Secretos y configuración de stage/prod no están implementados
@@ -194,6 +215,16 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
   escribe una respuesta.
 - Verificar que ningún secreto aparece en CloudFormation outputs, logs o variables visibles si la
   política elegida exige lectura runtime.
+
+### Estado (2026-09-02/03) — ✅ corregido (PR #113, `feat/aws-secrets-config`, previo a esta sesión)
+
+Secretos de identidad e IA en Secrets Manager (`infra/stacks/subastin_stack.py`: secretos vacíos
++ permiso de lectura por Lambda, valor real cargado a mano post-deploy); `core/config.py`
+resuelve `*_SECRET_ARN` a variables de entorno ANTES de construir `Settings`.
+`auth.ensure_session_signing_configured()` corre antes de `open_conversation` (ya no hay
+conversación huérfana sin `SESSION_SIGNING_KEY`). Detalle completo en CLAUDE.md ("Secretos...
+se leen de Secrets Manager en runtime"). No auditado línea por línea en esta sesión — se mergeó
+a `develop` al principio de ella.
 
 ---
 
@@ -1152,6 +1183,10 @@ npm run build
 - Los tres handlers importan sin depender del checkout.
 - El asset no contiene el repositorio completo ni dependencias innecesarias.
 
+**Estado (2026-09-03): 🟡 parcial** — ver §4.1 "Estado". El empaquetado real y el split de
+deps están hechos y verificados con `cdk synth` + Docker; falta el smoke que importa cada
+handler desde `cdk.out/asset.*` en CI (items 2-4 de "Pruebas").
+
 ## Paso 2 — Implementar secretos y validación de configuración
 
 ### Implementación
@@ -1172,6 +1207,8 @@ npm run build
 ### Criterio de salida
 
 - Chat y worker funcionan en stage sin secretos hardcodeados.
+
+**Estado (2026-09-02/03): ✅ hecho** — ver §4.2 "Estado" (PR #113, previo a esta sesión).
 
 ## Paso 3 — Corregir CORS y probarlo desde navegador
 
