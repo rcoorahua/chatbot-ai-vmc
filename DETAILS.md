@@ -854,12 +854,18 @@ a procesarse o cuyos side effects ya ocurrieron.
 
 ### Estado (2026-09-03) — 🟡 parcial
 
-- ✅ **Timeout explícito hacia Gemini** (`core/llm.py`, 30 s por llamada, `HttpOptions`).
-  Se encontró en vivo: el SDK trae `None` y una conexión muda dejó al worker local colgado
-  13 minutos en una sola llamada, con todos los jobs siguientes esperando detrás y sin un
-  solo error en el log. Ahora cualquier fallo del transporte (timeout, conexión cortada) se
-  normaliza como `LLMError` de conexión: cae al respaldo del tier y, si también falla, el
-  redactor responde con el texto fijo. Tests en `tests/test_agent_llm.py`.
+- ✅ **Timeout explícito hacia Gemini por tier** (`core/llm.py`: 15 s clasificar, 40 s
+  redactar; peor caso con respaldos 110 s < 120 s de la Lambda). Se encontró en vivo: el SDK
+  trae `None` y una conexión muda dejó al worker local colgado 13 minutos en una sola
+  llamada, con todos los jobs siguientes esperando detrás y sin un solo error en el log.
+  Cualquier fallo del transporte se normaliza como `LLMError`, cae al respaldo del tier y,
+  si también falla, el bot responde con un texto fijo **honesto**: con evidencia dice que no
+  está disponible y ofrece reintentar o un asesor (`MODEL_UNAVAILABLE_CONFIRM_RESPONSE`), no
+  "no tengo ese dato". La causa queda en AIUsage (`status=ERROR`, `error` con familia y
+  código: `quota` / `rate_limit` / `client_timeout` / `provider` / `auth`) y la consola de
+  `test.html` la muestra, para no confundir nunca un timeout nuestro con un 504 de Gemini ni
+  con "no había evidencia". Tests en `tests/test_agent_llm.py` y
+  `tests/test_ai_worker_resilience.py`.
 - ⏳ **No hecho:** timeout de Pinecone, `get_remaining_time_in_millis`, `batch_size=1` (toca
   `infra/`, que lo están cambiando otras ramas) y los tests de batch con job lento.
 

@@ -51,6 +51,8 @@ class ClassificationResult:
     usage: dict[str, int] | None = None
     latency_ms: int = 0
     frustration_hint: bool = False
+    # `LLMError.describe()` cuando la etapa 2 fallo y la intencion es el FAQ de respaldo.
+    error: str | None = None
 
 
 def classify(message: str, last_assistant_message: str | None = None) -> ClassificationResult:
@@ -76,13 +78,16 @@ def classify(message: str, last_assistant_message: str | None = None) -> Classif
 
     try:
         return _classify_with_model(text, last_assistant_message, heuristic.frustration_hint)
-    except LLMError:
-        # El detalle del fallo lo registra quien orquesta (worker), que es quien tiene el
-        # contexto de la conversacion; aqui solo garantizamos que el usuario reciba respuesta.
+    except LLMError as exc:
+        # El fallo viaja en el resultado para que quien orquesta (worker) lo registre en
+        # AIUsage con el contexto de la conversacion; aqui solo garantizamos que el usuario
+        # reciba respuesta. Antes se tragaba en silencio y la consola decia "fallback" sin
+        # decir por que (cuota, timeout, 5xx): no habia forma de saberlo sin la terminal.
         return ClassificationResult(
             intent=Intent.FAQ,
             source="fallback",
             frustration_hint=heuristic.frustration_hint,
+            error=exc.describe(),
         )
 
 

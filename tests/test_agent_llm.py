@@ -401,3 +401,32 @@ def test_un_fallo_de_transporte_se_normaliza_como_error_de_conexion():
     assert error.is_connection is True
     assert error.is_fatal is False
     assert "TimeoutError" in str(error)
+
+
+def test_el_fallo_del_redactor_viaja_con_su_causa(fake_llm):
+    """Con evidencia y el proveedor caido, `error` dice por que (familia + codigo): el worker
+    lo registra en AIUsage y responde con el mensaje de "no disponible", no con "no tengo
+    ese dato" (que seria falso)."""
+    fake_llm(error=LLMError("cuota", provider="fake", status_code=429, is_fatal=True))
+
+    result = writer.write_answer("cuanto es la comision", ["La comision minima es X."])
+
+    assert result.has_evidence is False
+    assert result.error is not None and result.error.startswith("quota 429")
+
+
+def test_el_fallo_del_clasificador_viaja_con_su_causa(fake_llm):
+    fake_llm(error=LLMError("timed out", provider="fake", is_connection=True))
+
+    result = classifier.classify("que es subascoins")
+
+    assert result.intent == Intent.FAQ and result.source == "fallback"
+    assert result.error is not None and result.error.startswith("client_timeout")
+
+
+def test_cada_tier_lleva_su_propio_timeout():
+    """Clasificar devuelve ~10 tokens y redactar hasta 600: el redactor necesita mas margen.
+    El peor caso de un turno (principal + respaldo por tier) debe caber en la Lambda (120 s)."""
+    fast, answer = llm._TIER_TIMEOUT_MS[ModelTier.FAST], llm._TIER_TIMEOUT_MS[ModelTier.ANSWER]
+    assert 0 < fast < answer
+    assert 2 * fast + 2 * answer <= 120_000
