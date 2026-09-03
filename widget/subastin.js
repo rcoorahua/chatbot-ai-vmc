@@ -100,6 +100,15 @@
     anonHint:
       "Estás chateando como visitante: tu historial no se conserva al cerrar la pestaña. " +
       "Inicia sesión en VMC para conservarlo y hablar con un asesor.",
+    // D-030: franja del visitante DENTRO del hilo, una vez por sesion. Promete solo lo que
+    // hoy es verdad (conversacion guardada, asesor sin llenar datos); "atencion
+    // personalizada" llegara con la API de datos del usuario.
+    anonBanner:
+      "Estás como visitante. Inicia sesión en VMC para guardar tu conversación y hablar " +
+      "con un asesor más rápido.",
+    anonBannerDismiss: "Entendido",
+    // Chip de fuente bajo la respuesta del bot (RF-019): el enlace ya no va en el texto.
+    sourceLabel: "Fuente",
     identityError:
       "No pudimos verificar tu sesión de VMC. Recarga la página; si el problema sigue, " +
       "puedes continuar como visitante.",
@@ -202,6 +211,9 @@
     unread: 0,
     identityError: false,
     forceAnonymous: false,
+    // D-030: la franja "inicia sesion" del visitante se cierra una vez por pestaña; el flag
+    // vive aqui y en sessionStorage (misma vida que la sesion anonima, nada en localStorage).
+    anonBannerDismissed: false,
     offline: false,
     pollTimer: null,
     loading: false,
@@ -299,6 +311,8 @@
     clip: () => svg(["M21 11.6l-8.9 8.9a5.6 5.6 0 0 1-7.9-7.9l8.9-8.9a3.7 3.7 0 0 1 5.3 5.3l-8.9 8.9a1.9 1.9 0 0 1-2.6-2.6l8.2-8.2"], 19),
     smile: () => svg(["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8.6 13.8s1.2 1.9 3.4 1.9 3.4-1.9 3.4-1.9", "M9.2 9.6h.01M14.8 9.6h.01"], 19),
     search: () => svg(["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M21 21l-4.3-4.3"], 18),
+    // Chip de fuente (D-030): un enlace externo pequeño.
+    link: () => svg(["M14 4h6v6", "M20 4l-9 9", "M18 13v6H5V6h6"], 13),
   };
 
   /** Logotipo de VMC (fuente: widget/logo-voyager.svg) como nodos SVG. Va inline y no como
@@ -1761,7 +1775,8 @@
       // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
       // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
       if (message === ultimo && state.pending.size === 0) {
-        const botones = renderQuickReplies(message) || renderHandoffForm(message);
+        const botones =
+          renderQuickReplies(message) || renderRelatedQuestions(message) || renderHandoffForm(message);
         if (botones) items.push(botones);
       }
     }
@@ -1781,6 +1796,7 @@
       renderThreadHeader(),
       renderBanner(),
       renderStatusBanner(),
+      renderAnonBanner(),
       h(
         "div",
         { class: "thread-wrap" },
@@ -2103,22 +2119,48 @@
     const clases =
       "row" + (mine ? " row-mine" : "") + (primero ? " is-first" : "") + (fresh ? " is-new" : "") +
       (message.isGreeting ? " is-greeting" : "");
-    return h(
+    const bubble = h(
       "div",
-      { class: clases },
-      h(
-        "div",
-        { class: "bubble" + (mine ? " bubble-mine" : "") },
-        advisor && primero
-          ? h("span", {
-              class: "bubble-who",
-              text: (message.metadata && message.metadata.sender_name) || "Asesor",
-            })
-          : null,
-        h("span", { class: "bubble-text" }, textWithLinks(message.content || "")),
-        message.created_at ? h("span", { class: "stamp", text: formatTime(message.created_at) }) : null
-      )
+      { class: "bubble" + (mine ? " bubble-mine" : "") },
+      advisor && primero
+        ? h("span", {
+            class: "bubble-who",
+            text: (message.metadata && message.metadata.sender_name) || "Asesor",
+          })
+        : null,
+      h("span", { class: "bubble-text" }, textWithLinks(message.content || "")),
+      message.created_at ? h("span", { class: "stamp", text: formatTime(message.created_at) }) : null
     );
+    // D-030: la fuente de una respuesta con evidencia va como chip DEBAJO de la burbuja (como
+    // las citas de un asistente), no como URL dentro del texto.
+    const sources = renderSources(message);
+    return h("div", { class: clases }, sources ? h("div", { class: "bubble-wrap" }, bubble, sources) : bubble);
+  }
+
+  /** Chips de fuente (RF-019): `metadata.sources` = [{title, url}], deduplicadas por el
+   *  servidor. Solo del bot; un mensaje sin evidencia no trae el campo. */
+  function renderSources(message) {
+    const sources = message.metadata && message.metadata.sources;
+    if (message.sender_type !== "BOT" || !Array.isArray(sources) || !sources.length) return null;
+    const wrap = h("div", { class: "sources" });
+    for (const source of sources) {
+      if (!source || !source.url || !/^https?:\/\//.test(source.url)) continue;
+      wrap.appendChild(
+        h(
+          "a",
+          {
+            class: "source-chip",
+            href: source.url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            title: TEXT.sourceLabel + ": " + (source.title || source.url),
+          },
+          ICON.link(),
+          h("span", { text: source.title || source.url })
+        )
+      );
+    }
+    return wrap.childNodes.length ? wrap : null;
   }
 
   function renderPending(clientMessageId, draft, primero) {
@@ -2178,6 +2220,72 @@
       );
     }
     return wrap.childNodes.length ? wrap : null;
+  }
+
+  /** Preguntas hermanas (D-030): las otras preguntas del articulo que acaba de responder,
+   *  como botones bajo la respuesta. Sin estado: el clic manda la pregunta como texto mas el
+   *  evento {action_id, value}; el servidor la resuelve contra la metadata de SU ultimo
+   *  mensaje (la consulta viaja ahi, no en el clic) y la manda al RAG sin clasificador. */
+  function renderRelatedQuestions(message) {
+    const interaction = message.metadata && message.metadata.interaction;
+    if (!interaction || interaction.type !== "RELATED_QUESTIONS") return null;
+    if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
+    const wrap = h(
+      "div",
+      { class: "quick-replies related" + (firstRenderOf("rq:" + message.message_id) ? " is-new" : "") }
+    );
+    for (const option of interaction.options) {
+      if (!option || !option.label || !option.value) continue;
+      wrap.appendChild(
+        h(
+          "button",
+          {
+            class: "qr qr-related",
+            type: "button",
+            onclick: () =>
+              sendMessage(option.label, {
+                action_id: interaction.action_id,
+                value: option.value,
+                source_message_id: message.message_id,
+              }),
+          },
+          option.label
+        )
+      );
+    }
+    return wrap.childNodes.length ? wrap : null;
+  }
+
+  const ANON_BANNER_KEY = CONFIG.storageKey + ":anon-banner";
+
+  /** Franja del visitante dentro del hilo (D-030): parte del widget, no un mensaje del bot
+   *  (no ensucia el historial ni cuesta una fila). Se cierra una vez por pestaña. */
+  function renderAnonBanner() {
+    if (!isAnonymous() || state.anonBannerDismissed) return null;
+    try {
+      if (sessionStorage.getItem(ANON_BANNER_KEY)) return null;
+    } catch (_) {
+      /* sin storage: se muestra igual y se cierra con el flag en memoria */
+    }
+    return h(
+      "div",
+      { class: "banner banner-anon" },
+      h("span", { text: TEXT.anonBanner }),
+      h("button", {
+        class: "link",
+        type: "button",
+        text: TEXT.anonBannerDismiss,
+        onclick: () => {
+          state.anonBannerDismissed = true;
+          try {
+            sessionStorage.setItem(ANON_BANNER_KEY, "1");
+          } catch (_) {
+            /* idem */
+          }
+          render();
+        },
+      })
+    );
   }
 
   function renderSystemEvent(message) {
@@ -2720,6 +2828,26 @@
     .qr:active { transform: none; }
     .qr-solid { background: var(--vault-500); color: #fff; }
     .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
+    /* D-030: preguntas hermanas. Mismo boton que un quick reply pero alineado a la izquierda
+       y con texto normal: son preguntas enteras, no opciones de un menu. */
+    .quick-replies.related { max-width: 88%; }
+    .qr-related { font-weight: 500; text-align: left; line-height: 1.3; }
+    /* Chip de fuente bajo la burbuja del bot (RF-019): discreto, un enlace con icono. */
+    .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+    .source-chip {
+      display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+      padding: 4px 10px; border-radius: var(--radius-pill);
+      border: 1px solid var(--line); background: var(--surface);
+      color: var(--vault-600); font-size: 12px; font-weight: 600; text-decoration: none;
+      transition: background-color .18s var(--ease), border-color .18s var(--ease);
+    }
+    .source-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-chip:hover { background: rgba(132, 96, 229, .08); border-color: var(--vault-500); }
+    .banner-anon {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: rgba(132, 96, 229, .08); color: var(--vault-700);
+    }
+    .banner-anon .link { flex: none; }
     /* ── Formulario de asesor (D-029): tarjeta bajo el mensaje del bot ── */
     /* Centrada y no pegada al lado del bot: no es una burbuja mas del hilo, es una tarjeta
        que pide la atencion del usuario mientras la contesta. */
