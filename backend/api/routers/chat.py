@@ -193,14 +193,12 @@ def create_session(body: SessionIn, request: Request) -> SessionOut:
     # aqui es el vector de abuso mas barato de la API publica. Antes de crear nada, no despues:
     # el 429 no debe dejar huerfanos (mismo criterio que el handoff, DETAILS.md §4.5).
     if identity is None:
-        ip_hash = quota.hash_ip(_client_ip(request))
-        limit = get_settings().anon_sessions_per_ip_per_day
-        if ip_hash and not quota.take_daily_slot(f"SESSION#IP#{ip_hash}", limit=limit):
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                "Demasiadas conexiones nuevas desde tu conexion hoy. Intenta mas tarde.",
-                headers={"Retry-After": "3600"},
-            )
+        _enforce_ip_daily_limit(
+            request,
+            key_prefix="SESSION",
+            limit=get_settings().anon_sessions_per_ip_per_day,
+            message="Demasiadas conexiones nuevas desde tu conexion hoy. Intenta mas tarde.",
+        )
 
     # DETAILS.md §4.2: falla ANTES de abrir la conversacion si falta la clave de sesion — si no,
     # un anonimo sin SESSION_SIGNING_KEY dejaba una fila huerfana en cada intento (el 503 llegaba
@@ -311,15 +309,15 @@ def request_handoff(
     except forms.FormValidationError as exc:
         raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
     if anonymous:
-        ip_hash = quota.hash_ip(_client_ip(request))
-        limit = get_settings().anon_handoffs_per_ip_per_day
-        if ip_hash and not quota.take_daily_slot(f"HANDOFF#IP#{ip_hash}", limit=limit):
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
+        _enforce_ip_daily_limit(
+            request,
+            key_prefix="HANDOFF",
+            limit=get_settings().anon_handoffs_per_ip_per_day,
+            message=(
                 "Ya recibimos varias solicitudes de asesor desde tu conexion hoy. "
-                "Crea tu cuenta en VMC para continuar.",
-                headers={"Retry-After": "3600"},
-            )
+                "Crea tu cuenta en VMC para continuar."
+            ),
+        )
     confirmation = (
         prompts.HANDOFF_ANON_CONFIRMATION if anonymous else prompts.HANDOFF_CASE_CONFIRMATION
     )
@@ -418,6 +416,23 @@ def _client_ip(request: Request) -> str | None:
     if source_ip:
         return source_ip
     return request.client.host if request.client else None
+
+
+def _enforce_ip_daily_limit(request: Request, *, key_prefix: str, limit: int, message: str) -> None:
+    """429 si la IP (hasheada) del anonimo ya agoto su cupo diario para `key_prefix`
+    (handoffs DETAILS.md §4.5, sesiones §4.9/Paso 11 — mismo mecanismo, un solo lugar).
+
+    El `Retry-After` NO es un valor fijo: la ventana de `take_daily_slot` es un dia CALENDARIO
+    UTC (`quota.seconds_until_daily_reset`), no una hora rodante desde el bloqueo — un fijo
+    miente en los dos sentidos (ver el docstring de esa funcion).
+    """
+    ip_hash = quota.hash_ip(_client_ip(request))
+    if ip_hash and not quota.take_daily_slot(f"{key_prefix}#IP#{ip_hash}", limit=limit):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            message,
+            headers={"Retry-After": str(quota.seconds_until_daily_reset())},
+        )
 
 
 def _enqueue_or_mark_failed(message: Message, *, ip_hash: str | None = None) -> None:

@@ -605,6 +605,14 @@ historial del usuario anterior. Esto es un riesgo de privacidad, no sólo de UX.
   fila huérfana, mismo criterio que el handoff). Tests:
   `tests/test_chat_cases.py::test_con_el_tope_por_ip_la_segunda_sesion_del_dia_es_429` y
   `test_el_tope_de_sesiones_no_aplica_al_autenticado`.
+- **Hallazgo de code-review sobre el PR (corregido antes de mergear)**: el bloque de arriba
+  copió el `Retry-After: 3600` fijo del handoff (D-029) — pero la ventana de `take_daily_slot`
+  es un día CALENDARIO UTC, no una hora rodante desde el bloqueo: bloquear a las 23:59 UTC
+  libera en 1 s, a las 00:01 UTC en casi 24 h. Un cliente que respeta el header reintenta cada
+  hora y sigue recibiendo 429 casi un día entero. Fix: `quota.seconds_until_daily_reset()`
+  (segundos reales hasta medianoche UTC) + `_enforce_ip_daily_limit()` en `api/routers/chat.py`
+  para no duplicar el mismo bug en el handoff y en sesiones. Tests:
+  `tests/test_quota_reset.py` (puro, sin DynamoDB).
 - ✅ **Throttling nativo de API Gateway** (`infra/stacks/subastin_stack.py`: `HttpStage`
   explícito con `ThrottleSettings(rate_limit=50, burst_limit=100)` sobre el stage `$default`).
   Freno GLOBAL barato (sin WAF) contra un pico volumétrico — complementa, no reemplaza, los
