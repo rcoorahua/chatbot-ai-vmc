@@ -4,7 +4,7 @@ RF-025, RF-031, RF-035, RNF-005.
 Criterios:
   AC-H1  anonimo: el formulario exige nombre y correo (422 con `field`), telefono opcional; al
          enviarlo su conversacion pasa a PENDING_ADVISOR con el bot apagado, guarda asunto y
-         contacto (los ve el asesor), deja FORM_RESPONSE + nota HANDOFF_REQUESTED +
+         contacto (los ve el asesor), deja nota HANDOFF_REQUESTED + FORM_RESPONSE +
          confirmacion fija, y cuenta 1 no leido; un segundo envio es 409
   AC-H2  la conversacion anonima nace con TTL y sus mensajes lo heredan (sin chats muertos)
   AC-H3  autenticado: el formulario abre un CASO (PENDING_ADVISOR, bot apagado, asunto,
@@ -207,11 +207,13 @@ def test_el_anonimo_deriva_en_el_sitio_y_el_asesor_ve_el_contacto(client, limpia
     hilo = _mensajes(client, sesion)
     assert hilo["conversation"]["status"] == "PENDING_ADVISOR"
     ultimos = hilo["messages"][-3:]
-    assert [m["message_type"] for m in ultimos] == ["FORM_RESPONSE", "SYSTEM", "TEXT"]
-    assert [m["sender_type"] for m in ultimos] == ["USER", "SYSTEM", "BOT"]
-    assert "Asunto: Problema con mi puja" in ultimos[0]["content"]
-    assert "Correo: ana@example.test" in ultimos[0]["content"]
-    assert ultimos[1]["content"] == "HANDOFF_REQUESTED"
+    # DETAILS.md §4.5 / Paso 6: la nota SYSTEM va primero, junto con el CAS de start_handoff;
+    # el FORM_RESPONSE (con el contacto, RF-003) solo se escribe despues de ganar la carrera.
+    assert [m["message_type"] for m in ultimos] == ["SYSTEM", "FORM_RESPONSE", "TEXT"]
+    assert [m["sender_type"] for m in ultimos] == ["SYSTEM", "USER", "BOT"]
+    assert ultimos[0]["content"] == "HANDOFF_REQUESTED"
+    assert "Asunto: Problema con mi puja" in ultimos[1]["content"]
+    assert "Correo: ana@example.test" in ultimos[1]["content"]
     assert ultimos[2]["content"] == prompts.HANDOFF_ANON_CONFIRMATION
 
     _, headers = _asesor_nuevo(client, limpiar)
