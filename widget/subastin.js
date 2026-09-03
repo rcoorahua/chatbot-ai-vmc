@@ -109,6 +109,7 @@
     anonBannerDismiss: "Entendido",
     // Chip de fuente bajo la respuesta del bot (RF-019): el enlace ya no va en el texto.
     sourceLabel: "Fuente",
+    loadingThread: "Cargando la conversación",
     identityError:
       "No pudimos verificar tu sesión de VMC. Recarga la página; si el problema sigue, " +
       "puedes continuar como visitante.",
@@ -1836,15 +1837,17 @@
       !hayHistorial && !state.hasMore && (!state.greetingVisible || !state.conversation) &&
       (state.conversation === null || isThread(state.conversation));
     if (esqueleto) {
-      for (const n of [1, 2]) {
-        items.push(
-          h(
-            "div",
-            { class: "row row-skeleton" + (n === 1 ? " is-first" : ""), "aria-hidden": "true" },
-            h("div", { class: "bubble bubble-skeleton" }, h("span", { class: "sk-line" }), h("span", { class: "sk-line" }))
-          )
-        );
-      }
+      // El orbe liquido, centrado en el hilo y mas grande que el de "escribiendo", como el
+      // circulo de carga de Intercom pero con la animacion propia (Aaron, 2026-09-03; antes
+      // hubo un skeleton y se descarto). Sin WebGL, los tres puntos.
+      const orbe = liquidOrb(84);
+      items.push(
+        h(
+          "div",
+          { class: "loading-orb", role: "status", "aria-label": TEXT.loadingThread },
+          orbe || h("div", { class: "bubble typing" }, h("i", {}), h("i", {}), h("i", {}))
+        )
+      );
     }
     if (!esqueleto && isThread(state.conversation) && !state.hasMore && (hayHistorial || state.greetingVisible)) {
       items.push(
@@ -3324,20 +3327,13 @@
     }
     .typing i:nth-child(2) { animation-delay: .18s; }
     .typing i:nth-child(3) { animation-delay: .36s; }
-    /* Skeleton de la primera carga (2026-09-03, Aaron): mientras el saludo "llega" (~420 ms) o
-       el historial todavia no volvio del servidor, dos burbujas fantasma del lado del bot con
-       un brillo que recorre, en vez de un hilo vacio. */
-    .bubble-skeleton { width: 100%; padding: 12px 13px; }
-    .row-skeleton { width: 72%; animation: fade-in .25s var(--ease) both; }
-    .row-skeleton + .row-skeleton { width: 52%; }
-    .sk-line {
-      display: block; height: 11px; border-radius: 6px; margin: 6px 0;
-      background: linear-gradient(90deg, var(--surface-soft) 0%, var(--line) 40%, rgba(132, 96, 229, .14) 55%, var(--surface-soft) 100%);
-      background-size: 220% 100%; animation: sk-shimmer 1.4s var(--ease-soft) infinite;
+    /* Carga del hilo (2026-09-03, Aaron): mientras el saludo "llega" (~420 ms) o el primer
+       sondeo no volvio, el orbe liquido centrado en el hilo, como el circulo de carga de
+       Intercom pero con la animacion propia. `margin: auto` lo centra en la columna flex. */
+    .loading-orb {
+      margin: auto; align-self: center; display: grid; place-items: center; padding: 20px;
+      animation: fade-in .3s var(--ease) both;
     }
-    .sk-line:first-child { margin-top: 2px; }
-    .sk-line:last-child { margin-bottom: 2px; width: 62%; }
-    @keyframes sk-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
     .meta { font-size: 11.5px; color: var(--ink-faint); }
     .meta-error { color: #b3261e; }
     .system { align-self: center; display: flex; align-items: center; gap: 10px; color: var(--ink-faint); font-size: 12.5px; width: 100%; margin: 6px 0; }
