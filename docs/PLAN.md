@@ -8,7 +8,7 @@
 > **Regla de oro:** ningún punto pendiente del spec se trata como supuesto cerrado. Antes de
 > implementar cualquier cosa que dependa de una decisión abierta (`D-xxx` de negocio o `TD-xxx`
 > técnica), se detiene el trabajo y se avisa. El registro vivo de decisiones está en
-> [CLAUDE.md](CLAUDE.md).
+> [CLAUDE.md](../CLAUDE.md).
 
 ---
 
@@ -482,7 +482,7 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   datos de terceros → fijo de privacidad; verificación de la respuesta contra la evidencia en
   `agent/guardrails.py`), D-025 (un emoji máximo, sin markdown ni guiones largos) y D-026
   (golden set en `tests/golden/`, eval real manual con `scripts/eval_intents.py`, piso 95%).
-  Detalle en [CLAUDE.md](CLAUDE.md).
+  Detalle en [CLAUDE.md](../CLAUDE.md).
 - **De negocio cerrada (2026-09-02, Aaron): D-029 — casos y handoff con formulario.** Revisa
   D-002/D-003/D-017/D-019/D-023 tras estudiar Intercom y Zendesk (varias conversaciones por
   persona; el ticket es la conversación escalada). Autenticado: un hilo permanente con el bot
@@ -493,15 +493,15 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   ya no derivan solos: el bot ofrece la tarjeta (`HANDOFF_FORM`, mecanismo de D-028) y deriva
   `POST /chat/conversations/{id}/handoff`. Un caso o la anónima cerrados quedan `CLOSED` y de
   solo lectura; el hilo del autenticado vuelve al bot (D-023). Sin GSI nuevos. Detalle y
-  código en [CLAUDE.md](CLAUDE.md).
+  código en [CLAUDE.md](../CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-008** (taxonomía tickets), **D-010** (campos de usuario),
   **D-011** (contrato HERALD), **D-014** (retención).
-- **Técnicas abiertas (TD):** ver [CLAUDE.md](CLAUDE.md) — TD-001 (polling vs WebSocket), TD-002
+- **Técnicas abiertas (TD):** ver [CLAUDE.md](../CLAUDE.md) — TD-001 (polling vs WebSocket), TD-002
   (Haiku directo vs Bedrock), TD-003 (Vercel vs Amplify), TD-004 (cuentas separadas), TD-005
   (PythonFunction vs DockerImageFunction), TD-007 (dominio custom). TD-006 quedó **cerrada**:
   la v0 se eliminó del repo (backup en `../chatbot-ai-vmc-v0-backup.zip`).
 
 **La lista operativa de qué está abierto y la regla de "parar y avisar" viven en
-[CLAUDE.md](CLAUDE.md), que se lee en cada sesión.**
+[CLAUDE.md](../CLAUDE.md), que se lee en cada sesión.**

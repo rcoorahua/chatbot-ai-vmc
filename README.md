@@ -57,23 +57,31 @@ modular** con dependencias en una sola dirección (regla en `backend/__init__.py
 | `tests/` | Suite pytest, incluidas las pruebas de los patrones de acceso a DynamoDB contra servicios locales reales |
 | `.github/workflows/` | `ci.yml` (lint · tests · cdk synth, sin credenciales AWS) y `deploy.yml` (CD maquetado, apagado hasta tener cuenta AWS) |
 | `.claude/` | 12 skills de metodología (spec-driven, testing, commit, deploy, llm-cost-optimizer, rag-architect, prompt-governance, ci-cd, docker-dev, security-guidance, skill-auditor, write-a-skill) + hook de seguridad |
+| `docs/` | Toda la documentación salvo tres archivos que viven en la raíz a propósito: este `README.md`, `CLAUDE.md` (registro vivo de decisiones, lo lee Claude Code al arrancar) y `DETAILS.md` (auditoría técnica P0/P1 con su estado) |
 
 ## Documentación — leer en este orden
 
-1. **[REQUERIMENTS.md](REQUERIMENTS.md)** — el spec (fuente de verdad funcional): RF, RNF, reglas
+1. **[REQUERIMENTS.md](docs/REQUERIMENTS.md)** — el spec (fuente de verdad funcional): RF, RNF, reglas
    de negocio, criterios de aceptación, decisiones pendientes `D-xxx` y modelo DynamoDB v1.0.
-2. **[PLAN.md](PLAN.md)** — la arquitectura (fuente de verdad técnica): decisiones cerradas,
+2. **[PLAN.md](docs/PLAN.md)** — la arquitectura (fuente de verdad técnica): decisiones cerradas,
    mapa de rutas → Lambdas, modelo de datos con su revisión, entornos, qué pedir al equipo AWS,
    fases.
 3. **[CLAUDE.md](CLAUDE.md)** — registro vivo de decisiones abiertas/cerradas y metodología.
    Regla central: **nada que dependa de una decisión abierta se implementa asumiendo un valor.**
-4. **[BACKLOG.md](BACKLOG.md)** — el trabajo dividido en tickets tomables, con sus dependencias:
+4. **[BACKLOG.md](docs/BACKLOG.md)** — el trabajo dividido en tickets tomables, con sus dependencias:
    qué se puede empezar hoy, qué bloquea cada decisión pendiente y cómo repartirlo entre dos
    personas sin pisarse.
-5. **[MAPEO.md](MAPEO.md)** — qué intenciones del Centro de Ayuda llevan flujo guiado con
+5. **[MAPEO.md](docs/MAPEO.md)** — qué intenciones del Centro de Ayuda llevan flujo guiado con
    botones y cuáles son FAQ planas (D-028), y la taxonomía de tickets propuesta para D-008.
-6. **[TEST.md](TEST.md)** — prueba manual del bot: comandos para levantar y resetear el
-   entorno, y 50 mensajes (30 del Centro de Ayuda, 15 frontera, 5 de manipulación).
+6. **[TEST.md](docs/TEST.md)** — prueba manual del bot: comandos para levantar y resetear el
+   entorno, 50 mensajes sueltos y 30 conversaciones. Demuestra que nada se rompió, no que el
+   FAQ responda bien.
+7. **[BENCHMARK.md](docs/BENCHMARK.md)** — benchmark de recuperación del FAQ contra Pinecone
+   (121 consultas, sin Gemini): recall y rechazo con números comparables entre versiones.
+8. **[DETAILS.md](DETAILS.md)** — auditoría técnica (P0/P1) con el estado de cada hallazgo.
+
+También en `docs/`: `DESIGN.md` (sistema de diseño del panel del asesor: tokens, tipografía,
+componentes) y `PRODUCT.md` (brief de producto del panel).
 
 ## Estado actual
 

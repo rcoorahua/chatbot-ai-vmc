@@ -269,7 +269,7 @@ con fecha límite), `RECURRENTE` (mismo usuario, mismo problema, segunda vez).
   real y una falla de sala equivale a un `SANCTION_APPEAL` seguro después.
 
 **Estado (2026-09-02): esta propuesta está IMPLEMENTADA** en
-[`backend/tickets/taxonomy.py`](backend/tickets/taxonomy.py) — los 12 tipos con su categoría,
+[`backend/tickets/taxonomy.py`](../backend/tickets/taxonomy.py) — los 12 tipos con su categoría,
 su prioridad y sus datos mínimos, más las etiquetas de D-009 y las reglas por palabras clave
 que sugieren el tipo sin llamar a ningún modelo. **Eso NO cierra D-008.** Se implementó para
 que la decisión se tome con datos en vez de en abstracto: cada ticket guarda si el tipo lo

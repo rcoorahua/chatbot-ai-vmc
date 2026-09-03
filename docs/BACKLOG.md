@@ -336,7 +336,7 @@ T-24 y con él la primera respuesta real del bot; D-008 destraba T-07 (handoff; 
 
 ## 6. Antes de escribir código en cualquier ticket
 
-1. Verificar en [CLAUDE.md](CLAUDE.md) que sus decisiones sigan cerradas (esta lista se
+1. Verificar en [CLAUDE.md](../CLAUDE.md) que sus decisiones sigan cerradas (esta lista se
    desactualiza; el registro vivo manda).
 2. Escribir primero el criterio de aceptación como test (skill `spec-driven`).
 3. Rama corta desde `develop`, pull request cuando el CI esté verde (skill `commit`).
