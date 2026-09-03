@@ -33,14 +33,16 @@
   "use strict";
 
   if (window.__subastinBooted) return;
-  window.__subastinBooted = true;
 
   const settings = window.subastinSettings || {};
   const API_URL = String(settings.apiUrl || "").replace(/\/+$/, "");
   if (!API_URL) {
+    // Sin marcar el arranque: la pagina puede corregir la configuracion y volver a cargar el
+    // script. Antes el primer intento fallido bloqueaba cualquier reintento.
     console.error("[Subastin] falta window.subastinSettings.apiUrl; el widget no se carga");
     return;
   }
+  window.__subastinBooted = true;
 
   const CONFIG = {
     // Cadencias del sondeo (TD-001, revisado 2026-09-02): se sondea SOLO cuando algo puede
@@ -343,10 +345,10 @@
   }
 
   /** Avatar de Subastin: un bot dibujado en SVG, en vez de la inicial "S". Los ojos parpadean
-   *  con CSS (clase .bot-eye) y el conjunto flota apenas al pasar el cursor.
-   *  NOTA: no usa widget/Anima-Bot.json (Lottie) a proposito — reproducirlo exige cargar
-   *  lottie-web (~140 KB gzip) en TODA pagina de VMC que embeba el widget, demasiado peso para
-   *  un avatar. El JSON queda en el repo por si se decide asumir ese costo. */
+   *  con CSS (clase .bot-eye) y el conjunto flota apenas al pasar el cursor. Es el avatar
+   *  BASE: siempre se dibuja, y es lo que queda si no carga la animacion. Los avatares grandes
+   *  (`animated`) se reemplazan por el Anima-Bot en Lottie cuando su runtime llega del CDN
+   *  (ver `ensureLottie`, con SRI); los de burbuja quedan estaticos a proposito. */
   function botAvatar(className, animated) {
     const ns = "http://www.w3.org/2000/svg";
     const el = document.createElementNS(ns, "svg");
@@ -385,6 +387,11 @@
   // grandes (cabecera y barra del hilo); los de burbuja quedan estaticos a proposito: a
   // 26 px la animacion es ruido y multiplicaria instancias.
   const LOTTIE_SRC = "https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie_light.min.js";
+  // Subresource Integrity del archivo EXACTO de arriba (sha384 calculado el 2026-09-03 sobre
+  // lo que sirve cdnjs). Sin esto, un CDN comprometido corre codigo con acceso al origen de
+  // VMC (y a la sesion del chat). Si el archivo cambia, el navegador lo bloquea y queda el
+  // bot SVG estatico: el chat nunca depende de esto. Cambiar de version = recalcular el hash.
+  const LOTTIE_SRI = "sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu";
   let lottieState = "idle"; // idle | loading | ready | failed
   const lottieMounts = []; // { el, anim } vivos, para destruir los que salgan del DOM
 
@@ -393,6 +400,8 @@
     lottieState = "loading";
     const script = document.createElement("script");
     script.src = LOTTIE_SRC;
+    script.integrity = LOTTIE_SRI;
+    script.crossOrigin = "anonymous";
     script.async = true;
     script.onload = () => {
       lottieState = "ready";
@@ -742,12 +751,56 @@
     }
   }
 
+  // ── Identidad viva ─────────────────────────────────────────────────────────────────────
+  // El JWT de VMC se lee EN VIVO, no una vez al cargar: en una SPA el usuario cambia (login,
+  // logout, otra cuenta) sin recargar la pagina, y el widget seguia con el token y el historial
+  // del usuario anterior (DETAILS.md §4.8). VMC avisa con `Subastin.setIdentity(jwt)` (o
+  // `setIdentity(null)` al cerrar sesion); si no avisa, se mira `window.subastinSettings`
+  // antes de cada request y cualquier cambio reinicia la sesion.
+  let identityOverride; // undefined = manda la pagina; null = anonimo por orden de VMC
+
+  function currentJwt() {
+    if (identityOverride !== undefined) return identityOverride;
+    // Manda el objeto VIVO: si VMC lo reasigna sin `userJwt` (logout), eso es un logout, no
+    // un motivo para volver al JWT que se leyo al cargar.
+    const live = window.subastinSettings;
+    if (live && typeof live === "object") return live.userJwt || null;
+    return settings.userJwt || null;
+  }
+
+  /** Con quien se esta hablando, para invalidar la cache: NO es una verificacion de seguridad
+   *  (esa la hace el backend con la firma del JWT); solo dice si la sesion guardada es de
+   *  esta misma persona. */
+  function identityKey() {
+    const jwt = currentJwt();
+    if (!jwt || state.forceAnonymous) return "anon";
+    return "user:" + subjectOf(jwt);
+  }
+
   function wantsAuthenticated() {
-    return Boolean(settings.userJwt) && !state.forceAnonymous;
+    return Boolean(currentJwt()) && !state.forceAnonymous;
+  }
+
+  // Generacion de la sesion: sube en cada reset. Una request que empezo en la generacion
+  // anterior (otro usuario) se descarta al volver, aunque el servidor haya respondido bien —
+  // nada de lo que traiga puede tocar el estado del usuario actual.
+  let generation = 0;
+  const inflight = new Set(); // AbortControllers vivos, para cortarlos al resetear
+
+  function staleError() {
+    const error = new Error("stale");
+    error.stale = true;
+    return error;
+  }
+
+  function isStale(error) {
+    return Boolean(error && error.stale);
   }
 
   async function request(method, path, body, token) {
+    const gen = generation;
     const controller = new AbortController();
+    inflight.add(controller);
     const timer = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
     const headers = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -759,6 +812,7 @@
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });
+      if (gen !== generation) throw staleError(); // otro usuario desde que salio: se descarta
       const data = response.status === 204 ? null : await response.json().catch(() => null);
       if (!response.ok) {
         const detail = data && data.detail;
@@ -770,20 +824,33 @@
       state.offline = false;
       return data;
     } catch (error) {
+      if (gen !== generation || isStale(error)) throw staleError();
       if (!error.status) state.offline = true; // red caida o timeout, no un rechazo del backend
       throw error;
     } finally {
       clearTimeout(timer);
+      inflight.delete(controller);
     }
   }
 
   async function ensureSession() {
+    const identity = identityKey();
+    if (state.session && state.session.identity !== identity) {
+      // La pagina cambio de usuario sin avisar (SPA): nada de lo anterior puede seguir en
+      // pantalla ni salir en una request. Se reinicia, se programa UN arranque limpio para
+      // el usuario nuevo y la operacion que lo descubrio se descarta (era del anterior).
+      reset();
+      if (state.open || wantsAuthenticated()) scheduleBoot();
+      throw staleError();
+    }
     if (state.session) return state.session;
     const wantAuth = wantsAuthenticated();
-    const wantedUser = wantAuth ? subjectOf(settings.userJwt) : null;
+    const jwt = wantAuth ? currentJwt() : null;
+    const wantedUser = wantAuth ? subjectOf(jwt) : null;
     const stored = loadStoredSession();
     const stillValid =
       stored &&
+      stored.identity === identity &&
       stored.expiresAt * 1000 > Date.now() + 60000 &&
       stored.userType === (wantAuth ? "AUTHENTICATED" : "ANONYMOUS") &&
       (!wantAuth || stored.userId === wantedUser);
@@ -793,7 +860,7 @@
       return stored;
     }
 
-    const payload = wantAuth ? { user_jwt: settings.userJwt } : {};
+    const payload = wantAuth ? { user_jwt: jwt } : {};
     let data;
     try {
       data = await request("POST", "/chat/sessions", payload);
@@ -815,6 +882,7 @@
       userName: data.user.name,
       userId: wantedUser,
       conversationId: data.conversation.conversation_id,
+      identity,
     };
     state.session = session;
     state.activeId = session.conversationId;
@@ -843,6 +911,54 @@
     storeSession(null);
   }
 
+  /** Borron y cuenta nueva: corta las requests en vuelo, apaga todos los temporizadores y
+   *  olvida sesion, mensajes y storage. Es lo que pasa al cambiar de usuario (login, logout,
+   *  otra cuenta) y lo que expone `Subastin.reset()`. Idempotente: dos seguidos no dejan
+   *  temporizadores ni requests duplicados, porque el segundo no encuentra nada que cortar.
+   *  No arranca nada: quien lo llama decide si vuelve a abrir sesion (`boot`). */
+  function reset() {
+    generation += 1;
+    for (const controller of inflight) controller.abort();
+    inflight.clear();
+    clearTimeout(state.pollTimer);
+    clearTimeout(state.greetingTimer);
+    clearTimeout(state.typingTimer);
+    state.pollTimer = null;
+    state.greetingTimer = null;
+    state.typingTimer = null;
+    booting = false;
+    state.loading = false;
+    state.pollAgain = false;
+    state.loadingOlder = false;
+    state.formBusy = false;
+    state.failures = 0;
+    state.unread = 0;
+    state.unseenBelow = 0;
+    state.identityError = false;
+    state.greetingVisible = false;
+    state.seen = new Set();
+    clearTimeout(bootTimer);
+    bootTimer = null;
+    dropSession();
+    lastViewKey = null;
+    render();
+    // Con el panel abierto, la conversacion nueva tiene que presentarse igual que al abrir:
+    // sin esto, cambiar de usuario dejaba el hilo vacio y sin saludo hasta reabrir.
+    if (state.open) scheduleGreeting();
+  }
+
+  // El arranque tras un reset va en un temporizador de 0 ms: dos `reset()` seguidos (o un
+  // reset y un setIdentity en el mismo tick) producen UN solo arranque y una sola sesion,
+  // en vez de abrir dos y abortar la primera a medio camino.
+  let bootTimer = null;
+  function scheduleBoot() {
+    clearTimeout(bootTimer);
+    bootTimer = setTimeout(() => {
+      bootTimer = null;
+      boot();
+    }, 0);
+  }
+
   // Cualquier llamada autenticada: si la sesion dejo de servir, se abre otra y se reintenta una
   // vez. Dos motivos distintos con el mismo remedio:
   //   401 → el token caduco o no vale.
@@ -852,11 +968,14 @@
   //         la sesion vive en sessionStorage y sobrevive al reload: el widget seguiria pidiendo
   //         una conversacion muerta hasta cerrar la pestaña.
   async function withSession(fn) {
+    const gen = generation;
     const session = await ensureSession();
+    // Cambio de usuario mientras se abria la sesion: lo que se iba a pedir era del anterior.
+    if (gen !== generation) throw staleError();
     try {
       return await fn(session);
     } catch (error) {
-      if (error.status !== 401 && error.status !== 404) throw error;
+      if (isStale(error) || (error.status !== 401 && error.status !== 404)) throw error;
       dropSession(); // limpia mensajes, pendientes y el cursor del sondeo
       return fn(await ensureSession());
     }
@@ -985,7 +1104,7 @@
 
   /** Anonimo con la conversacion cerrada: otra sesion es otra conversacion (D-002/D-018). */
   function startNewConversation() {
-    dropSession();
+    reset();
     state.view = "messages";
     render();
     boot();
@@ -998,25 +1117,30 @@
     // El anonimo no tiene sesion hasta que abre el chat: sin sesion no hay fila que sondear
     // (y crearla desde aqui haria una conversacion por cada visitante de VMC).
     if (!state.session && !wantsAuthenticated()) return;
+    const gen = generation;
     state.loading = true;
     try {
       await ensureSession();
       const listDue = !isAnonymous() && Date.now() - state.lastListAt > CONFIG.listEveryMs;
       if (listDue) await fetchConversations();
-      // Cerrado y autenticado: la lista ya cubrio todos los casos en UNA llamada.
-      if (state.open || isAnonymous()) await pollActive();
+      // Cerrado y autenticado: la lista ya cubrio todos los casos en UNA llamada — salvo que
+      // se espere al bot en el hilo, que solo se ve sondeando ese hilo.
+      if (state.open || isAnonymous() || waitingForBot()) await pollActive();
       state.failures = 0;
       if (!state.open) updateLauncher();
-    } catch (_) {
+    } catch (error) {
+      if (isStale(error)) return; // hubo un reset en medio: ese ya programo lo suyo
       state.failures += 1;
       render(); // muestra el aviso de sin conexion si aplica
     } finally {
-      state.loading = false;
-      if (state.pollAgain) {
-        state.pollAgain = false;
-        poll();
-      } else {
-        schedulePoll();
+      if (gen === generation) {
+        state.loading = false;
+        if (state.pollAgain) {
+          state.pollAgain = false;
+          poll();
+        } else {
+          schedulePoll();
+        }
       }
     }
   }
@@ -1073,16 +1197,32 @@
       upsertMessages(data.messages);
       state.hasMore = Boolean(data.has_more);
       if (data.next_before) state.firstKey = data.next_before;
-    } catch (_) {
+    } catch (error) {
+      if (isStale(error)) return;
       /* el boton sigue ahi para reintentar */
     } finally {
-      state.loadingOlder = false;
-      render();
+      if (id === state.activeId) {
+        state.loadingOlder = false;
+        render();
+      }
     }
   }
 
   function jitter(ms) {
     return Math.round(ms * (0.85 + Math.random() * 0.3));
+  }
+
+  /** Se espera una respuesta del bot: el ultimo mensaje propio se confirmo hace poco y el bot
+   *  esta encendido. Vence sola a los `typingMaxMs` — tambien con el panel cerrado, donde no
+   *  hay render que la retire — para que un bot que nunca contesta no deje el sondeo rapido
+   *  encendido para siempre. */
+  function waitingForBot() {
+    if (!state.typingSince) return false;
+    if (Date.now() - state.typingSince > CONFIG.typingMaxMs) {
+      state.typingSince = null;
+      return false;
+    }
+    return !state.conversation || state.conversation.bot_enabled;
   }
 
   /** Cuanto esperar hasta el proximo sondeo; 0 = nada puede llegar, no se sondea. */
@@ -1092,9 +1232,14 @@
       return jitter(Math.min(CONFIG.backoffMaxMs, CONFIG.backoffBaseMs * factor));
     }
     const conv = state.conversation;
+    if (conv && conv.status === "CLOSED") {
+      return state.open && !isAnonymous() ? jitter(CONFIG.listEveryMs) : 0;
+    }
+    // Esperando al bot se sondea rapido este el panel abierto o cerrado: cerrado, la
+    // respuesta tiene que llegar al contador del boton. Antes el sondeo se detenia al
+    // cerrar y el badge no se enteraba hasta reabrir (DETAILS.md §4.19).
+    if (waitingForBot()) return jitter(CONFIG.pollWaitingMs);
     if (state.open) {
-      if (conv && conv.status === "CLOSED") return isAnonymous() ? 0 : jitter(CONFIG.listEveryMs);
-      if (state.typingSince && (!conv || conv.bot_enabled)) return jitter(CONFIG.pollWaitingMs);
       if (waitingAdvisor(conv)) return jitter(CONFIG.pollAdvisorMs);
       return jitter(CONFIG.pollOpenMs);
     }
@@ -1189,6 +1334,7 @@
         switchConversation(conv.conversation_id);
       }
     } catch (error) {
+      if (isStale(error)) return; // cambio de usuario en medio del envio: ya no hay formulario
       state.formBusy = false;
       const detail = error.detail;
       const campo = detail && typeof detail === "object" ? detail.field : null;
@@ -1255,6 +1401,7 @@
       if (!state.conversation || state.conversation.bot_enabled) state.typingSince = Date.now();
       schedulePoll(); // cadencia rapida mientras se espera
     } catch (error) {
+      if (isStale(error)) return; // el borrador era de otro usuario: ya se descarto
       draft.status = "failed";
       draft.error = error.message;
       draft.rateLimited = error.status === 429;
@@ -1397,9 +1544,11 @@
   // El boton flotante NO se recrea en cada render: si se reemplazara, la transicion de hover
   // se cortaria cada vez que llega un mensaje. Solo se actualizan icono, estado y contador.
   function updateLauncher() {
+    if (!launcherEl) return; // desmontado
     const open = state.open;
     launcherEl.classList.toggle("is-open", open);
     launcherEl.setAttribute("aria-label", open ? TEXT.minimize : TEXT.open);
+    launcherEl.setAttribute("aria-expanded", open ? "true" : "false");
     launcherIconEl.replaceChildren(open ? ICON.minimize() : ICON.chat());
 
     const showBadge = !open && state.unread > 0;
@@ -1472,8 +1621,7 @@
           text: TEXT.continueAnon,
           onclick: () => {
             state.forceAnonymous = true;
-            state.identityError = false;
-            dropSession();
+            reset(); // nada del intento fallido (ni de un usuario anterior) sigue en pantalla
             boot();
           },
         })
@@ -2211,11 +2359,27 @@
 
   // ───────────────────────────────── Navegacion ─────────────────────────────────
 
+  /** El saludo de una conversacion vacia "llega" ~420 ms despues (la transicion del panel
+   *  dura .38 s): asi su fade se percibe como un mensaje y no como parte del panel. */
+  function scheduleGreeting() {
+    state.greetingVisible = false;
+    clearTimeout(state.greetingTimer);
+    state.greetingTimer = setTimeout(() => {
+      state.greetingVisible = true;
+      render();
+    }, 420);
+  }
+
   function setOpen(open) {
+    if (!root) return; // desmontado
+    // Al cerrar, si el foco estaba dentro del panel vuelve al boton que lo abrio: un dialogo
+    // que se cierra y deja el foco en el vacio pierde al usuario de teclado o lector.
+    const focusInside = !open && panelEl.contains(root.activeElement);
     state.open = open;
     // Al cerrar se olvida la vista dibujada para que al reabrir la pantalla vuelva a entrar
     // con su animacion, en lugar de aparecer de golpe.
     if (!open) lastViewKey = null;
+    if (focusInside) launcherEl.focus({ preventScroll: true });
     if (open) {
       // Directo a mensajes (sin pasar por el home). Si un caso avanzo mientras estaba
       // cerrado, se abre en la lista para que se vea.
@@ -2225,14 +2389,7 @@
       // Conversacion recien empezada: el saludo entra DESPUES de que el panel termino de
       // abrir (transicion de .38s), asi su fade se percibe como un mensaje y no como parte
       // del panel. Con historial el saludo ya esta arriba y esto no cambia nada.
-      if (state.messages.length === 0) {
-        state.greetingVisible = false;
-        clearTimeout(state.greetingTimer);
-        state.greetingTimer = setTimeout(() => {
-          state.greetingVisible = true;
-          render();
-        }, 420);
-      }
+      if (state.messages.length === 0) scheduleGreeting();
       // Precarga del orbe WebGPU: compilar el shader recien cuando el usuario envia su primer
       // mensaje hacia que el indicador de "escribiendo" tardara en aparecer.
       ensureOrbGpu();
@@ -2255,14 +2412,17 @@
   async function boot() {
     if (booting) return;
     booting = true;
+    const gen = generation;
     try {
       await ensureSession();
+      if (gen !== generation) return; // hubo un reset: el arranque nuevo ya va por su cuenta
       if (!isAnonymous() && !state.lastListAt) await fetchConversations();
+      if (gen !== generation) return;
       await poll();
-    } catch (_) {
-      render();
+    } catch (error) {
+      if (!isStale(error)) render();
     } finally {
-      booting = false;
+      if (gen === generation) booting = false;
     }
   }
 
@@ -2889,14 +3049,22 @@
       launcherIconEl,
       launcherBadgeEl
     );
-    panelEl = h("div", { class: "panel", role: "dialog", "aria-label": TEXT.agent, "aria-hidden": "true" });
+    panelEl = h("div", {
+      class: "panel",
+      id: "subastin-panel",
+      role: "dialog",
+      "aria-modal": "false",
+      "aria-label": TEXT.agent,
+      "aria-hidden": "true",
+    });
+    launcherEl.setAttribute("aria-controls", "subastin-panel");
+    launcherEl.setAttribute("aria-expanded", "false");
+    panelEl.addEventListener("keydown", onPanelKeydown);
     container.append(launcherEl, panelEl);
     root.append(style, container);
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") poll();
-      else clearTimeout(state.pollTimer);
-    });
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    hostEl = host;
 
     render();
     // El autenticado arranca al cargar (lista de casos para el contador del boton); el
@@ -2904,10 +3072,76 @@
     if (wantsAuthenticated()) boot();
   }
 
+  function onVisibilityChange() {
+    if (document.visibilityState === "visible") poll();
+    else clearTimeout(state.pollTimer);
+  }
+
+  // ── Dialogo accesible ─────────────────────────────────────────────────────────────────
+  // Escape cierra, Tab circula dentro del panel y el foco vuelve al boton al cerrar (ver
+  // setOpen). El panel no es modal (aria-modal=false): la pagina de VMC sigue usable detras,
+  // asi que el atrapado de foco es solo para no salir del panel con Tab sin querer.
+  const FOCUSABLE =
+    'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), ' +
+    'select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  function focusables() {
+    return Array.from(panelEl.querySelectorAll(FOCUSABLE)).filter(
+      (el) => !el.closest(".is-leaving") && el.getClientRects().length > 0
+    );
+  }
+
+  function onPanelKeydown(event) {
+    if (!state.open) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = focusables();
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const current = root.activeElement;
+    if (event.shiftKey && (current === first || !panelEl.contains(current))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (current === last || !panelEl.contains(current))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  let hostEl = null;
+
+  /** Retira el widget de la pagina: corta requests y temporizadores, quita listeners y el
+   *  nodo. `Subastin.mount()` lo vuelve a montar; un segundo <script> tambien puede hacerlo. */
+  function unmount() {
+    if (!hostEl) return;
+    reset();
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    panelEl.removeEventListener("keydown", onPanelKeydown);
+    for (const mounted of lottieMounts) mounted.anim.destroy();
+    lottieMounts.length = 0;
+    hostEl.remove();
+    hostEl = null;
+    root = null;
+    panelEl = null;
+    launcherEl = null;
+    launcherIconEl = null;
+    launcherBadgeEl = null;
+    state.open = false;
+    window.__subastinBooted = false;
+  }
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
 
-  // Superficie minima para que la pagina anfitriona abra el chat (p. ej. desde un boton).
+  // Superficie para la pagina anfitriona. Ademas de abrir el chat, VMC avisa aqui los cambios
+  // de sesion de su SPA (DETAILS.md §4.8 / Paso 10): sin recarga de pagina, el widget no
+  // tiene otra forma segura de enterarse.
   window.Subastin = {
     open: () => setOpen(true),
     close: () => setOpen(false),
@@ -2915,5 +3149,26 @@
       state.view = "messages";
       setOpen(true);
     },
+    /** VMC inicio sesion (jwt) o la cerro (null). Otra persona = sesion, mensajes y storage
+     *  nuevos; la misma persona con un JWT renovado no pierde nada. */
+    setIdentity: (jwt) => {
+      identityOverride = jwt || null;
+      state.forceAnonymous = false;
+      if (state.session && state.session.identity === identityKey()) return;
+      reset();
+      if (state.open || wantsAuthenticated()) scheduleBoot();
+    },
+    /** Olvida todo (sesion, mensajes, storage) y vuelve a empezar con la identidad vigente.
+     *  Idempotente: llamarlo dos veces seguidas no deja temporizadores ni requests dobles. */
+    reset: () => {
+      reset();
+      if (state.open || wantsAuthenticated()) scheduleBoot();
+    },
+    mount: () => {
+      if (hostEl) return;
+      window.__subastinBooted = true;
+      mount();
+    },
+    unmount,
   };
 })();
