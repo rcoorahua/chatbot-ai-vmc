@@ -7,13 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Plataforma de atención propia de VMC que reemplaza a Intercom: chat web con IA
 (Gemini clasifica y redacta —TD-008—, RAG en Pinecone, catálogo HERALD) y handoff a asesores humanos.
 Arquitectura AWS serverless (API Gateway HTTP API + Lambda + SQS + DynamoDB) con CDK v2 Python.
-**Fuente de verdad funcional: [REQUERIMENTS.md](REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
-DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](PLAN.md).** El desglose en tickets tomables y sus
-dependencias está en [BACKLOG.md](BACKLOG.md) — consultarlo al planear o repartir trabajo.
-Flujos guiados e intenciones del corpus: [MAPEO.md](MAPEO.md). Prueba manual del bot (comandos,
-50 mensajes sueltos y 30 conversaciones de varios turnos): [TEST.md](TEST.md) — demuestra que
+**Fuente de verdad funcional: [REQUERIMENTS.md](docs/REQUERIMENTS.md)** (RF/RNF/RB/AC/D + modelo
+DynamoDB v1.0). **Fuente de verdad de arquitectura: [PLAN.md](docs/PLAN.md).** El desglose en tickets tomables y sus
+dependencias está en [BACKLOG.md](docs/BACKLOG.md) — consultarlo al planear o repartir trabajo.
+Flujos guiados e intenciones del corpus: [MAPEO.md](docs/MAPEO.md). Prueba manual del bot (comandos,
+50 mensajes sueltos y 30 conversaciones de varios turnos): [TEST.md](docs/TEST.md) — demuestra que
 nada se rompió, no que el FAQ responda bien. Para eso, el **benchmark de recuperación** con
-números, sin Gemini: [BENCHMARK.md](BENCHMARK.md) (línea base 2026-09-03: recall 84%, rechazo 90%).
+números, sin Gemini: [BENCHMARK.md](docs/BENCHMARK.md) (línea base 2026-09-03: recall 84%, rechazo 90%).
 
 ## Comandos
 
@@ -226,7 +226,7 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   flujos activos** (F-PART y, desde 2026-09-01, F-CONS/F-LIVE/F-NEGO/F-HAB); las 16
   consultas canónicas verificadas contra el índice real.
   Detectar/ofrecer botones no llama a ningún modelo. **Mapeo completo del corpus (22
-  artículos, 111 preguntas) y las respuestas de diseño: [MAPEO.md](MAPEO.md).** Código:
+  artículos, 111 preguntas) y las respuestas de diseño: [MAPEO.md](docs/MAPEO.md).** Código:
   `agent/flows.py` (definiciones puras), composición en `workers/ai_worker.py`, transición
   atómica en `conversations/repository.py`, render en `widget/subastin.js`.
 
@@ -274,7 +274,7 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
-Detalle en [REQUERIMENTS.md](REQUERIMENTS.md) §6 y PLAN.md §9.
+Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
 
 | ID | Tema | Prio | Bloquea |
 |---|---|---|---|
@@ -303,7 +303,7 @@ D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagado
 | TD-005 | `PythonFunction` (bundling) vs `DockerImageFunction` | PythonFunction mientras deps < 250 MB descomprimido |
 | TD-007 | Dominio custom para la API + DNS/ACM | No bloquea MVP; URL default de API Gateway mientras tanto |
 | TD-009 | **Procesos multi-paso: ¿reglas de texto, flujo con estado, o acotar el prompt?** | **Abierta desde 2026-09-02.** El prompt del redactor manda explicar "un paso a la vez" y preguntar si continuar (`WRITER_SYSTEM_PROMPT`, bloque `<conversacion>`), así que el bot abre contratos de varios turnos ("¿Deseas que te explique el siguiente paso?"). Detrás de esa promesa **no hay estado**: la sostiene `agent/followups.py`, que al detectar una continuación busca en el RAG **la pregunta previa del usuario** en lugar del mensaje actual. Funciona y está medido (ver la viñeta de continuidad en "Invariantes"), pero es heurística: una continuación que las reglas no reconozcan vuelve a buscar el texto suelto y deriva. **Las cuatro salidas:** (a) **medir primero** — el log `ai.rag` ya trae `contextualized` y `followup_rule`, así que se puede contar cuántas continuaciones caen fuera de las reglas antes de decidir nada; (b) **acotar el prompt** para que no prometa pasos que el sistema no sostiene (toca `agent/prompts.py` → exige golden set y eval real, D-026); (c) **modelar los procesos como flujos** de D-028 con estado y botones, que es lo que MAPEO.md §4.1 ya mapea — ojo que el registro **no** es uno hoy ("cada pregunta se autocontiene"); (d) **reescribir la consulta con el modelo** (query rewriting), la respuesta estándar de la industria, pero cuesta una llamada por turno de continuación y choca con D-027. **Recomendación: (a) y luego (b) o (c).** Dato para dimensionar: el margen es angosto — con la pregunta previa sola, "Hola como me registro" recupera 4/4 con 0.859 contra un umbral de 0.84 |
-| TD-010 | **¿Reranker como decisor de evidencia, en lugar del umbral de e5?** | **Abierta desde 2026-09-03**, con datos en [BENCHMARK.md](BENCHMARK.md) §3–4. El score de `multilingual-e5-large` comprime todo el corpus entre 0.78 y 0.88, así que **no existe un `RAG_MIN_SCORE` bueno**: 0.84 da recall 84% / rechazo 90%, y cada centésima mueve decenas de casos (0.83 → 91/55, 0.85 → 76/95). Un cross-encoder alojado en Pinecone (`bge-reranker-v2-m3`, `pc.inference.rerank`, mismo proveedor, sin Gemini) puntúa "¿este fragmento responde la pregunta?" y separa de verdad: negativos en 0.00–0.02, positivos en 0.6–0.99; con umbral **0.10** da **89% / 95%** sobre los mismos 121 casos, y "¿pongo RUC o DNI?" (que el corpus no responde) cae a 0.001. **Lo que ni el reranker arregla**: sinónimos del rubro (garantía = consignación, me cobran = comisión) y erratas en la palabra clave (komision); eso es del **corpus** — preguntas alternativas por fragmento en la ingesta y corrección ortográfica contra el vocabulario — no del decisor. **Recomendación**: reranker ≥ 0.10 como decisor, e5 como prefiltro de 8 candidatos con piso flojo (≈ 0.75); antes, verificar cuota del reranker en el plan de Pinecone y latencia desde Lambda. Hasta decidirlo, `--rerank` en `scripts/eval_retrieval.py` es solo medición |
+| TD-010 | **¿Reranker como decisor de evidencia, en lugar del umbral de e5?** | **Abierta desde 2026-09-03**, con datos en [BENCHMARK.md](docs/BENCHMARK.md) §3–4. El score de `multilingual-e5-large` comprime todo el corpus entre 0.78 y 0.88, así que **no existe un `RAG_MIN_SCORE` bueno**: 0.84 da recall 84% / rechazo 90%, y cada centésima mueve decenas de casos (0.83 → 91/55, 0.85 → 76/95). Un cross-encoder alojado en Pinecone (`bge-reranker-v2-m3`, `pc.inference.rerank`, mismo proveedor, sin Gemini) puntúa "¿este fragmento responde la pregunta?" y separa de verdad: negativos en 0.00–0.02, positivos en 0.6–0.99; con umbral **0.10** da **89% / 95%** sobre los mismos 121 casos, y "¿pongo RUC o DNI?" (que el corpus no responde) cae a 0.001. **Lo que ni el reranker arregla**: sinónimos del rubro (garantía = consignación, me cobran = comisión) y erratas en la palabra clave (komision); eso es del **corpus** — preguntas alternativas por fragmento en la ingesta y corrección ortográfica contra el vocabulario — no del decisor. **Recomendación**: reranker ≥ 0.10 como decisor, e5 como prefiltro de 8 candidatos con piso flojo (≈ 0.75); antes, verificar cuota del reranker en el plan de Pinecone y latencia desde Lambda. Hasta decidirlo, `--rerank` en `scripts/eval_retrieval.py` es solo medición |
 | TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27; **modelos recalibrados 2026-09-01** contra la página oficial de precios: `gemini-3.5-flash-lite` clasifica ($0.30/$2.50 por 1M; respaldo `3.1-flash-lite`) y `gemini-3.6-flash` redacta ($1.50/$7.50; respaldo `3.5-flash` a $1.50/$9.00). Se abandonó `3.7-flash`: existe en la API pero NO figura en la tabla de precios (preview sin tarifa) y con key gratuita rechazaba sostenido ("high demand") — en la práctica todo caía al respaldo con un costo estimado inventado. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002) |
 
 TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; backup en
@@ -353,6 +353,10 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   CI (DETAILS.md §4 Paso 4) y se regenera con el comando en su propio encabezado tras tocar
   `dependencies`/`dev` — **no** cubre los `backend/requirements-*.txt` (lo que va a Lambda) ni
   `infra/requirements.txt` (pineados por versión exacta en el propio archivo, sin lock aparte).
+- **Documentación en `docs/`** (desde 2026-09-03): PLAN, REQUERIMENTS, BACKLOG, MAPEO, TEST,
+  BENCHMARK, DESIGN y PRODUCT. En la raíz quedan solo `README.md`, `CLAUDE.md` y `DETAILS.md`.
+  Un doc nuevo va a `docs/`; las menciones sin enlace ("PLAN.md §6" en docstrings y workflows)
+  siguen valiendo por el nombre.
 - Locales y **no versionados** (`.gitignore`): `my-usage.md` (chuleta personal), `REFERENCIA/`
   (proyecto v0 de referencia; su `.cursor/` no aplica a este repo), `data/helpcenter/*.md` y
   `chunks.json` (se regeneran con `helpcenter_fetch`). No enlazarlos desde docs versionadas.

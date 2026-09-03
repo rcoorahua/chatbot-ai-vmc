@@ -36,7 +36,7 @@ Este documento consolida:
 | 02/09/2026 | **Log de peticiones HTTP (RNF-006).** `api/request_log.py`: un `http.request` por petición (método, plantilla de ruta, path, estado, duración, `request_id`) y un `http.error` con el motivo de cada rechazo. Nivel según el resultado (2xx DEBUG, 4xx WARNING, 5xx ERROR) para que en prod los 404/403/409 y los 500 salten sin ruido. No registra cuerpo, `Authorization` ni query cruda |
 
 **Documentos relacionados:** [PLAN.md](PLAN.md) traduce esto a arquitectura ·
-[BACKLOG.md](BACKLOG.md) lo divide en tickets · [CLAUDE.md](CLAUDE.md) registra el estado vivo de
+[BACKLOG.md](BACKLOG.md) lo divide en tickets · [CLAUDE.md](../CLAUDE.md) registra el estado vivo de
 las decisiones.
 
 ---
@@ -519,7 +519,7 @@ queda provisional. Al implementar la mensajería del asesor se cerraron D-021, D
 (guardrails cuantitativos), D-006 (triviales fijos sin llamada IA), D-007 (IA apagada hasta que
 el asesor cierra, sin expiración) y D-020 (debounce de 6 s vía DelaySeconds de SQS). El mismo día
 se cierran **D-024** (guardrails de seguridad), **D-025** (tono y formato) y **D-026** (evaluación
-de prompts), nuevas. El detalle vive en [CLAUDE.md](CLAUDE.md); aquí se resume en la tabla.
+de prompts), nuevas. El detalle vive en [CLAUDE.md](../CLAUDE.md); aquí se resume en la tabla.
 
 | ID | Decisión | Qué debe cerrarse | Prioridad |
 |---|---|---|---|

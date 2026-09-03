@@ -8,8 +8,8 @@ pipeline está entero; esta mide si el FAQ es bueno.
 
 - Spec: RF-017 (recuperación), RF-018 (umbral: sin evidencia no se responde), RB-009 (nunca
   inventar). Complementa a D-026 (eval de intents) en la capa de recuperación.
-- Golden set: [`tests/golden/retrieval.jsonl`](tests/golden/retrieval.jsonl) · script:
-  [`scripts/eval_retrieval.py`](scripts/eval_retrieval.py) · forma validada en CI por
+- Golden set: [`tests/golden/retrieval.jsonl`](../tests/golden/retrieval.jsonl) · script:
+  [`scripts/eval_retrieval.py`](../scripts/eval_retrieval.py) · forma validada en CI por
   `tests/test_golden_retrieval.py` (la medición real no está en CI: necesita Pinecone).
 
 ---

@@ -1,7 +1,7 @@
 """Taxonomía de tickets — ⚠️ PROPUESTA DE AARON, D-008 SIGUE ABIERTA (Silvana + Julio).
 
 Los 12 `problem_type` de abajo salen del análisis del corpus del Centro de Ayuda (22
-artículos, 111 preguntas) documentado en **[MAPEO.md](../../MAPEO.md) §8**: son los motivos
+artículos, 111 preguntas) documentado en **[MAPEO.md](../../docs/MAPEO.md) §8**: son los motivos
 por los que un usuario realmente necesita a un humano. Se implementan aquí para que el módulo
 de tickets exista y se pueda probar de punta a punta; **no cierran D-008**.
 

@@ -8,7 +8,7 @@ Cómo levantar el entorno, resetearlo, y dos baterías de prueba contra el widge
   a mitad de camino y el formulario de dos pasos.
 
 Para la disciplina de tests automatizados (pytest, cobertura, CI) ver la skill `testing` y
-[CLAUDE.md](CLAUDE.md); esto es la prueba **a mano**.
+[CLAUDE.md](../CLAUDE.md); esto es la prueba **a mano**.
 
 > **Qué demuestra pasar esta guía y qué no.** Si todo esto sale como dice la columna "Qué
 > esperar", **no rompiste nada**: cada capa hace lo suyo y el pipeline está entero. **No**

@@ -5,7 +5,7 @@ description: Aplica la metodología Spec-Driven de Subastín — mapea cada camb
 
 # Metodología Spec-Driven
 
-Fuente de verdad funcional: [REQUERIMENTS.md](../../../REQUERIMENTS.md) (RF/RNF/RB/AC/D + modelo
+Fuente de verdad funcional: [REQUERIMENTS.md](../../../docs/REQUERIMENTS.md) (RF/RNF/RB/AC/D + modelo
 DynamoDB). PLAN.md la traduce a arquitectura; CLAUDE.md registra el estado de las decisiones.
 
 **Ley de hierro (adaptada):** sin mapeo a spec no hay código. Lo que no está en REQUERIMENTS.md
