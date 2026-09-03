@@ -870,8 +870,22 @@ a procesarse o cuyos side effects ya ocurrieron.
   `test.html` la muestra, para no confundir nunca un timeout nuestro con un 504 de Gemini ni
   con "no había evidencia". Tests en `tests/test_agent_llm.py` y
   `tests/test_ai_worker_resilience.py`.
-- ⏳ **No hecho:** timeout de Pinecone, `get_remaining_time_in_millis`, `batch_size=1` (toca
-  `infra/`, que lo están cambiando otras ramas) y los tests de batch con job lento.
+- ✅ **Timeout explícito a Pinecone** (`agent/rag.py`: `Pinecone(api_key=..., timeout=10.0)`,
+  `_PINECONE_TIMEOUT_S`). El SDK instalado (`pinecone` 9.x/10.x) ya trae un default de 30 s a
+  nivel de cliente (a diferencia del `None` de Gemini que causó el cuelgue de 13 min) — no es
+  el bug de colgarse para siempre, pero 30 s sin acotar no deja margen: el peor caso de Gemini
+  en un turno ya son 110 s (2×15 clasificar + 2×40 redactar, con respaldo) sobre un worker de
+  120 s, y `rag.retrieve()` puede llamarse DOS veces en el mismo turno (rama
+  `responde_al_bot` de `ai_worker.py`). Se explicita en 10 s, generoso para una búsqueda
+  vectorial normal (responde en milisegundos). Al vencer, `Index.search()` lanza
+  `PineconeTimeoutError`, que `retrieve()` ya atrapaba como cualquier fallo del proveedor (sin
+  evidencia → handoff, RF-018) — no hizo falta tocar el manejo de errores. Test:
+  `tests/test_agent_rag.py::test_get_index_pasa_un_timeout_explicito`.
+- ⏳ **No hecho:** `get_remaining_time_in_millis`, `batch_size=1` (toca `infra/`, que lo están
+  cambiando otras ramas) y los tests de batch con job lento. El presupuesto de 120 s del
+  worker sigue sin acotar de punta a punta (Gemini 110 s + hasta 2×10 s de Pinecone puede
+  superarlo en el peor caso simultáneo) — eso es justamente lo que resolvería
+  `get_remaining_time_in_millis`, no un timeout fijo por proveedor.
 
 ---
 

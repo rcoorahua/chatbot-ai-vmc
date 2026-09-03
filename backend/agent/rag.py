@@ -57,6 +57,17 @@ class Fragment:
         return f"{self.text}\n(Fuente: {self.source_url})"
 
 
+# Timeout EXPLICITO por request a Pinecone, en segundos (DETAILS.md §4.18). El SDK ya trae un
+# default de 30s (a diferencia del `None` de Gemini que colgo el worker 13 minutos, ver
+# core/llm.py), pero 30s no deja margen: el peor caso de Gemini en un turno ya son 110s (2x15
+# clasificar + 2x40 redactar, con respaldo) sobre un worker de 120s, y esta consulta puede
+# llamarse DOS veces en el mismo turno (`_offer_handoff_form`/continuidad en ai_worker.py,
+# rama "responde_al_bot"). Una busqueda vectorial normal responde en milisegundos; 10s ya es
+# generoso y dispara mucho antes de comerse el presupuesto de la Lambda. Si Pinecone no
+# responde a tiempo, `Index.search()` lanza `PineconeTimeoutError`, que `retrieve()` atrapa
+# como cualquier otro fallo del proveedor (RF-018: sin evidencia -> handoff, nunca inventar).
+_PINECONE_TIMEOUT_S = 10.0
+
 _index: Any | None = None
 
 
@@ -71,7 +82,9 @@ def get_index() -> Any:
             )
         from pinecone import Pinecone
 
-        _index = Pinecone(api_key=settings.pinecone_api_key).Index(settings.pinecone_index_name)
+        _index = Pinecone(
+            api_key=settings.pinecone_api_key, timeout=_PINECONE_TIMEOUT_S
+        ).Index(settings.pinecone_index_name)
     return _index
 
 

@@ -194,6 +194,34 @@ def test_sin_fuente_el_contexto_es_solo_el_texto():
     assert rag.Fragment(text="solo texto").as_context() == "solo texto"
 
 
+def test_get_index_pasa_un_timeout_explicito(monkeypatch):
+    # DETAILS.md §4.18: sin timeout explicito, una conexion muda a Pinecone puede colgar el
+    # worker igual que le paso a Gemini sin `HttpOptions(timeout=...)` (core/llm.py).
+    monkeypatch.setenv("PINECONE_API_KEY", "clave-de-prueba")
+    reset_settings()
+    rag.reset_index()
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def Index(self, name):
+            return object()
+
+    import pinecone
+
+    monkeypatch.setattr(pinecone, "Pinecone", FakeClient)
+    try:
+        rag.get_index()
+    finally:
+        reset_settings()
+        rag.reset_index()
+
+    assert calls[0]["timeout"] == rag._PINECONE_TIMEOUT_S
+    assert calls[0]["timeout"] > 0
+
+
 def test_sin_credencial_pedir_el_indice_falla_claro(monkeypatch):
     monkeypatch.setenv("PINECONE_API_KEY", "")
     reset_settings()
