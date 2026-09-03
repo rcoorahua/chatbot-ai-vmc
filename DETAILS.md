@@ -155,7 +155,7 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
 - El test debe fallar si el import depende accidentalmente de la raíz del checkout.
 - Añadir este smoke al job `synth` de CI.
 
-### Estado (2026-09-03) — 🟡 parcial: empaquetado corregido, falta el smoke del artefacto
+### Estado (2026-09-03) — ✅ hecho, incluido el smoke del artefacto
 
 - ✅ **Opción 1 de la corrección recomendada**: `entry`/raíz pasa a ser la raíz del repo
   (`_lambda_code()` en `infra/stacks/subastin_stack.py`), con `exclude` explícito de lo que no
@@ -171,10 +171,14 @@ La opción 2 o 3 permite además separar dependencias de API, worker IA y worker
   que ni `api/` ni lo que importa tocan `anthropic`/`google-genai`/`pinecone`/`httpx`.
 - ✅ Verificado con `cdk synth -c stage=stage` real (Docker, CI) — antes nadie lo había corrido
   con Docker de verdad en esta serie de sesiones.
-- ⏳ **No hecho**: el smoke test del ARTEFACTO que pide este punto (importar los tres handlers
-  desde `cdk.out/asset.*` después de `synth`, no solo desde el checkout) — sigue sin estar en
-  CI. La verificación de este fix fue estructural (inspección del `command` de bundling +
-  `synth` real), no un test automatizado que falle si alguien vuelve a romper el paquete.
+- ✅ **Smoke del ARTEFACTO** (`infra/tests/artifact_smoke.py`, corre después del `cdk synth`
+  real en el job `synth` de CI, no dentro de `pytest tests -q` que corre antes y sin Docker):
+  lee `cdk.out/subastin-stage.template.json`, ubica el asset bundleado de cada Lambda por su
+  `Handler` y corre `python -S -c "import <módulo>"` con el asset como ÚNICO directorio en
+  `sys.path` (`-S` descarta site-packages, `cwd`=asset — nada del checkout ni de un venv local
+  puede colar un import que en Lambda real fallaría). Validado a mano contra un asset viejo
+  (pre-fix, sin paquete `backend/`): reproduce el `ModuleNotFoundError: backend` original: y
+  contra una copia con el layout corregido: importa limpio.
 
 ---
 
@@ -1189,9 +1193,8 @@ npm run build
 - Los tres handlers importan sin depender del checkout.
 - El asset no contiene el repositorio completo ni dependencias innecesarias.
 
-**Estado (2026-09-03): 🟡 parcial** — ver §4.1 "Estado". El empaquetado real y el split de
-deps están hechos y verificados con `cdk synth` + Docker; falta el smoke que importa cada
-handler desde `cdk.out/asset.*` en CI (items 2-4 de "Pruebas").
+**Estado (2026-09-03): ✅ hecho** — ver §4.1 "Estado". Empaquetado real, split de deps y smoke
+del artefacto (`infra/tests/artifact_smoke.py`, job `synth` de CI) verificados.
 
 ## Paso 2 — Implementar secretos y validación de configuración
 
