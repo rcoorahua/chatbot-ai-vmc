@@ -65,6 +65,9 @@ class ExecutionOut(BaseModel):
     rag_fragments: list[RagFragmentOut] = []
     rag_min_score: float | None = None
     handoff_triggered: bool = False
+    # Por que fallo el proveedor cuando `status` no es SUCCESS (familia, codigo y arranque del
+    # mensaje del API). Nunca contenido del usuario.
+    error: str | None = None
     created_at: str
 
 

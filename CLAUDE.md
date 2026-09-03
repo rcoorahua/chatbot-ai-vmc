@@ -398,7 +398,13 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   vacío). Cada tier lleva un respaldo (`ModelSpec.fallback`) **con su propia tarifa**: el costo
   en AIUsage se calcula con el precio del modelo que REALMENTE respondió (`llm.cost_for`),
   nunca con el del principal. Al agregar un modelo o tier nuevo, no asumir que le sirve la
-  config de otro — probarlo aparte. Modelos vigentes: ver TD-008.
+  config de otro — probarlo aparte. Modelos vigentes: ver TD-008. **(2026-09-03)** Timeout
+  por tier (`_TIER_TIMEOUT_MS`: 15 s FAST, 40 s ANSWER; el SDK trae `None` y colgó el worker
+  13 min) y todo fallo llega como `LLMError` con `kind` (`quota`/`rate_limit`/
+  `client_timeout`/`provider`/`auth`) que AIUsage guarda en `error` con `status=ERROR`. Con
+  evidencia y modelo caído el bot dice que **no está disponible** (`MODEL_UNAVAILABLE_*`),
+  nunca "no tengo ese dato". **La key gratuita de Gemini tiene 20 peticiones por ventana en
+  `3.6-flash`**: una batería la agota y toda prueba manual posterior cae en ese mensaje.
 - **Lo que se BUSCA en el RAG no siempre es lo que el usuario escribió** (`agent/followups.py`,
   2026-09-02; decisión de fondo pendiente en **TD-009**). El prompt del redactor promete
   continuidad ("un paso a la vez, pregunta si continuar") y la recuperación era de un solo

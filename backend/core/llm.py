@@ -164,6 +164,28 @@ class LLMError(Exception):
         self.is_connection = is_connection
         self.is_fatal = is_fatal
 
+    @property
+    def kind(self) -> str:
+        """Familia del fallo, para AIUsage y la consola de dev. Distingue lo que se confunde
+        facil al leer un "sin modelo": `quota` (429 con la cuota del proyecto agotada),
+        `rate_limit` (429 pasajero), `client_timeout` (NUESTRO tope, el proveedor no
+        respondio a tiempo), `provider` (5xx o un 504 DEADLINE del propio Gemini), `auth`."""
+        if self.status_code == 429:
+            return "quota" if self.is_fatal else "rate_limit"
+        if self.is_fatal:
+            return "auth"
+        if self.status_code is None and self.is_connection:
+            lowered = str(self).lower()
+            return "client_timeout" if "timeout" in lowered or "timed out" in lowered else "network"
+        return "provider"
+
+    def describe(self) -> str:
+        """Una linea corta para guardar junto a la ejecucion: familia, codigo y el arranque
+        del mensaje del proveedor (nunca contenido del usuario: es texto del API)."""
+        message = " ".join(str(self).split())[:160]
+        code = f" {self.status_code}" if self.status_code else ""
+        return f"{self.kind}{code}: {message}"
+
 
 class LLMClient:
     """Interfaz que implementa cada proveedor."""
@@ -182,11 +204,17 @@ class LLMClient:
         raise NotImplementedError
 
 
-# Tope por llamada HTTP a Gemini, en milisegundos. Holgado para una redaccion con 600 tokens de
-# salida (las medidas en local van de 1 a 7 s) y bastante menor que el timeout de la Lambda del
-# worker, para que una llamada colgada no se lleve el job entero. Constante y no Settings a
-# proposito: no es una politica de negocio y `core/config.py` lo esta tocando otra rama.
-_HTTP_TIMEOUT_MS = 30_000
+# Tope por llamada HTTP a Gemini, en milisegundos, POR TIER: clasificar devuelve ~10 tokens y
+# redactar hasta 600, y Gemini degradado tarda 8-9 s hasta en un "hola" (medido 2026-09-03),
+# asi que el redactor necesita mas margen que el clasificador. Con un respaldo por tier, el
+# peor caso de un turno es 2x15 + 2x40 = 110 s, por debajo de los 120 s de la Lambda del
+# worker (infra/config.py): una llamada colgada no se lleva el job entero. Constantes y no
+# Settings a proposito: no es politica de negocio y `core/config.py` lo tocan otras ramas.
+# Cuando dispara, el error se registra como `client_timeout`, distinto del 504 DEADLINE que
+# devuelve el propio Gemini (`provider`): la consola no debe confundir uno con otro.
+_TIER_TIMEOUT_MS: dict[ModelTier, int] = {ModelTier.FAST: 15_000, ModelTier.ANSWER: 40_000}
+# Tope del cliente (red de seguridad para cualquier llamada sin tier): el mayor de los dos.
+_HTTP_TIMEOUT_MS = max(_TIER_TIMEOUT_MS.values())
 
 
 class GeminiClient(LLMClient):
@@ -220,7 +248,10 @@ class GeminiClient(LLMClient):
         from google.genai import types
 
         spec = _MODELS[tier]
-        config: dict[str, Any] = {"max_output_tokens": max_output_tokens}
+        config: dict[str, Any] = {
+            "max_output_tokens": max_output_tokens,
+            "http_options": types.HttpOptions(timeout=_TIER_TIMEOUT_MS[tier]),
+        }
         if system:
             config["system_instruction"] = system
         if temperature is not None:

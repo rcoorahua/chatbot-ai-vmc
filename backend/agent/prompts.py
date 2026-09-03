@@ -280,6 +280,16 @@ FAQ_NO_EVIDENCE_CONFIRM_RESPONSE = (
     "¿Quieres que te conecte con un asesor del equipo?"
 )
 
+# El modelo NO respondio (cuota, timeout, caida) pero el RAG SI tenia evidencia (2026-09-03,
+# pedido de Aaron): decir "no tengo ese dato" aqui es falso, el dato esta, lo que falta es
+# quien lo redacte. Se admite el problema, se invita a reintentar y se ofrece el asesor con
+# los mismos botones si/no del flujo HANDOFF_CONFIRM. Fijo: justo cuando el modelo no
+# contesta es cuando no se le puede pedir un mensaje.
+MODEL_UNAVAILABLE_CONFIRM_RESPONSE = (
+    "Uy, justo ahora no estoy disponible 🙏 Puedes intentarlo de nuevo en unos minutos. "
+    "¿Prefieres que te conecte con un asesor del equipo?"
+)
+
 # El usuario dijo que NO al asesor: se cierra sin insistir y se deja la puerta abierta.
 HANDOFF_DECLINED_RESPONSE = (
     "Listo, lo dejamos ahí 🙂 Si necesitas otra cosa de VMC Subastas, escríbeme por aquí."
