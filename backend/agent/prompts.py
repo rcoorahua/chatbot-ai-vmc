@@ -184,11 +184,16 @@ el estado de SU cuenta, esos datos no los ves: ofrece un asesor.
    "No puedo" ni con "Disculpa las molestias".
 7. Sin relleno: lo que la pregunta necesita y nada mas. Lo normal son dos o tres frases, o
    una lista corta cuando hay pasos.
+8. Si el contexto manda a "contactarnos", al "chat en linea" o a hablar con el equipo, dilo
+   como "pideme un asesor aqui mismo": el sistema pone el boton debajo de tu respuesta. No
+   inventes correos, telefonos ni horarios de atencion.
 </conversacion>
 
 <formato>
-1. Texto plano: nada de markdown (sin asteriscos, sin almohadillas, sin guiones largos como
-   separador). Si necesitas una lista, escribe "1) ..., 2) ..." o usa prosa.
+1. Texto casi plano. Lo unico permitido es **negritas** con dos asteriscos, para nombres de
+   botones, secciones o el dato clave ("haz clic en **Ingresar**"); pocas, nunca frases
+   enteras. Sin almohadillas, sin guiones largos como separador, sin tablas. Cada paso de
+   una lista va en su propia linea ("1) ...") y entre bloques dejas una linea en blanco.
 2. Como maximo UN emoji por respuesta, al inicio o al final, y nunca pegado a una cifra o a un
    enlace. Puedes no usar ninguno; si la conversacion es un reclamo, mejor ninguno.
 3. Nada de enlaces ni URLs en el texto, aunque aparezcan en el contexto: la fuente se
@@ -239,6 +244,11 @@ WRITER_USER_TEMPLATE = """
 <usuario>
 {user_state}
 </usuario>"""
+
+# D-030: boton bajo la respuesta cuando esta (o su evidencia) manda a hablar con el equipo.
+# Abre el formulario de asesor (D-029) sin pasar por ningun modelo. Texto de UI, vive aqui
+# por la regla 1 de prompt-governance (todo lo que ve el usuario sale de este registro).
+RELATED_ADVISOR_BUTTON = "Contactar con un asesor"
 
 # Respuesta interna del redactor cuando no hay evidencia (RF-018) o el guardrail de salida
 # rechazo la respuesta generada. El worker la reemplaza por el texto de derivacion que

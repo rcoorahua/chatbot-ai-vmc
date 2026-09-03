@@ -198,6 +198,12 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 - **D-025 Tono (2026-08-28)**: español peruano cercano, natural; máximo **un emoji** por
   mensaje (fijos y generados), nunca junto a cifras o enlaces; sin markdown ni guiones largos
   como separador (`guardrails.tidy` limpia lo que se escape). Mensajes fijos en `agent/prompts.py`.
+  **Revisada 2026-09-03 (D-030, Aaron)**: las **negritas** `**así**` sí se permiten (pocas,
+  para nombres de botones o el dato clave) y el widget las renderiza; `tidy` conserva solo
+  los pares cerrados y sigue quitando encabezados, guiones bajos y asteriscos sueltos. Cada
+  paso de una lista va en su línea y entre bloques hay una línea en blanco: el widget dibuja
+  el texto por bloques (`renderRichText`), con sangría colgante en los "1) …" y aire entre
+  párrafos. Sin URLs en el texto (van como fuente, D-030).
 - **D-026 Eval de prompts (2026-08-28)**: golden set en `tests/golden/intents.jsonl`; en CI solo
   la parte determinista (`tests/test_golden_intents.py`). La eval real contra Gemini es manual:
   `python -m scripts.eval_intents` (~1 centavo) y exige ≥ 95% para mergear un cambio de prompt.
@@ -305,6 +311,18 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   `tests/test_ai_worker_related.py`. **Pendiente de medir en stage**: `cached_tokens` (las 14
   filas locales traen 0: el prefijo de ~1.000 tokens no se está cacheando; un caché explícito
   recortaría cerca de la mitad de la entrada) y la tasa de clic en hermanas.
+  **Ajustes tras la primera prueba real (mismo día, Aaron)**: (1) la pregunta **respondida**
+  se detecta por **parecido con la consulta** (Jaccard de raíces de 6 letras, sin
+  stopwords; `related.answered_fragment`), no por mejor score — con "Hola como me registro"
+  el índice puso persona jurídica primero y el botón repetía "¿Cómo me registro?"; (2) si la
+  respuesta o su evidencia mandan a "contactarnos"/"chat en línea"/"asesor"
+  (`related.suggests_advisor`, regex sin modelo), sale un botón sólido **"Contactar con un
+  asesor"** (`kind = handoff`, `value = ADVISOR`) que abre el formulario de D-029 **sin
+  clasificador, sin cuota y sin modelo** (`handoff_offer:related_button` en AIUsage); (3) la
+  fuente se dibuja como línea "Fuente: <título subrayado>" bajo la burbuja, con puntos
+  suspensivos si no cabe y el título completo al pasar el mouse — se muestra el título del
+  artículo, nunca la URL, así que un enlace largo no rompe nada; (4) negritas y ritmo de
+  lista en el texto (ver D-025 revisada).
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 

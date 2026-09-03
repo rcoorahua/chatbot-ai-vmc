@@ -106,9 +106,11 @@ Marca esperada de cada bloque: **qué capa debería resolverlo** (se lee en la C
 
 Deben responderse con evidencia del RAG o, en los marcados, por flujo o regla. Desde el 03/09
 (D-030) una respuesta con evidencia se ve así: **la respuesta completa** en una burbuja (todos
-los pasos, sin "¿te explico el siguiente?"), **sin URL en el texto**, un **chip de fuente**
-debajo con el título del artículo, y hasta **tres botones** con las otras preguntas del mismo
-artículo. Un solo turno = **una** llamada al redactor en la Consola IA.
+los pasos, sin "¿te explico el siguiente?"), **sin URL en el texto**, con **negritas** en los
+nombres de botón y cada paso en su línea, la línea **Fuente: <título del artículo>** debajo
+de la burbuja, y hasta **tres botones** con las otras preguntas del mismo artículo (más el
+botón sólido **Contactar con un asesor** cuando la respuesta manda a contactar al equipo).
+Un solo turno = **una** llamada al redactor en la Consola IA.
 
 | # | Mensaje | Qué esperar |
 |---|---|---|
@@ -201,9 +203,10 @@ artículo correcto entre los descartados.
 
 | # | Turnos | Qué esperar |
 |---|---|---|
-| C1 | `¿Cómo me registro en VMC?` | **Una sola respuesta con los 4 pasos** (lista 1) 2) 3) 4)), sin "¿te explico el siguiente paso?" y sin URL en el texto. Debajo, el **chip** "¡Registrarte es fácil y rápido!" y los botones **¿Puedo registrarme como persona jurídica?**, **He olvidado mi contraseña…** y **…el formulario me impide realizarlo…**. Consola IA: 1 clasificación + **1** llamada al redactor (antes eran 4) |
+| C1 | `Hola como me registro` | **Una sola respuesta con los 4 pasos**, cada uno en su línea con el número resaltado, **negritas** en los nombres de botón ("**Ingresar**", "**Regístrate**") y aire entre bloques; sin "¿te explico el siguiente paso?" y sin URL en el texto. Debajo de la burbuja, la línea **Fuente: ¡Registrarte es fácil y rápido!** (título subrayado, no un botón). Luego los botones **¿Puedo registrarme como persona jurídica?**, **He olvidado mi contraseña…** y **…el formulario me impide realizarlo…** — **nunca** "¿Cómo me registro?" (la respondida), aunque el índice haya puesto persona jurídica primero. Consola IA: 1 clasificación + **1** llamada al redactor (antes eran 4) |
 | C1b | *(tras C1)* pulsar **¿Puedo registrarme como persona jurídica?** | Responde con la **advertencia de la factura** incluida. Consola IA: el turno sale como `related:model`, **sin fila de clasificación**; en el detalle, la consulta del RAG es la pregunta del botón |
-| C1c | *(tras C1)* escribir `¿cuánto es la comisión?` *(sin tocar los botones)* | Tema nuevo: responde de comisión con su propio chip y sus propias hermanas. Los botones del registro quedan atrás sin más |
+| C1c | *(tras C1)* escribir `¿cuánto es la comisión?` *(sin tocar los botones)* | Tema nuevo: responde de comisión con su propia fuente y sus propias hermanas. Los botones del registro quedan atrás sin más |
+| C1g | `Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?` → pulsar **Contactar con un asesor** | La respuesta dice que puede pedir un asesor aquí mismo (no "contáctanos por el chat en línea" a secas) y debajo sale el botón **sólido** "Contactar con un asesor" junto a las hermanas. Al pulsarlo aparece **el formulario de asesor** de inmediato; Consola IA: `handoff_offer:related_button`, **cero llamadas** (ni clasificador ni redactor) |
 | C2 | `¿Cómo me registro en VMC?` → `y luego?` | Red de seguridad: se busca con `metadata.rag_query` de la respuesta anterior (no deriva). El bot puede decir que ya te dio todos los pasos y qué sigue |
 | C3 | `¿Cómo consigno un vehículo?` → `listo` → `y ahora?` | Dos continuaciones seguidas: las dos siguen anclando al tema de la consignación |
 | C4 | `¿Cómo me registro?` → `ok` → `¿cuánto es la comisión?` | "ok" tras una respuesta completa es el **cierre trivial** ("¡Con gusto!", coste 0: la respuesta ya no termina preguntando). La tercera es una pregunta nueva y responde de comisión |

@@ -75,10 +75,11 @@ def _sin_rate_limit(monkeypatch):
 class FakeLLM:
     def __init__(self):
         self.calls: list[dict] = []
+        self.answer = RESPUESTA
 
     def generate(self, *, tier, system, messages, max_output_tokens, temperature=None):
         self.calls.append({"tier": tier, "system": system, "messages": messages})
-        text = "<intent>FAQ</intent>" if tier == llm.ModelTier.FAST else RESPUESTA
+        text = "<intent>FAQ</intent>" if tier == llm.ModelTier.FAST else self.answer
         return llm.LLMResponse(
             text=text, model=llm.model_for(tier).name, tier=tier,
             usage={"input": 100, "output": 10, "cached_read": 0, "cached_creation": 0},
@@ -101,20 +102,22 @@ def modelo(monkeypatch):
 
 
 @pytest.fixture
-def indice(monkeypatch):
+def indice(monkeypatch, request):
     """Doble del indice: el articulo de registro con sus preguntas, mas un hit de otro
-    articulo bajo el umbral. Registra cada consulta que recibe."""
+    articulo bajo el umbral. Registra cada consulta que recibe. Con `indirect` se le pasan
+    los scores de COMO y PJ, para reproducir el orden que dio el indice real."""
     consultas: list[str] = []
+    scores = getattr(request, "param", {"como": 0.875, "pj": 0.87})
 
     def buscar(text, **kwargs):
         consultas.append(text)
         if "registr" not in text.lower():
             return RagResult(relevant=[], discarded=[], threshold=0.84)
-        relevant = [
-            _frag(REG, COMO, 0.875),
-            _frag(REG, PJ, 0.87, sibling=True),
+        relevant = sorted([
+            _frag(REG, COMO, scores["como"]),
+            _frag(REG, PJ, scores["pj"], sibling=True),
             _frag(REG, "Para registrarte, ingresa a vmcsubastas.com.", 0.86, sibling=True),
-        ]
+        ], key=lambda f: f.score, reverse=True)
         discarded = [
             _frag("La Comisión", "¿Cuánto es la comisión?", 0.835,
                   url="https://ayuda.vmc.test/comision"),
@@ -290,3 +293,61 @@ def test_ok_tras_una_respuesta_completa_es_el_cierre_trivial(limpiar, modelo, in
 
     assert _bot(conversation.conversation_id)[-1].content == prompts.TRIVIAL_THANKS_RESPONSE
     assert len(modelo.answer_calls()) == 1
+
+
+# ───────────────────── AC-W6: la pregunta respondida no se repite como boton ─────────────────────
+
+
+@pytest.mark.parametrize("indice", [{"como": 0.87, "pj": 0.9}], indirect=True)
+def test_con_persona_juridica_primero_el_boton_no_repite_como_me_registro(
+    limpiar, modelo, indice
+):
+    """Prueba real de Aaron (2026-09-03): "Hola como me registro" puso a persona juridica
+    primero en el indice y los botones salieron "formulario", "contraseña" y "¿Como me
+    registro?" — repitiendo la respondida y escondiendo persona juridica."""
+    conversation = _conversacion(limpiar)
+
+    _atiende(_escribe(conversation, "Hola como me registro"))
+
+    labels = [o["label"] for o in
+              _bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
+    assert COMO not in labels
+    assert labels[0] == PJ
+
+
+# ───────────────── AC-W7: boton de asesor cuando la respuesta manda a contactar ─────────────────
+
+
+def test_si_la_respuesta_manda_a_contactar_sale_el_boton_y_abre_el_formulario_sin_ia(
+    limpiar, modelo, indice, tablas
+):
+    modelo.answer = "Si nunca te registraste, pídeme un asesor aquí mismo para validar tus datos."
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    botones = _bot(conversation.conversation_id)[-1].metadata["interaction"]
+    asesor = botones["options"][-1]
+    assert asesor["label"] == prompts.RELATED_ADVISOR_BUTTON
+    assert asesor["kind"] == "handoff" and asesor["value"] == related.HANDOFF_VALUE
+    llamadas = len(modelo.calls)
+
+    click = _escribe(_fresca(conversation), asesor["label"], interaction={
+        "action_id": botones["action_id"], "value": asesor["value"],
+    })
+    _atiende(click)
+
+    respuesta = _bot(conversation.conversation_id)[-1]
+    assert respuesta.content == prompts.HANDOFF_OFFER_RESPONSE
+    assert respuesta.metadata["interaction"]["type"] == "HANDOFF_FORM"
+    assert len(modelo.calls) == llamadas, "el boton de asesor no toca ningun modelo"
+    usos = _usos(tablas, click.message_id)
+    assert [u["source"] for u in usos] == ["handoff_offer:related_button"]
+
+
+def test_sin_sugerencia_de_contacto_no_hay_boton_de_asesor(limpiar, modelo, indice):
+    conversation = _conversacion(limpiar)
+
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+
+    kinds = [o["kind"] for o in
+             _bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
+    assert "handoff" not in kinds

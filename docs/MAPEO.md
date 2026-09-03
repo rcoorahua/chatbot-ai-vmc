@@ -131,6 +131,14 @@ cosa no "interrumpe" nada: los botones simplemente quedan atrás. Por qué exist
 "¿te explico el siguiente paso?" del redactor, que costaba una llamada entera por cada "sí"
 (D-030 en CLAUDE.md).
 
+Cada opción lleva `kind`: `question` (las de arriba) o `handoff`. La de `handoff` es el botón
+**"Contactar con un asesor"** (`value: "ADVISOR"`, sin `query`), que aparece solo cuando la
+respuesta o su evidencia mandan a contactar al equipo (`related.suggests_advisor`, regex sin
+modelo); su clic abre el formulario de D-029 directamente, sin clasificador, sin cuota y sin
+modelo (`handoff_offer:related_button`). La pregunta **respondida** (la que no se ofrece) se
+detecta por parecido con la consulta, no por score: con "Hola como me registro" el índice puso
+persona jurídica primero y el botón repetía "¿Cómo me registro?".
+
 ## 4. El mapeo completo del corpus
 
 Regla de diseño: **un flujo solo existe si la respuesta correcta depende de un dato que el

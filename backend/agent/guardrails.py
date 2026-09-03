@@ -386,12 +386,29 @@ _DASH_SEPARATOR = re.compile(r"\s*[—–]\s*")
 _BLANK_LINES = re.compile(r"\n{3,}")
 
 
+_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_BOLD_SLOT = re.compile(r"\x00(\d+)\x00")
+
+
 def tidy(answer: str) -> str:
-    """Deja el texto como lo muestra el widget: sin markdown (que se veria crudo, porque el
-    widget renderiza texto plano) y sin guiones largos, que leen como texto de maquina (D-025).
-    La brevedad y el emoji los pide el prompt; esto solo limpia lo que se le escapa."""
+    """Deja el texto como lo muestra el widget: sin markdown salvo las **negritas** (D-025
+    revisada el 2026-09-03 con D-030: el widget las renderiza; lo demas se veria crudo) y sin
+    guiones largos, que leen como texto de maquina. La brevedad y el emoji los pide el
+    prompt; esto solo limpia lo que se le escapa.
+
+    Las negritas se conservan solo como pares cerrados `**asi**`: un `**` suelto o un
+    enfasis con guion bajo se quitan como antes.
+    """
     text = _MARKDOWN_HEADING.sub("", answer or "")
+    kept: list[str] = []
+
+    def _keep(match: re.Match[str]) -> str:
+        kept.append(match.group(1))
+        return f"\x00{len(kept) - 1}\x00"
+
+    text = _BOLD.sub(_keep, text)
     text = _MARKDOWN_EMPHASIS.sub("", text)
+    text = _BOLD_SLOT.sub(lambda m: f"**{kept[int(m.group(1))]}**", text)
     text = _DASH_SEPARATOR.sub(", ", text)
     text = text.replace(", ,", ",").replace(" ,", ",")
     text = _BLANK_LINES.sub("\n\n", text)
