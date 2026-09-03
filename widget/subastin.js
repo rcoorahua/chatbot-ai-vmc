@@ -3329,7 +3329,7 @@
     .typing i:nth-child(3) { animation-delay: .36s; }
     /* Carga del hilo (2026-09-03, Aaron): mientras el saludo "llega" (~420 ms) o el primer
        sondeo no volvio, el orbe liquido centrado en el hilo, como el circulo de carga de
-       Intercom pero con la animacion propia. `margin: auto` lo centra en la columna flex. */
+       Intercom pero con la animacion propia. El margin auto lo centra en la columna flex. */
     .loading-orb {
       margin: auto; align-self: center; display: grid; place-items: center; padding: 20px;
       animation: fade-in .3s var(--ease) both;
