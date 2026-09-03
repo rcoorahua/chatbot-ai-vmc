@@ -48,6 +48,13 @@ class ConversationNotFound(LookupError):
     pass
 
 
+class OpenCaseLimitReached(RuntimeError):
+    """El contador `OPEN_CASES#USER#<id>` (RateLimits, Paso 6) ya esta en el limite. La tabla
+    es compartida con agent/quota.py (contadores atomicos por actor); este modulo NO la
+    importa — solo referencia el nombre de tabla via core.config, para no romper la regla de
+    dependencia de backend/__init__.py (dominio nunca importa integraciones)."""
+
+
 def _conversations():
     return dynamodb_resource().Table(get_settings().table_conversations)
 
@@ -136,7 +143,11 @@ def create_conversation(conversation: Conversation) -> bool:
 
 
 def create_conversation_with_messages(
-    conversation: Conversation, messages: list[Message], *, link_message: Message | None = None
+    conversation: Conversation,
+    messages: list[Message],
+    *,
+    link_message: Message | None = None,
+    open_case_limit: int = 0,
 ) -> bool:
     """Crea un caso (D-029) con sus primeros mensajes, todo o nada. La conversacion llega
     con sus campos desnormalizados YA calculados (message_count, preview, no leidos): aqui no
@@ -145,7 +156,14 @@ def create_conversation_with_messages(
     `link_message` (DETAILS.md §4.5 / Paso 6) es la nota `CASE_OPENED` que enlaza al hilo de
     ORIGEN (otra conversacion, ya existente) — va en la MISMA transaccion, con el touch de sus
     contadores (`_touch_conversation_update`), para que nunca exista un caso sin su enlace en
-    el hilo: antes era un `put_message` aparte despues del commit del caso."""
+    el hilo: antes era un `put_message` aparte despues del commit del caso.
+
+    `open_case_limit` > 0 (Paso 6) reserva un cupo del contador `OPEN_CASES#USER#<user_id>`
+    (tabla RateLimits) en la MISMA transaccion — `ADD` condicionado a seguir bajo el limite.
+    Antes el tope se chequeaba con `list_open_cases` (GSI, eventualmente consistente) ANTES de
+    crear: dos handoffs casi simultaneos podian pasar los dos el chequeo y dejar mas de N casos
+    abiertos. Levanta `OpenCaseLimitReached` si el cupo esta agotado (en vez de `False`, que
+    aqui solo significa "el conversation_id ya existia")."""
     table_messages = get_settings().table_messages
     client = dynamodb_resource().meta.client
     items: list[dict[str, Any]] = [
@@ -165,12 +183,35 @@ def create_conversation_with_messages(
                 link_message.conversation_id, link_message, count_as_unread=False
             )
         )
+    reserve_index: int | None = None
+    if open_case_limit > 0:
+        if not conversation.user_id:  # pragma: no cover — un caso siempre tiene user_id
+            raise ValueError("open_case_limit requiere conversation.user_id")
+        reserve_index = len(items)
+        items.append(
+            {
+                "Update": {
+                    "TableName": get_settings().table_rate_limits,
+                    "Key": {
+                        "limit_key": f"OPEN_CASES#USER#{conversation.user_id}",
+                        "window": "LIVE",
+                    },
+                    "UpdateExpression": "ADD open_cases :one",
+                    "ConditionExpression": (
+                        "attribute_not_exists(open_cases) OR open_cases < :limit"
+                    ),
+                    "ExpressionAttributeValues": {":one": 1, ":limit": open_case_limit},
+                }
+            }
+        )
     try:
         client.transact_write_items(TransactItems=items)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "TransactionCanceledException":
             raise
         reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
+        if reserve_index is not None and reasons[reserve_index] == "ConditionalCheckFailed":
+            raise OpenCaseLimitReached() from exc
         if reasons and reasons[0] == "ConditionalCheckFailed":
             return False
         raise
@@ -257,12 +298,21 @@ def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> 
 
 
 def close_conversation(
-    conversation_id: str, advisor_id: str, *, note: Message, closed_by: str
+    conversation_id: str,
+    advisor_id: str,
+    *,
+    note: Message,
+    closed_by: str,
+    release_case_slot_for_user: str | None = None,
 ) -> bool:
     """Cierre definitivo (D-029): un caso, o la conversacion anonima. Queda CLOSED, con el
     bot apagado y de solo lectura; `assigned_advisor_id` se conserva como historial de quien
     lo atendio. La nota SYSTEM `CONVERSATION_CLOSED` va en la misma transaccion. Solo el
-    asesor asignado cierra: devuelve False si no lo es."""
+    asesor asignado cierra: devuelve False si no lo es.
+
+    `release_case_slot_for_user` (Paso 6): si esta conversacion es un CASO (contaba para
+    `OPEN_CASES#USER#<id>`, ver `create_conversation_with_messages`), libera el cupo en la
+    MISMA transaccion. La conversacion anonima nunca pasa este id: nunca conto para el limite."""
     update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
     update["UpdateExpression"] += (
         ", #status = :closed, bot_enabled = :off, wait_message_sent = :off, "
@@ -274,7 +324,22 @@ def close_conversation(
         {":advisor": advisor_id, ":closed": "CLOSED", ":off": False, ":zero": 0,
          ":closed_by": closed_by}
     )
-    return _transact_note(update, note)
+    extra_items = None
+    if release_case_slot_for_user:
+        extra_items = [
+            {
+                "Update": {
+                    "TableName": get_settings().table_rate_limits,
+                    "Key": {
+                        "limit_key": f"OPEN_CASES#USER#{release_case_slot_for_user}",
+                        "window": "LIVE",
+                    },
+                    "UpdateExpression": "ADD open_cases :minus_one",
+                    "ExpressionAttributeValues": {":minus_one": -1},
+                }
+            }
+        ]
+    return _transact_note(update, note, extra_items=extra_items)
 
 
 def start_handoff(
@@ -409,14 +474,21 @@ def mark_wait_message_sent(conversation_id: str) -> bool:
     return True
 
 
-def _transact_note(conversation_update: dict[str, Any], note: Message) -> bool:
-    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada."""
+def _transact_note(
+    conversation_update: dict[str, Any],
+    note: Message,
+    *,
+    extra_items: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Update condicional de la conversacion + Put de la nota SYSTEM, todo o nada. `extra_items`
+    (Paso 6) se suman a la MISMA transaccion — p. ej. liberar un cupo de casos abiertos."""
     client = dynamodb_resource().meta.client
     try:
         client.transact_write_items(
             TransactItems=[
                 {"Update": conversation_update},
                 {"Put": {"TableName": get_settings().table_messages, "Item": note.to_item()}},
+                *(extra_items or []),
             ]
         )
     except ClientError as exc:

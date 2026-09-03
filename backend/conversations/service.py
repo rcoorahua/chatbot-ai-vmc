@@ -330,9 +330,12 @@ def _handoff_in_place(
 def _open_case(
     thread: Conversation, clean: forms.HandoffForm, *, confirmation: str
 ) -> Conversation:
+    # El limite se hace cumplir de verdad dentro de create_conversation_with_messages
+    # (contador condicional en la MISMA transaccion que crea el caso, DETAILS.md §4.5 /
+    # Paso 6) — chequearlo aqui antes con list_open_cases (GSI, eventualmente consistente)
+    # era check-then-act: dos handoffs casi simultaneos podian pasar los dos y dejar mas de
+    # N casos abiertos.
     limit = get_settings().max_open_cases_per_user
-    if limit > 0 and thread.user_id and len(repository.list_open_cases(thread.user_id)) >= limit:
-        raise TooManyOpenCases(limit)
     t0, t1, t2, t3 = _stamps(4)
     case_id = str(uuid.uuid4())
     opened = _system_note(case_id, SystemEvent.CASE_OPENED,
@@ -367,9 +370,13 @@ def _open_case(
     # despues del commit, y un fallo ahi dejaba el caso sin enlace en el hilo.
     link = _system_note(thread.conversation_id, SystemEvent.CASE_OPENED,
                         {"case_id": case_id, "title": clean.subject}, created_at=t3)
-    if not repository.create_conversation_with_messages(
-        case, [opened, response, confirm], link_message=link
-    ):
+    try:
+        created = repository.create_conversation_with_messages(
+            case, [opened, response, confirm], link_message=link, open_case_limit=limit
+        )
+    except repository.OpenCaseLimitReached as exc:
+        raise TooManyOpenCases(limit) from exc
+    if not created:
         raise RuntimeError("colision de id al crear el caso")  # pragma: no cover
     return case
 
@@ -709,8 +716,17 @@ def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
             conversation.conversation_id, SystemEvent.CONVERSATION_CLOSED,
             {"advisor_id": advisor_id}, expires_at=conversation.expires_at,
         )
+        # Solo un CASO conto para OPEN_CASES#USER#<id> al abrirse (Paso 6); la conversacion
+        # anonima pasa por aqui tambien (no returns_to_bot_on_close) pero nunca conto.
+        release_for = (
+            conversation.user_id if conversation.kind == ConversationKind.CASE else None
+        )
         done = repository.close_conversation(
-            conversation.conversation_id, advisor_id, note=note, closed_by=str(ClosedBy.ADVISOR)
+            conversation.conversation_id,
+            advisor_id,
+            note=note,
+            closed_by=str(ClosedBy.ADVISOR),
+            release_case_slot_for_user=release_for,
         )
     if not done:
         raise NotAssignedToAdvisor(conversation.conversation_id)
