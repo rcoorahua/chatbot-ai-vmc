@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 _GOOGLE = "GOOGLE"
 
+# Reglas de `followups.is_continuation` que no dejan duda: un acuse ("si", "listo") o un pedido
+# explicito de seguir ("y luego?"). Con ellas el clasificador sobra. "responde_al_bot" (texto
+# corto cualquiera tras una pregunta del bot) es mas debil y sigue clasificandose con modelo.
+_CERTAIN_CONTINUATIONS = frozenset({"acuse", "pide_seguir"})
+
 # Respuesta fija por tipo de guardrail de entrada (D-024). El texto vive en prompts.py.
 _GUARDRAIL_RESPONSES = {
     guardrails.PROMPT_INJECTION: prompts.GUARDRAIL_INJECTION_RESPONSE,
@@ -166,8 +171,20 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         },
     )
 
+    # ── Continuidad (TD-009): ¿el mensaje solo tiene sentido pegado a lo que pregunto el bot? ──
+    # Se decide ANTES de los triviales y de la repeticion porque cambia lo que significan: tras
+    # "¿te explico el siguiente paso?", un "ok" no es un "gracias" de cierre, y el tercer "si"
+    # seguido no es un mensaje repetido: es el paso 3 de una explicacion que el propio bot
+    # pidio continuar (conversaciones reales del 2026-09-03). Reglas sobre texto, sin modelo.
+    bot_asked = followups.bot_asked_something(_last_bot_open_question(window))
+    continuation, followup_rule = followups.is_continuation(text, bot_asked=bot_asked)
+
     # ── D-006: triviales, sin llamada IA ──
     kind = trivial.match_trivial(text)
+    if kind == "thanks" and bot_asked and followup_rule == "acuse":
+        # "ok", "listo", "vale" contestan la pregunta abierta del bot: la explicacion sigue.
+        # "gracias" o "chau" no son acuses y cierran como siempre.
+        kind = None
     if kind == "greeting":
         _reply_fixed(conversation, message, prompts.TRIVIAL_GREETING_RESPONSE, "trivial_greeting")
         return
@@ -177,7 +194,9 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     if kind == "identity":
         _reply_fixed(conversation, message, prompts.TRIVIAL_IDENTITY_RESPONSE, "trivial_identity")
         return
-    if _is_repeat(text, window, block_keys):
+    # Una continuacion nunca es "repetido": responde a la ULTIMA pregunta del bot aunque use la
+    # misma palabra que la vez anterior. El volumen lo frena el rate limit (D-005).
+    if not continuation and _is_repeat(text, window, block_keys):
         if _already_warned_repeat(window):
             _record_free(conversation, message, source="trivial_repeat_silent")
         else:
@@ -216,7 +235,19 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         return  # cuota agotada: ya salio la respuesta fija, gratis
 
     # ── RF-015/016: clasificar (reglas → tier FAST; Gemini orquesta por TD-008) ──
-    classification = classify(text, _last_bot_message(window))
+    if rules_verdict.intent is None and followup_rule in _CERTAIN_CONTINUATIONS:
+        # "si", "listo", "y luego?": la intencion es seguir con lo que se estaba explicando.
+        # Clasificarlo con un modelo no aporta y cuesta una llamada (el redactor ya la hara,
+        # D-027). Las reglas de asesor y catalogo corrieron antes: un "quiero un asesor"
+        # corto no cae aqui. Lo escrito a mano ("en la web") sigue pasando por el modelo.
+        classification = ClassificationResult(
+            intent=Intent.FAQ,
+            source="rules",
+            rule=f"continuation:{followup_rule}",
+            usage=llm.empty_usage(),
+        )
+    else:
+        classification = classify(text, _last_bot_message(window))
     _record_classification(conversation, message, classification)
     if classification.intent == Intent.OTHER:
         _reply_fixed(conversation, message, prompts.OTHER_INTENT_RESPONSE, "fixed_other",
@@ -256,18 +287,31 @@ def _answer_faq(
     en AIUsage ("flow:PARTICIPATION:LIVE:model") sin perder la capa que decidio.
 
     Lo que se BUSCA no siempre es lo que se REDACTA: si el mensaje es una continuacion ("ya
-    estoy ahi", "y luego?"), la consulta al indice se arma con la pregunta previa del usuario
-    (`agent/followups.py`). Sin eso, un mensaje que solo tiene sentido pegado al anterior no
-    se parece a nada del corpus y el caso derivaba por "falta de evidencia" teniendo el
-    articulo correcto entre los descartados. El redactor sigue recibiendo el texto original
-    mas el historial, que es lo que necesita para contestar con naturalidad.
+    estoy ahi", "y luego?"), la consulta al indice es la que dio evidencia a la ultima
+    respuesta del bot (`_previous_query`, `agent/followups.py`). Sin eso, un mensaje que solo
+    tiene sentido pegado al anterior no se parece a nada del corpus y el caso derivaba por
+    "falta de evidencia" teniendo el articulo correcto entre los descartados. El redactor
+    sigue recibiendo el texto original mas el historial, que es lo que necesita para
+    contestar con naturalidad.
     """
     consulta = followups.build_query(
         text,
-        previous_question=followups.last_user_question(_previous_user_texts(window, block_keys)),
+        previous_question=_previous_query(window, block_keys),
         last_bot_message=_last_bot_open_question(window),
     )
-    retrieved = rag.retrieve(consulta.text)
+    if consulta.rule == "responde_al_bot":
+        # La regla debil: un texto corto tras una pregunta del bot puede ser la respuesta
+        # ("en la web") o un tema nuevo dicho a medias ("y los subascoins"). Lo decide el
+        # indice, no una adivinanza: si el texto se sostiene solo, gana el texto; si no, la
+        # pregunta previa. Cuesta una consulta mas a Pinecone, ninguna a un modelo.
+        literal = rag.retrieve(text)
+        if literal.relevant:
+            consulta = followups.Query(text=text, contextualized=False, rule="literal")
+            retrieved = literal
+        else:
+            retrieved = rag.retrieve(consulta.text)
+    else:
+        retrieved = rag.retrieve(consulta.text)
     fragments = retrieved.relevant
     logger.debug(
         "ai.rag",
@@ -328,7 +372,9 @@ def _answer_faq(
         handoff_triggered=not result.has_evidence,
     )
     if result.has_evidence:
-        _bot_says(conversation, result.text)
+        # La consulta que dio la evidencia viaja con la respuesta: si el usuario contesta "si"
+        # o "y luego?", la continuacion busca con ESTA consulta (`_previous_query`).
+        _bot_says(conversation, result.text, metadata={followups.RAG_QUERY_KEY: consulta.text})
     else:
         _offer_handoff_confirm(conversation, message)
 
@@ -731,6 +777,26 @@ def _previous_user_texts(window: list[Message], block_keys: list[str]) -> list[s
         and item.message_key not in block_keys
         and item.content
     ]
+
+
+def _previous_query(window: list[Message], block_keys: list[str]) -> str | None:
+    """La consulta que sostiene una continuacion: la que dio evidencia a la ultima respuesta
+    del bot (viaja en su metadata, `followups.RAG_QUERY_KEY`) y, si esa respuesta no la trae
+    (fija, con botones, o anterior a este campo), la ultima pregunta del usuario del historial.
+
+    Preferir la de la respuesta cubre dos casos que el historial no cubre: un paso de flujo
+    (D-028), cuya evidencia salio de la consulta canonica y no del texto del boton ("Oferta
+    En Vivo" recupera peor), y una explicacion de varios "si" seguidos, donde la pregunta
+    original ya quedo fuera de la mirada hacia atras de `last_user_question`.
+    """
+    for item in reversed(window):
+        if item.message_key in block_keys or item.sender_type != SenderType.BOT:
+            continue
+        query = (item.metadata or {}).get(followups.RAG_QUERY_KEY)
+        if query:
+            return str(query)
+        break  # la ultima respuesta del bot no salio del indice: decide el historial
+    return followups.last_user_question(_previous_user_texts(window, block_keys))
 
 
 def _history(window: list[Message], block_keys: list[str]) -> list[dict[str, str]]:
