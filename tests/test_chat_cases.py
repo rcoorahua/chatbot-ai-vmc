@@ -4,7 +4,7 @@ RF-025, RF-031, RF-035, RNF-005.
 Criterios:
   AC-H1  anonimo: el formulario exige nombre y correo (422 con `field`), telefono opcional; al
          enviarlo su conversacion pasa a PENDING_ADVISOR con el bot apagado, guarda asunto y
-         contacto (los ve el asesor), deja FORM_RESPONSE + nota HANDOFF_REQUESTED +
+         contacto (los ve el asesor), deja nota HANDOFF_REQUESTED + FORM_RESPONSE +
          confirmacion fija, y cuenta 1 no leido; un segundo envio es 409
   AC-H2  la conversacion anonima nace con TTL y sus mensajes lo heredan (sin chats muertos)
   AC-H3  autenticado: el formulario abre un CASO (PENDING_ADVISOR, bot apagado, asunto,
@@ -34,6 +34,9 @@ from backend.agent import prompts, quota
 from backend.api import dev_auth
 from backend.api.main import app
 from backend.api.routers import chat as chat_router
+from backend.conversations import forms as conversations_forms
+from backend.conversations import repository as conversations_repository
+from backend.conversations import service as conversations_service
 from backend.core import auth
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings, reset_settings
@@ -204,11 +207,13 @@ def test_el_anonimo_deriva_en_el_sitio_y_el_asesor_ve_el_contacto(client, limpia
     hilo = _mensajes(client, sesion)
     assert hilo["conversation"]["status"] == "PENDING_ADVISOR"
     ultimos = hilo["messages"][-3:]
-    assert [m["message_type"] for m in ultimos] == ["FORM_RESPONSE", "SYSTEM", "TEXT"]
-    assert [m["sender_type"] for m in ultimos] == ["USER", "SYSTEM", "BOT"]
-    assert "Asunto: Problema con mi puja" in ultimos[0]["content"]
-    assert "Correo: ana@example.test" in ultimos[0]["content"]
-    assert ultimos[1]["content"] == "HANDOFF_REQUESTED"
+    # DETAILS.md §4.5 / Paso 6: la nota SYSTEM va primero, junto con el CAS de start_handoff;
+    # el FORM_RESPONSE (con el contacto, RF-003) solo se escribe despues de ganar la carrera.
+    assert [m["message_type"] for m in ultimos] == ["SYSTEM", "FORM_RESPONSE", "TEXT"]
+    assert [m["sender_type"] for m in ultimos] == ["SYSTEM", "USER", "BOT"]
+    assert ultimos[0]["content"] == "HANDOFF_REQUESTED"
+    assert "Asunto: Problema con mi puja" in ultimos[1]["content"]
+    assert "Correo: ana@example.test" in ultimos[1]["content"]
     assert ultimos[2]["content"] == prompts.HANDOFF_ANON_CONFIRMATION
 
     _, headers = _asesor_nuevo(client, limpiar)
@@ -475,3 +480,50 @@ def test_con_el_tope_en_cero_no_se_cuenta_nada(client, limpiar, monkeypatch, tab
         KeyConditionExpression=Key("limit_key").eq(f"HANDOFF#IP#{quota.hash_ip(ip)}")
     )["Items"]
     assert contados == []
+
+
+# ──────────────────── DETAILS.md §4.5 / Paso 6: idempotencia del handoff ────────────────────
+
+
+def test_un_formulario_invalido_no_consume_el_cupo_de_ip(client, limpiar, monkeypatch, tablas):
+    """Antes el cupo se quemaba en el router ANTES de validar el formulario: un 422 costaba
+    el mismo cupo que un handoff real. Ahora la validacion va primero (sin efecto en la
+    cuota) y solo un intento realmente valido debe descontar el cupo."""
+    ip = f"10.2.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
+    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
+    monkeypatch.setenv("ANON_HANDOFFS_PER_IP_PER_DAY", "1")
+    reset_settings()
+    limpiar.limite(f"HANDOFF#IP#{quota.hash_ip(ip)}")
+
+    invalido = _handoff(client, _sesion(client, limpiar), subject="", detail="")
+    assert invalido.status_code == 422
+
+    valido = _handoff(client, _sesion(client, limpiar), **CONTACTO)
+    assert valido.status_code == 201, "el 422 anterior no debio consumir el cupo"
+
+
+def test_perder_la_carrera_de_handoff_no_deja_form_response_huerfano(client, limpiar, tablas):
+    """Dos intentos con la MISMA foto de la conversacion (la carrera real de dos requests
+    casi simultaneos): el primero gana el CAS de start_handoff, el segundo lo pierde. Antes
+    el FORM_RESPONSE (con el contacto del anonimo) se escribia ANTES de saber quien ganaba, asi
+    que el perdedor dejaba un mensaje huerfano con PII. Ahora nada se persiste hasta ganar."""
+    sesion = _sesion(client, limpiar)
+    conversation_id = sesion["conversation"]["conversation_id"]
+    snapshot = conversations_repository.get_conversation(conversation_id)
+
+    form = conversations_forms.HandoffForm(**FORMULARIO, **CONTACTO)
+    clean = conversations_forms.validate_handoff_form(
+        form, anonymous=True, needs_email=False, max_detail_chars=get_settings().max_message_chars
+    )
+
+    ganador = conversations_service.request_handoff(snapshot, clean, confirmation="listo")
+    assert ganador.status == "PENDING_ADVISOR"
+
+    with pytest.raises(conversations_service.HandoffNotAllowed):
+        conversations_service.request_handoff(snapshot, clean, confirmation="listo")
+
+    mensajes = tablas["messages"].query(
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+    )["Items"]
+    respuestas = [m for m in mensajes if m.get("message_type") == "FORM_RESPONSE"]
+    assert len(respuestas) == 1, "el intento que perdio la carrera no debio dejar FORM_RESPONSE"
