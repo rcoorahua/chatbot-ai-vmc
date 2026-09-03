@@ -73,6 +73,7 @@ def record_execution(
     rag_min_score: float | None = None,
     handoff_triggered: bool = False,
     status: str = "SUCCESS",
+    error: str | None = None,
 ) -> None:
     """Registra una ejecucion del pipeline. Nunca lanza hacia el llamador: perder una metrica
     es malo, pero dejar al usuario sin respuesta porque fallo la contabilidad es peor — el
@@ -103,6 +104,11 @@ def record_execution(
         item["model"] = model
     if intent:
         item["intent"] = intent
+    if error:
+        # Por que fallo el proveedor (`LLMError.describe()`: familia, codigo y arranque del
+        # mensaje del API). Es lo que separa "cuota agotada" de "timeout nuestro" de "504 de
+        # Gemini" en la consola; sin esto un fallo se leia igual que "no habia evidencia".
+        item["error"] = error[:200]
     if rag_results_count is not None:
         item["rag_results_count"] = rag_results_count
     if rag_fragments:

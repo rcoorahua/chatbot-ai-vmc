@@ -51,6 +51,11 @@ class WriterResult:
     # aparte de `has_evidence` para que AIUsage distinga "no habia evidencia" de "habia, pero
     # el modelo se salio de ella": son problemas distintos con arreglos distintos.
     guardrail: str | None = None
+    # Descripcion del fallo del proveedor (`LLMError.describe()`) cuando HABIA evidencia pero el
+    # modelo no respondio. Va aparte de `has_evidence` por la misma razon que `guardrail`: "no
+    # tengo ese dato" y "Gemini no contesta" son problemas distintos con mensajes distintos
+    # para el usuario — el segundo no puede decir que no tiene el dato, porque lo tiene.
+    error: str | None = None
 
 
 def write_answer(
@@ -98,11 +103,12 @@ def write_answer(
         # PERO se loguea SIEMPRE: tragarse la causa hizo que un error de configuracion
         # ("Thinking level MINIMAL is not supported", 2026-09-01) pareciera "no hay evidencia"
         # durante horas — RAG traia fragmentos buenos y todo caia al texto fijo sin una pista.
-        logger.warning("ai.writer.llm_error", extra={"error": str(exc)})
+        logger.warning("ai.writer.llm_error", extra={"error": exc.describe()})
         return WriterResult(
             text=prompts.WRITER_NO_EVIDENCE_FALLBACK,
             has_evidence=False,
             usage=empty_usage(),
+            error=exc.describe(),
         )
 
     text = guardrails.tidy(response.text)

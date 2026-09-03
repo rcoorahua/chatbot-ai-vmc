@@ -672,6 +672,24 @@
     return "free";
   }
 
+  // `error` viene como "<familia> <codigo>: <mensaje del API>" (backend/core/llm.py). La
+  // familia es lo que importa leer de un vistazo; el mensaje completo va en el tooltip.
+  const ERROR_LABELS = {
+    quota: "Gemini · cuota agotada",
+    rate_limit: "Gemini · rate limit",
+    client_timeout: "timeout NUESTRO (Gemini no respondió a tiempo)",
+    network: "sin red hacia Gemini",
+    provider: "Gemini · error del proveedor",
+    auth: "Gemini · credencial rechazada",
+  };
+
+  function errorLabel(error) {
+    if (!error) return "";
+    const familia = String(error).split(/[\s:]/)[0];
+    const code = (String(error).match(/^\w+\s+(\d{3})/) || [])[1];
+    return (ERROR_LABELS[familia] || "Gemini · " + familia) + (code ? " " + code : "");
+  }
+
   function sourceLabel(source) {
     const raw = String(source || "");
     if (SOURCE_LABELS[raw]) return SOURCE_LABELS[raw];
@@ -881,9 +899,14 @@
     badge.title = "source: " + (execution.source || "—");
     row.appendChild(badge);
     if (execution.handoff_triggered) row.appendChild(node("span", "badge handoff", "derivó"));
-    // La unica señal de "Estado" que vale la pena mostrar es cuando NO fue bien.
+    // La unica señal de "Estado" que vale la pena mostrar es cuando NO fue bien. Con `error`
+    // se ve la CAUSA (cuota 429, timeout nuestro, 504 de Gemini): antes esto decia solo
+    // "Fallback (sin modelo)" y no habia forma de distinguir un proveedor caido de "no habia
+    // evidencia" sin ir a la terminal del worker.
     if (execution.status && execution.status !== "SUCCESS") {
-      row.appendChild(node("span", "badge handoff", execution.status));
+      const causa = node("span", "badge handoff", errorLabel(execution.error) || execution.status);
+      causa.title = execution.error || execution.status;
+      row.appendChild(causa);
     }
 
     const paid = isPaid(execution);
@@ -1032,6 +1055,13 @@
           (execution.latency_ms ? " · " + fmtMs(execution.latency_ms) : "") +
           (execution.intent ? " · intent " + execution.intent : ""),
         { stage: stage, cost: execution.estimated_cost_usd }
+      ));
+    } else if (execution.error) {
+      // Si hubo llamada y fallo, la linea es de Gemini (fallida), no de "sin API".
+      entries.push(logLine(
+        execution, "Gemini", "gemini",
+        "falló · " + errorLabel(execution.error) + (execution.handoff_triggered ? " · derivó" : ""),
+        { stage: stage }
       ));
     } else {
       entries.push(logLine(

@@ -343,6 +343,10 @@ def _answer_faq(
         # prompt): se registra aparte de "sin evidencia" porque el arreglo es distinto (prompt
         # o corpus, no umbral del RAG).
         source = f"guardrail:{result.guardrail}"
+    elif result.error:
+        # Habia evidencia y el proveedor no respondio (cuota, timeout, 5xx): tampoco es "sin
+        # evidencia". Queda con status ERROR y la causa, que es lo que la consola muestra.
+        source = "model_unavailable"
     else:
         source = "model" if result.model else "fallback"
     source = source_prefix + source
@@ -373,11 +377,19 @@ def _answer_faq(
         ],
         rag_min_score=retrieved.threshold,
         handoff_triggered=not result.has_evidence,
+        status="ERROR" if result.error else "SUCCESS",
+        error=result.error,
     )
     if result.has_evidence:
         # La consulta que dio la evidencia viaja con la respuesta: si el usuario contesta "si"
         # o "y luego?", la continuacion busca con ESTA consulta (`_previous_query`).
         _bot_says(conversation, result.text, metadata={followups.RAG_QUERY_KEY: consulta.text})
+    elif result.error:
+        # El dato existe, el redactor no contesto: se dice la verdad (no "no tengo ese dato"),
+        # se invita a reintentar y se ofrece el asesor con los mismos botones de si/no.
+        _offer_handoff_confirm(
+            conversation, message, text=prompts.MODEL_UNAVAILABLE_CONFIRM_RESPONSE
+        )
     else:
         _offer_handoff_confirm(conversation, message)
 
@@ -418,8 +430,12 @@ def _offer_handoff_form(
                      intent=str(intent), handoff=True)
 
 
-def _offer_handoff_confirm(conversation: Conversation, message: Message) -> None:
+def _offer_handoff_confirm(
+    conversation: Conversation, message: Message, *, text: str | None = None
+) -> None:
     """Sin evidencia (RF-018): se reconoce el limite y se PREGUNTA si quiere un asesor.
+    `text` reemplaza al mensaje de "no tengo ese dato" cuando el motivo es otro (el modelo
+    no respondio: `prompts.MODEL_UNAVAILABLE_CONFIRM_RESPONSE`).
 
     Revision de D-029 (2026-09-02, Aaron): antes esto publicaba el formulario de una, y el
     usuario terminaba con una tarjeta de datos delante sin haber pedido nada. Ahora sale la
@@ -437,7 +453,7 @@ def _offer_handoff_confirm(conversation: Conversation, message: Message) -> None
     definition = flows.FLOWS[flows.HANDOFF_CONFIRM]
     _offer_flow_step(
         current, message, definition, definition.steps[0],
-        text=prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE,
+        text=text or prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE,
     )
 
 
@@ -487,6 +503,13 @@ def _awaiting_slot(conversation: Conversation) -> bool:
     return active is not None and active[2] and active[0].name != flows.HANDOFF_CONFIRM
 
 
+def _refreshed(conversation: Conversation) -> Conversation:
+    """La fila fresca tras limpiar un flujo: `flow_version` acaba de cambiar y cualquier
+    transicion hecha con la copia vieja pierde la carrera por condicion — y un
+    `_offer_flow_step` que la pierde no publica nada: el usuario se queda sin respuesta."""
+    return repository.get_conversation(conversation.conversation_id) or conversation
+
+
 def _clear_flow_if_active(conversation: Conversation) -> None:
     """Limpieza best-effort: si otro proceso movio el flujo primero, no hay nada que hacer."""
     if conversation.active_flow:
@@ -520,8 +543,10 @@ def _handle_flow(
     if active is not None:
         definition, step, vigente = active
         if not vigente:
-            # Vencio (24 h): se limpia y este mensaje se atiende como cualquier otro.
+            # Vencio (24 h): se limpia y este mensaje se atiende como cualquier otro —
+            # incluida la deteccion de flujos de abajo, que necesita la fila fresca.
             _clear_flow_if_active(conversation)
+            conversation = _refreshed(conversation)
         else:
             interaction = (message.metadata or {}).get("interaction")
             value = flows.validate_interaction(
@@ -534,11 +559,16 @@ def _handle_flow(
                 # la ignora y pregunta otra cosa, se limpia. Dejarla viva 24 h como a un flujo
                 # del corpus haria que un "si" de mañana derivara por un tema ya olvidado.
                 _clear_flow_if_active(conversation)
-                if value is None:
-                    return False  # sigue el pipeline normal con su pregunta nueva
-                _resolve_handoff_confirm(conversation, message, value)
-                return True
-            if value is None:
+                if value is not None:
+                    _resolve_handoff_confirm(conversation, message, value)
+                    return True
+                # Ignoro la pregunta y escribio otra cosa: la confirmacion se descarta y el
+                # mensaje sigue como cualquier otro, INCLUIDA la deteccion de flujos de abajo.
+                # Antes se devolvia False aqui y "quiero participar" se saltaba el flujo: iba
+                # al clasificador y al RAG con el texto literal, que no recupera nada, y
+                # volvia a "no tengo ese dato, ¿asesor?" en bucle (sesion real, 2026-09-03).
+                conversation = _refreshed(conversation)
+            elif value is None:
                 if followup_rule in _CERTAIN_CONTINUATIONS:
                     # "si", "listo", "¿y ahora?" con los botones en pantalla: quiere seguir
                     # pero no eligio. Se repiten los botones (gratis) en vez de mandar el
@@ -547,16 +577,17 @@ def _handle_flow(
                     _offer_flow_step(conversation, message, definition, step)
                     return True
                 return False  # interrupcion: el flujo espera hasta resolverse o vencer
-            # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota agotada
-            # el flujo QUEDA esperando: al renovarse, "en vivo" escrito lo resuelve igual.
-            if not _spend_quota_or_reply(conversation, message, ip_hash):
+            else:
+                # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota
+                # agotada el flujo QUEDA esperando: al renovarse, "en vivo" lo resuelve igual.
+                if not _spend_quota_or_reply(conversation, message, ip_hash):
+                    return True
+                _clear_flow_if_active(conversation)
+                _answer_flow_step(
+                    conversation, message, definition, step, value, window, block_keys,
+                    anonymous=anonymous,
+                )
                 return True
-            _clear_flow_if_active(conversation)
-            _answer_flow_step(
-                conversation, message, definition, step, value, window, block_keys,
-                anonymous=anonymous,
-            )
-            return True
 
     flow_name = flows.detect_flow_start(text)
     if flow_name is None:
@@ -845,6 +876,16 @@ def _record_classification(
     conversation: Conversation, message: Message, classification: ClassificationResult
 ) -> None:
     called_model = classification.source == "model"
+    if classification.error:
+        # El clasificador no lo loguea (es hoja): aqui, con la conversacion, queda el rastro.
+        logger.warning(
+            "ai.classifier.llm_error",
+            extra={
+                "conversation_id": conversation.conversation_id,
+                "message_id": message.message_id,
+                "error": classification.error,
+            },
+        )
     usage.record_execution(
         conversation_id=conversation.conversation_id,
         message_id=message.message_id,
@@ -856,6 +897,8 @@ def _record_classification(
         usage=classification.usage,
         estimated_cost_usd=_cost(llm.ModelTier.FAST, classification.model, classification.usage),
         latency_ms=classification.latency_ms,
+        status="ERROR" if classification.error else "SUCCESS",
+        error=classification.error,
     )
 
 
