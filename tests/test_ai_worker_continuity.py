@@ -257,6 +257,46 @@ def test_la_continuacion_de_un_flujo_busca_la_consulta_canonica(limpiar, redacto
     assert _bot(conversation.conversation_id)[-1].content == PASO_2
 
 
+@pytest.mark.parametrize("texto", ["si", "listo", "y ahora?"])
+def test_un_acuse_con_los_botones_en_pantalla_repite_los_botones(limpiar, redactor, indice, texto):
+    """Bateria real del 2026-09-03: "quiero participar" → botones → "si" terminaba en "no
+    tengo ese dato, ¿quieres un asesor?" (el acuse iba al indice y no recupera nada) y
+    encima la confirmacion de asesor pisaba el flujo. Ahora se repiten los botones, sin
+    modelo, y el flujo sigue vigente esperando la eleccion."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "quiero participar"))
+    version = _fresca(conversation).flow_version
+
+    _atiende(_escribe(_fresca(conversation), texto))
+
+    respuestas = _bot(conversation.conversation_id)
+    assert len(respuestas) == 2
+    assert respuestas[-1].metadata["interaction"]["type"] == flows.QUICK_REPLIES
+    assert respuestas[-1].metadata["interaction"]["flow"] == "PARTICIPATION"
+    current = _fresca(conversation)
+    assert current.active_flow == "PARTICIPATION" and current.flow_version == version + 1
+    assert indice == [] and redactor.calls == [], "gratis: ni indice ni modelo"
+
+    # Y con la eleccion escrita, el flujo se resuelve como siempre.
+    _atiende(_escribe(current, "en vivo"))
+    assert _bot(conversation.conversation_id)[-1].content == PASO_1
+    assert _fresca(conversation).active_flow is None
+
+
+def test_listo_con_botones_en_pantalla_no_es_el_cierre_trivial(limpiar, redactor, indice):
+    """"¿Cómo consigno?" → botones → "listo" caia en el "¡Con gusto!" de gracias (el mensaje
+    con botones no termina en "?" y no contaba como pregunta abierta)."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "¿Cómo consigno un vehículo?"))
+    assert _fresca(conversation).active_flow == "CONSIGNMENT"
+
+    _atiende(_escribe(_fresca(conversation), "listo"))
+
+    ultima = _bot(conversation.conversation_id)[-1]
+    assert ultima.content != prompts.TRIVIAL_THANKS_RESPONSE
+    assert ultima.metadata["interaction"]["flow"] == "CONSIGNMENT"
+
+
 # ───────────────────────── AC-C5: la continuacion no clasifica ─────────────────────────
 
 

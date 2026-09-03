@@ -181,9 +181,10 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
 
     # ── D-006: triviales, sin llamada IA ──
     kind = trivial.match_trivial(text)
-    if kind == "thanks" and bot_asked and followup_rule == "acuse":
-        # "ok", "listo", "vale" contestan la pregunta abierta del bot: la explicacion sigue.
-        # "gracias" o "chau" no son acuses y cierran como siempre.
+    answering = bot_asked or _awaiting_slot(conversation)
+    if kind == "thanks" and followup_rule == "acuse" and answering:
+        # "ok", "listo", "vale" contestan la pregunta abierta del bot (o sus botones en
+        # pantalla): la explicacion sigue. "gracias" o "chau" no son acuses y cierran siempre.
         kind = None
     if kind == "greeting":
         _reply_fixed(conversation, message, prompts.TRIVIAL_GREETING_RESPONSE, "trivial_greeting")
@@ -223,7 +224,7 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # y una respuesta corta ("En Vivo") solo tiene sentido con el estado del flujo.
     anonymous = conversation.user_type == UserType.ANONYMOUS
     if _handle_flow(conversation, message, text, window, block_keys, anonymous=anonymous,
-                    ip_hash=ip_hash):
+                    ip_hash=ip_hash, followup_rule=followup_rule):
         return
 
     # ── T-09 / D-027: tope de ejecuciones de IA por actor ──
@@ -479,6 +480,13 @@ def _current_flow(
     return definition, step, not expired
 
 
+def _awaiting_slot(conversation: Conversation) -> bool:
+    """Hay un flujo del corpus vigente esperando que el usuario elija (botones en pantalla).
+    La confirmacion de asesor no cuenta: sus "si"/"no" los resuelve el propio flujo."""
+    active = _current_flow(conversation)
+    return active is not None and active[2] and active[0].name != flows.HANDOFF_CONFIRM
+
+
 def _clear_flow_if_active(conversation: Conversation) -> None:
     """Limpieza best-effort: si otro proceso movio el flujo primero, no hay nada que hacer."""
     if conversation.active_flow:
@@ -496,6 +504,7 @@ def _handle_flow(
     *,
     anonymous: bool,
     ip_hash: str | None = None,
+    followup_rule: str | None = None,
 ) -> bool:
     """True si el flujo guiado atendio el mensaje (D-028). El orden importa:
 
@@ -530,6 +539,13 @@ def _handle_flow(
                 _resolve_handoff_confirm(conversation, message, value)
                 return True
             if value is None:
+                if followup_rule in _CERTAIN_CONTINUATIONS:
+                    # "si", "listo", "¿y ahora?" con los botones en pantalla: quiere seguir
+                    # pero no eligio. Se repiten los botones (gratis) en vez de mandar el
+                    # acuse al indice, donde no recupera nada y terminaba en "no tengo ese
+                    # dato, ¿quieres un asesor?" (bateria real del 2026-09-03).
+                    _offer_flow_step(conversation, message, definition, step)
+                    return True
                 return False  # interrupcion: el flujo espera hasta resolverse o vencer
             # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota agotada
             # el flujo QUEDA esperando: al renovarse, "en vivo" escrito lo resuelve igual.
