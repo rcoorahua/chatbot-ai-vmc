@@ -112,10 +112,34 @@
     badge().click();
     check("el badge abre el formulario de asesor", await until(() => formCard(), 6000));
     check("con el formulario abierto no hay compositor", !composer());
+    // Lo escrito en el formulario NO puede terminar en el cuadro de mensajes: el rescate del
+    // borrador tomaba el primer `textarea` de la pantalla, que con el formulario abierto es
+    // su campo de detalle (Aaron, 2026-09-03). No se envia nada: solo se avanza de paso.
+    const escribir = (el, v) => {
+      const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const campos = () => Array.from(formCard().querySelectorAll("input, textarea"));
+    if (formCard() && !formCard().querySelector("textarea")) {
+      // Paso 1 (anonimo): nombre y correo antes de poder avanzar al detalle.
+      const inputs = campos();
+      escribir(inputs[0], "Selftest");
+      if (inputs[1]) escribir(inputs[1], "selftest@example.test");
+      formCard().querySelector(".form-actions button[type=submit]").click();
+      await until(() => formCard() && formCard().querySelector("textarea"), 4000);
+    }
+    const detalle = formCard() && formCard().querySelector("textarea");
+    check("el formulario llega al campo de detalle", Boolean(detalle));
+    if (detalle) escribir(detalle, "TEXTO-DEL-FORMULARIO");
+    await sleep(3000); // un sondeo re-renderiza: es donde se rescataba el textarea equivocado
     const cerrar = formCard() && formCard().querySelector(".form-close");
     check("el formulario trae su boton de cerrar", Boolean(cerrar));
     if (cerrar) cerrar.click();
     check("cerrar el formulario devuelve el compositor", await until(() => composer() && !formCard()));
+    const caja = composer() && composer().querySelector("textarea");
+    check("lo escrito en el formulario no cae en el cuadro de mensajes",
+      caja && caja.value === "", caja && JSON.stringify(caja.value));
 
     // ── 2. A → B sin recargar y SIN avisar: la pagina solo reasigna el JWT ──
     const tSwitch = Date.now();
