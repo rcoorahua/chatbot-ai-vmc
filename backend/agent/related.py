@@ -1,7 +1,6 @@
-"""Fuentes, preguntas hermanas y boton de asesor de una respuesta con evidencia (D-030,
-2026-09-03).
+"""Fuentes y preguntas hermanas de una respuesta con evidencia (D-030, 2026-09-03).
 
-Tres cosas que antes hacia el modelo (mal y pagando) y ahora salen de la evidencia, sin
+Dos cosas que antes hacia el modelo (mal y pagando) y ahora salen de la evidencia, sin
 ninguna llamada:
 
 - **Fuentes**: el enlace al Centro de Ayuda ya no se escribe dentro del texto (tres lineas de
@@ -16,10 +15,12 @@ ninguna llamada:
   directo — sin clasificador — igual que un paso de flujo (D-028). Reemplaza al "¿te explico
   el siguiente paso?" que el redactor prometia y que costaba una llamada de ~1.900 tokens de
   entrada por 30 de salida en cada "si" (medido 2026-09-03, conversacion real).
-- **Boton de asesor**: cuando la respuesta (o su evidencia) manda a "contactarnos por el
-  chat en linea", el boton "Contactar con un asesor" abre el formulario de D-029 sin pasar
-  por ningun modelo. Pedido de Aaron (2026-09-03) al ver "contactanos mediante nuestro chat"
-  como texto suelto en la respuesta de "el formulario me impide registrarme".
+
+Lo que NO hace (y se probo): decidir cuando ofrecer un asesor. La primera version ponia un
+boton "Contactar con un asesor" si la respuesta o su evidencia decian "contactanos", y salio
+en "¿como me registro?" porque un fragmento vecino del articulo lo decia. Aaron lo cambio por
+un badge PERMANENTE junto al compositor del widget ("Asesor humano"), que abre el formulario
+de D-029 sin pasar por ningun modelo (`GET /chat/conversations/{id}/handoff/form`).
 
 Modulo puro (regla de `backend/__init__.py`): definiciones y funciones sin I/O. Quien compone
 esto con el repositorio y el widget es `workers/ai_worker.py`.
@@ -34,9 +35,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
 
-from backend.agent import prompts
 from backend.agent.heuristics import normalize
 from backend.agent.rag import Fragment
 
@@ -44,13 +43,8 @@ from backend.agent.rag import Fragment
 RELATED_QUESTIONS = "RELATED_QUESTIONS"
 # `action_id` del evento del clic (el API lo exige en mayusculas, `InteractionIn`).
 RELATED_ACTION_ID = "RELATED_QUESTION"
-# `value` del boton de asesor; los de pregunta son Q1, Q2, Q3.
-HANDOFF_VALUE = "ADVISOR"
-# Cuantos botones de pregunta como maximo: mas de tres ya no es una sugerencia, es un menu.
+# Cuantos botones como maximo: mas de tres ya no es una sugerencia, es un menu.
 MAX_RELATED = 3
-
-KIND_QUESTION = "question"
-KIND_HANDOFF = "handoff"
 
 _TRAILING_DECORATION = frozenset({"So", "Sk", "Sm", "Mn", "Cf", "Zs", "Po"})
 
@@ -61,22 +55,6 @@ _STOPWORDS = frozenset(
     "sus un una y ya hola buenas dia dias tarde tardes".split()
 )
 _WORD = re.compile(r"[a-z0-9]+")
-
-# Lo que en una respuesta (o en su evidencia) significa "habla con una persona del equipo".
-# Sobre texto normalizado (sin tildes). "asesor" entra porque el propio prompt le pide al
-# redactor ofrecerlo cuando el contexto no alcanza.
-_ADVISOR_HINT = re.compile(
-    r"\b(asesor(es|a|as)?|contact[a-z]*|chat en linea|escribenos|comunicate|comuniquese|"
-    r"soporte|atencion al cliente)\b"
-)
-
-
-@dataclass(frozen=True, slots=True)
-class Click:
-    """Un clic valido sobre los botones de la ultima respuesta del bot."""
-
-    kind: str  # KIND_QUESTION | KIND_HANDOFF
-    query: str | None = None  # la pregunta canonica (solo KIND_QUESTION)
 
 
 def question_of(fragment: Fragment) -> str | None:
@@ -167,9 +145,10 @@ def related_questions(
       redactor pudo verlos, pero el prompt le pide responder LA pregunta, no el articulo).
     - Solo fragmentos con pregunta (`question_of`): la introduccion no es un boton.
     - Nada de otros articulos: los botones son "mas sobre esto", no un menu del corpus.
-    - `candidates` son todos los hits que trajo el indice (`RagResult.all_fragments`): el
-      articulo de registro tiene 5 preguntas y el indice devuelve 8 candidatos, asi que en
-      general estan todas; si alguna no vino, simplemente no se ofrece.
+    - `candidates` es TODO lo que trajo el indice (`RagResult.candidates`, incluidos los
+      hits mas alla de `top_k`): el articulo de registro tiene 5 preguntas y el indice
+      devuelve 8 candidatos, asi que en general estan todas; si alguna no vino, simplemente
+      no se ofrece.
     """
     answered = answered_fragment(query, evidence)
     if answered is None or not answered.topic:
@@ -194,46 +173,32 @@ def related_questions(
     return result
 
 
-def suggests_advisor(answer: str, evidence_texts: list[str]) -> bool:
-    """La respuesta o su evidencia mandan a hablar con una persona del equipo. Se mira
-    tambien la evidencia porque el redactor puede resumir el "contactanos por el chat" con
-    otras palabras y el usuario se quedaria sin el boton."""
-    corpus = " ".join([answer or "", *evidence_texts])
-    return bool(_ADVISOR_HINT.search(normalize(corpus)))
-
-
-def related_metadata(questions: list[str], *, advisor: bool = False) -> dict | None:
+def related_metadata(questions: list[str]) -> dict | None:
     """La metadata del mensaje del bot que el widget dibuja como botones (MAPEO.md §3.1).
 
-    Cada opcion de pregunta lleva su `query`: es lo que va al RAG al hacer clic, y el servidor
-    lo lee de AQUI (del mensaje persistido), no del payload del clic — editar el HTML no
-    inventa consultas. El boton de asesor (`kind = handoff`) no lleva consulta: abre el
-    formulario de D-029. Sin `flow_version`: no hay estado que versionar.
+    Cada opcion lleva su `query`: es lo que va al RAG al hacer clic, y el servidor lo lee de
+    AQUI (del mensaje persistido), no del payload del clic — editar el HTML no inventa
+    consultas. Sin `flow_version`: no hay estado que versionar.
     """
-    options = [
-        {"label": question, "value": f"Q{index}", "query": question, "kind": KIND_QUESTION}
-        for index, question in enumerate(questions, start=1)
-    ]
-    if advisor:
-        options.append({
-            "label": prompts.RELATED_ADVISOR_BUTTON, "value": HANDOFF_VALUE,
-            "kind": KIND_HANDOFF,
-        })
-    if not options:
+    if not questions:
         return None
     return {
         "interaction": {
             "type": RELATED_QUESTIONS,
             "action_id": RELATED_ACTION_ID,
-            "options": options,
+            "options": [
+                {"label": question, "value": f"Q{index}", "query": question}
+                for index, question in enumerate(questions, start=1)
+            ],
         }
     }
 
 
-def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> Click | None:
-    """El clic, si corresponde a los botones que el bot dejo en su ULTIMO mensaje; None en
-    cualquier otro caso (botones viejos, valor inventado, payload malformado). Un clic
-    invalido no es un error: el mensaje sigue el pipeline como texto normal.
+def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> str | None:
+    """La consulta canonica del boton pulsado, si el clic corresponde a los botones que el
+    bot dejo en su ULTIMO mensaje; None en cualquier otro caso (botones viejos, valor
+    inventado, payload malformado). Un clic invalido no es un error: el mensaje sigue el
+    pipeline como texto normal.
     """
     if not isinstance(interaction, dict) or interaction.get("action_id") != RELATED_ACTION_ID:
         return None
@@ -242,10 +207,7 @@ def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> C
         return None
     value = interaction.get("value")
     for option in offered.get("options") or []:
-        if not isinstance(option, dict) or option.get("value") != value:
-            continue
-        if option.get("kind") == KIND_HANDOFF or value == HANDOFF_VALUE:
-            return Click(kind=KIND_HANDOFF)
-        query = option.get("query")
-        return Click(kind=KIND_QUESTION, query=str(query)) if query else None
+        if isinstance(option, dict) and option.get("value") == value:
+            query = option.get("query")
+            return str(query) if query else None
     return None

@@ -1,5 +1,4 @@
-"""Fuentes, preguntas hermanas y boton de asesor (D-030, `agent/related.py`). Puro: sin
-Pinecone ni modelo.
+"""Fuentes y preguntas hermanas (D-030, `agent/related.py`). Puro: sin Pinecone ni modelo.
 
 Criterios:
   AC-RL1  la pregunta de un fragmento es su segunda linea SOLO si es una pregunta; la
@@ -10,15 +9,14 @@ Criterios:
           boton no puede repetir "¿Como me registro?" ni esconder persona juridica
           (prueba real de Aaron, 2026-09-03)
   AC-RL4  las hermanas son las OTRAS preguntas del articulo, por score, sin la respondida,
-          sin la introduccion, sin otros articulos y como maximo MAX_RELATED
-  AC-RL5  si la respuesta o su evidencia mandan a contactar al equipo, sale el boton de
-          asesor (kind = handoff), sin consulta
-  AC-RL6  la metadata lleva la consulta de cada boton; un clic se resuelve contra ESA
+          sin la introduccion, sin otros articulos y como maximo MAX_RELATED; los
+          candidatos incluyen los hits mas alla de top_k
+  AC-RL5  la metadata lleva la consulta de cada boton; un clic se resuelve contra ESA
           metadata y cualquier otra cosa (accion ajena, valor inventado, botones de otro
           tipo) da None
 """
 
-from backend.agent import prompts, related
+from backend.agent import related
 from backend.agent.rag import Fragment
 
 REG = "¡Registrarte es fácil y rápido!"
@@ -128,6 +126,23 @@ def test_el_caso_real_hola_como_me_registro_con_persona_juridica_primero():
     assert len(hermanas) == 3
 
 
+def test_el_segundo_caso_real_persona_juridica_fuera_de_top_k():
+    """Segunda prueba real: los 4 primeros hits eran intro, formulario, contraseña y "¿Como
+    me registro?" (todos sobre el umbral) y persona juridica era el QUINTO: solo esta en los
+    candidatos si el RAG conserva los hits mas alla de top_k (`RagResult.candidates`)."""
+    evidence = [INTRO, FORM, CLAVE, COMO]
+    candidates = evidence + [PJ]
+
+    hermanas = related.related_questions("Hola como me registro", evidence, candidates)
+
+    assert hermanas == [
+        "¿Puedo registrarme como persona jurídica?",
+        "He olvidado mi contraseña, ¿cómo puedo recuperar el ingreso a mi cuenta?",
+        "Estoy intentando registrarme, pero el formulario me impide realizarlo, "
+        "¿qué puedo hacer?",
+    ]
+
+
 def test_el_tope_es_max_related():
     extra = _frag(REG, "¿Puedo cambiar mi correo?", score=0.80)
     hermanas = related.related_questions("como me registro", [COMO],
@@ -152,47 +167,28 @@ def test_sin_evidencia_no_hay_hermanas():
     assert related.related_questions("x", [], [COMO]) == []
 
 
-# ───────────────────────── AC-RL5: boton de asesor ─────────────────────────
-
-
-def test_la_respuesta_que_manda_a_contactar_sugiere_asesor():
-    assert related.suggests_advisor("Si nunca te registraste, contáctanos por el chat.", [])
-    assert related.suggests_advisor("Pídeme un asesor aquí mismo 🙂", [])
-    assert related.suggests_advisor("Ok.", ["Comunícate con nosotros mediante el chat en línea"])
-    assert not related.suggests_advisor("Para registrarte entra a vmcsubastas.com.",
-                                        ["Paso 1: ingresa. Paso 2: regístrate."])
-
-
-def test_la_metadata_lleva_el_boton_de_asesor_al_final():
-    meta = related.related_metadata(["¿A?"], advisor=True)
-    options = meta["interaction"]["options"]
-    assert options[0] == {"label": "¿A?", "value": "Q1", "query": "¿A?", "kind": "question"}
-    assert options[1] == {
-        "label": prompts.RELATED_ADVISOR_BUTTON, "value": related.HANDOFF_VALUE,
-        "kind": "handoff",
-    }
-    assert related.related_metadata([], advisor=True)["interaction"]["options"] == [options[1]]
-
-
-# ───────────────────────── AC-RL6: metadata y clic ─────────────────────────
+# ───────────────────────── AC-RL5: metadata y clic ─────────────────────────
 
 
 def test_la_metadata_lleva_la_consulta_de_cada_boton():
     meta = related.related_metadata(["¿A?", "¿B?"])
-    assert meta["interaction"]["type"] == related.RELATED_QUESTIONS
-    assert meta["interaction"]["action_id"] == related.RELATED_ACTION_ID
-    assert [o["query"] for o in meta["interaction"]["options"]] == ["¿A?", "¿B?"]
-    assert "flow_version" not in meta["interaction"]
+    assert meta == {
+        "interaction": {
+            "type": related.RELATED_QUESTIONS,
+            "action_id": related.RELATED_ACTION_ID,
+            "options": [
+                {"label": "¿A?", "value": "Q1", "query": "¿A?"},
+                {"label": "¿B?", "value": "Q2", "query": "¿B?"},
+            ],
+        }
+    }
     assert related.related_metadata([]) is None
 
 
 def test_el_clic_se_resuelve_contra_la_metadata_del_bot():
-    meta = related.related_metadata(["¿A?", "¿B?"], advisor=True)
-    assert related.resolve_click({"action_id": related.RELATED_ACTION_ID, "value": "Q2"},
-                                 meta) == related.Click(kind=related.KIND_QUESTION, query="¿B?")
-    assert related.resolve_click({"action_id": related.RELATED_ACTION_ID,
-                                  "value": related.HANDOFF_VALUE},
-                                 meta) == related.Click(kind=related.KIND_HANDOFF)
+    meta = related.related_metadata(["¿A?", "¿B?"])
+    click = {"action_id": related.RELATED_ACTION_ID, "value": "Q2"}
+    assert related.resolve_click(click, meta) == "¿B?"
 
 
 def test_un_clic_que_no_corresponde_da_none():
@@ -200,9 +196,6 @@ def test_un_clic_que_no_corresponde_da_none():
     click = {"action_id": related.RELATED_ACTION_ID, "value": "Q1"}
     assert related.resolve_click({"action_id": related.RELATED_ACTION_ID, "value": "Q9"},
                                  meta) is None
-    assert related.resolve_click({"action_id": related.RELATED_ACTION_ID,
-                                  "value": related.HANDOFF_VALUE},
-                                 meta) is None, "el boton de asesor no se ofrecio"
     assert related.resolve_click({"action_id": "SELECT_OFFER_TYPE", "value": "Q1"},
                                  meta) is None
     assert related.resolve_click(click, None) is None

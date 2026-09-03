@@ -229,31 +229,22 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # de `_handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no debe
     # abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
     anonymous = conversation.user_type == UserType.ANONYMOUS
-    click = related.resolve_click(
+    related_query = related.resolve_click(
         (message.metadata or {}).get("interaction"), _last_bot_metadata(window, block_keys)
     )
-    if click is not None:
+    if related_query is not None:
+        if not _spend_quota_or_reply(conversation, message, ip_hash):
+            return
         logger.info(
             "ai.related.click",
             extra={
                 "conversation_id": conversation.conversation_id,
                 "message_id": message.message_id,
-                "kind": click.kind,
-                "query": content_preview(click.query or ""),
+                "query": content_preview(related_query),
             },
         )
-        if click.kind == related.KIND_HANDOFF:
-            # "Contactar con un asesor": directo al formulario de D-029, sin modelo, sin
-            # cuota y sin clasificador — el boton solo existe porque la respuesta lo sugirio.
-            _offer_handoff_form(
-                conversation, message, reason="related_button", intent=Intent.ADVISOR,
-                response=prompts.HANDOFF_OFFER_RESPONSE,
-            )
-            return
-        if not _spend_quota_or_reply(conversation, message, ip_hash):
-            return
         _answer_faq(
-            conversation, message, click.query or text, window, block_keys, anonymous,
+            conversation, message, related_query, window, block_keys, anonymous,
             source_prefix="related:",
         )
         return
@@ -438,9 +429,9 @@ def _answer_faq(
             related.related_metadata(
                 # La pregunta respondida se detecta contra lo que se BUSCO (la consulta), no
                 # contra el texto crudo: en un paso de flujo o una continuacion el texto no
-                # describe el tema y la consulta si.
-                related.related_questions(consulta.text, fragments, retrieved.all_fragments),
-                advisor=related.suggests_advisor(result.text, [f.text for f in fragments]),
+                # describe el tema y la consulta si. `candidates` y no `all_fragments`: los
+                # hits mas alla de top_k tambien cuentan (persona juridica era el quinto).
+                related.related_questions(consulta.text, fragments, retrieved.candidates),
             ) or {}
         )
         _bot_says(conversation, result.text, metadata=metadata)

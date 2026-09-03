@@ -185,8 +185,8 @@ el estado de SU cuenta, esos datos no los ves: ofrece un asesor.
 7. Sin relleno: lo que la pregunta necesita y nada mas. Lo normal son dos o tres frases, o
    una lista corta cuando hay pasos.
 8. Si el contexto manda a "contactarnos", al "chat en linea" o a hablar con el equipo, dilo
-   como "pideme un asesor aqui mismo": el sistema pone el boton debajo de tu respuesta. No
-   inventes correos, telefonos ni horarios de atencion.
+   como "puedes pedir un asesor humano con el boton que esta junto al cuadro de escritura".
+   No inventes correos, telefonos ni horarios de atencion.
 </conversacion>
 
 <formato>
@@ -244,12 +244,6 @@ WRITER_USER_TEMPLATE = """
 <usuario>
 {user_state}
 </usuario>"""
-
-# D-030: boton bajo la respuesta cuando esta (o su evidencia) manda a hablar con el equipo.
-# Abre el formulario de asesor (D-029) sin pasar por ningun modelo. Texto de UI, vive aqui
-# por la regla 1 de prompt-governance (todo lo que ve el usuario sale de este registro).
-RELATED_ADVISOR_BUTTON = "Contactar con un asesor"
-
 # Respuesta interna del redactor cuando no hay evidencia (RF-018) o el guardrail de salida
 # rechazo la respuesta generada. El worker la reemplaza por el texto de derivacion que
 # corresponda (FAQ_NO_EVIDENCE_*); se conserva como fallback si alguien usa el redactor solo.

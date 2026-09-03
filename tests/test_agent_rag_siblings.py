@@ -168,3 +168,41 @@ def test_all_fragments_no_repite_ni_pierde(indice):
     assert set(textos) == {h["fields"]["text"] for h in CASO_REAL}, (
         "la cantera no admitida (otro tema, mas alla de top_k) no se muestra: nunca se vio"
     )
+
+
+# ───────────── AC-S6: los hits mas alla de top_k se conservan como candidatos (D-030) ─────────────
+
+
+def test_los_hits_fuera_de_top_k_quedan_en_overflow_y_en_candidates(indice):
+    """Prueba real (2026-09-03): los 4 primeros hits ya superaban el umbral y el quinto (la
+    pregunta de persona juridica) se tiraba con el lookahead; las preguntas hermanas lo
+    necesitan. `all_fragments` NO lo incluye: "descartado" sigue siendo "bajo el umbral"."""
+    indice([
+        _hit("intro", 0.86), _hit("formulario", 0.858), _hit("contrasena", 0.853),
+        _hit("como me registro", 0.852), _hit("persona juridica", 0.849),
+        _hit("comision", 0.80, topic="Comision"),
+    ])
+
+    result = rag.retrieve("hola como me registro")
+
+    assert [f.text for f in result.relevant] == [
+        "intro", "formulario", "contrasena", "como me registro"
+    ]
+    assert result.discarded == []
+    assert [f.text for f in result.overflow] == ["persona juridica", "comision"]
+    assert [f.text for f in result.all_fragments] == [f.text for f in result.relevant]
+    assert [f.text for f in result.candidates][-2:] == ["persona juridica", "comision"]
+
+
+def test_un_hermano_admitido_no_se_repite_en_overflow(indice):
+    indice([
+        _hit("a", 0.86), _hit("b", 0.85), _hit("hermano", 0.82),
+        _hit("otro", 0.80, topic="Comision"), _hit("otro2", 0.79, topic="Comision"),
+    ])
+
+    result = rag.retrieve("hola")
+
+    assert [f.text for f in result.relevant] == ["a", "b", "hermano"]
+    assert [f.text for f in result.discarded] == ["otro"]
+    assert [f.text for f in result.overflow] == ["otro2"]
+    assert len(result.candidates) == 5
