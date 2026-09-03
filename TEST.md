@@ -10,6 +10,15 @@ Cómo levantar el entorno, resetearlo, y dos baterías de prueba contra el widge
 Para la disciplina de tests automatizados (pytest, cobertura, CI) ver la skill `testing` y
 [CLAUDE.md](CLAUDE.md); esto es la prueba **a mano**.
 
+> **Qué demuestra pasar esta guía y qué no.** Si todo esto sale como dice la columna "Qué
+> esperar", **no rompiste nada**: cada capa hace lo suyo y el pipeline está entero. **No**
+> demuestra que el FAQ responda bien: las 30 preguntas de §2.1 están escritas con el
+> vocabulario del Centro de Ayuda, que es el caso fácil. Para medir la recuperación con
+> preguntas como las escribe la gente (paráfrasis, erratas, mensajes cortos, preguntas que el
+> corpus no responde) está [BENCHMARK.md](BENCHMARK.md): 121 casos, con números, sin Gemini.
+> Regla práctica: esta guía antes de cada merge; el benchmark cada vez que se toque el corpus,
+> el índice, el umbral o `agent/rag.py`.
+
 ---
 
 ## 1. Comandos esenciales
@@ -56,7 +65,12 @@ reiniciaste los contenedores, `local_setup` + `seed_data` otra vez: dynamodb-loc
 python -m ruff check .
 python -m pytest -q               # lo mismo que corre el CI
 node --check widget/subastin.js
+python -m scripts.eval_retrieval  # solo si tocaste corpus/índice/umbral/rag.py (Pinecone, sin Gemini)
 ```
+
+> ⚠️ **No corras `pytest` con `run_ai_worker` levantado.** La suite encola mensajes en la
+> misma cola de localstack; el worker los toma y gasta la key de Gemini en jobs de prueba.
+> Apaga el worker (Ctrl+C), corre la suite, vuelve a levantarlo.
 
 ### Ver qué pasó
 
@@ -76,6 +90,12 @@ node --check widget/subastin.js
 ## 2. Los 50 mensajes sueltos
 
 Marca esperada de cada bloque: **qué capa debería resolverlo** (se lee en la Consola IA).
+
+> 💡 **Presupuesto de Gemini.** Con la key gratuita, `3.6-flash` acepta ~20 peticiones por
+> ventana: cada mensaje del bloque 2.1 gasta 2 (clasificador + redactor). Pruébalo en tandas
+> de ~8 y espera unos minutos entre tandas, o el resto cae en "no estoy disponible" y no
+> estás probando nada. Los casos marcados *sin IA* (flujos, guardrails, triviales, botones)
+> no gastan y se pueden correr de corrido.
 
 > ⚠️ **Mándalos en conversaciones distintas, o resetea entre bloques.** Desde el 02/09 el bot
 > encadena continuaciones: si mandas "si" (#34) justo después de otra pregunta, el sistema lo
@@ -131,8 +151,9 @@ Aquí lo que se prueba es que **no invente** y que degrade con elegancia.
 | 34 | si | En conversación **nueva**: sin nada que continuar, no debe inventar. Encadenado se comporta distinto a propósito (§3.1) |
 | 35 | cuanto es | Pregunta cortada: pide precisión o pregunta por el asesor, nunca adivina cifras |
 | 36 | ¿? | Solo signos |
-| 37 | komision cuanto sale | Mal escrito: el embedding tolera parte del error y la **expansión por tema** (03/09) rescata a los hermanos del mismo artículo que quedaron a un pelo del umbral. En la Consola IA salen marcados "por tema" |
-| 37b | hola como me regitro | El caso real del 03/09: sin expansión el bot preguntaba "¿ya tienes cuenta?" porque solo pasaban los fragmentos de contraseña y de "ya registrado"; con ella entran los pasos del registro |
+| 37 | komision cuanto sale | **Límite conocido** (medido 03/09, BENCHMARK.md §3): la errata en la palabra clave hunde los 4 fragmentos bajo el umbral (0.822) y no hay tema confirmado, así que el bot **pregunta si quieres un asesor**. Lo correcto es que no invente; que no responda es la deuda pendiente (corrección ortográfica / reranker, TD-010) |
+| 37b | hola como me regitro | El caso real del 03/09: sin expansión el bot preguntaba "¿ya tienes cuenta?" porque solo pasaban los fragmentos de contraseña y de "ya registrado"; con la **expansión por tema** entran los pasos del registro. En la Consola IA salen 4 fragmentos, 2 marcados "por tema" |
+| 37c | *(tras "¿cómo me registro?")* ya estoy en el formulario, ¿pongo RUC o DNI? | **El corpus no lo responde** (RUC no aparece en ningún artículo). Lo correcto es lo que hace: reconoce que no tiene el dato y pregunta por el asesor. Bajar el umbral NO lo arregla (la pregunta perfecta da 0.834); lo mejorable es el tono, ver BENCHMARK.md §4 |
 | 38 | hola cuanto es la comision | Saludo + pregunta: **no** es trivial, debe responder la consulta |
 | 39 | ¿cuánto está el dólar hoy? | Fuera de dominio: `OTHER` o sin evidencia; **jamás** una cifra inventada |
 | 40 | receta de pastel de chocolate | Fuera de dominio total: respuesta fija de redirección |
@@ -270,7 +291,12 @@ y usar ese Bearer contra `/advisor/*` (o `http://localhost:8000/docs`).
   hay una capa que se saltó.
 - **`rag_fragments`** en la Consola IA: muestra también lo que quedó **bajo el umbral**
   (`RAG_MIN_SCORE = 0.84`), marcado como *descartado* — sirve para juzgar el retrieval cuando
-  una respuesta cae en "sin evidencia".
+  una respuesta cae en "sin evidencia". Los marcados **"por tema"** entraron por la expansión
+  del mismo artículo (03/09), no por su score. Si un caso de retrieval te parece mal, no lo
+  juzgues a ojo: agrégalo a `tests/golden/retrieval.jsonl` y corre el benchmark (BENCHMARK.md).
+- **Errores de modelo**: cuando un turno marca `falló · …` (cuota agotada, timeout NUESTRO,
+  proveedor, auth), la respuesta del bot es "no estoy disponible", **no** "no tengo ese dato".
+  Si ves "no tengo ese dato" con evidencia en pantalla, eso sí es un bug.
 - **Continuidad**: en el log del worker, el evento `ai.rag` trae `contextualized` y
   `followup_rule`. Si en C1 sale `contextualized=false`, la regla no reconoció el mensaje como
   continuación y por eso derivó.
@@ -289,8 +315,8 @@ y usar ese Bearer contra `/advisor/*` (o `http://localhost:8000/docs`).
 |---|---|
 | El mensaje se guarda pero nunca llega respuesta | `run_ai_worker` no está corriendo (la API solo encola) |
 | Cambiaste código y el bot se comporta igual que antes | El worker no se recarga solo: reinícialo |
-| Todo deriva a asesor con "no tengo ese dato" | Gemini saturado o sin `GEMINI_API_KEY`; mira la pestaña Logs |
-| Toda FAQ deriva desde el primer mensaje | Falta `PINECONE_API_KEY` (sin RAG no hay evidencia) |
+| Todo responde "justo ahora no estoy disponible" | Gemini caído, sin `GEMINI_API_KEY` o **cuota agotada** (la key gratuita da 20 peticiones por ventana en `3.6-flash`): la Consola IA marca el turno con `falló · cuota agotada` / `timeout`. Espera unos minutos o cambia de key y **reinicia el worker** |
+| Todo deriva a asesor con "no tengo ese dato" | El RAG no encontró evidencia. Si pasa con preguntas del Centro de Ayuda, falta `PINECONE_API_KEY` o el índice está vacío (`helpcenter_upload`); si pasa con una pregunta puntual, mira los descartados en la Consola IA |
 | Una continuación ("ya estoy ahí") deriva | Mira `contextualized` en `ai.rag`: si es `false`, esa frase no está en las reglas de `agent/followups.py` |
 | El mensaje queda en `QUEUE_FAILED` | Falta `AI_JOBS_QUEUE_URL` en `.env` o localstack está caído |
 | La consola dice 404 | La conversación de la pestaña ya no existe (reseteaste): recarga la página |
