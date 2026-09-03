@@ -131,7 +131,8 @@ Aquí lo que se prueba es que **no invente** y que degrade con elegancia.
 | 34 | si | En conversación **nueva**: sin nada que continuar, no debe inventar. Encadenado se comporta distinto a propósito (§3.1) |
 | 35 | cuanto es | Pregunta cortada: pide precisión o pregunta por el asesor, nunca adivina cifras |
 | 36 | ¿? | Solo signos |
-| 37 | komision cuanto sale | Mal escrito: el RAG debería recuperar igual (embedding tolera errores) |
+| 37 | komision cuanto sale | Mal escrito: el embedding tolera parte del error y la **expansión por tema** (03/09) rescata a los hermanos del mismo artículo que quedaron a un pelo del umbral. En la Consola IA salen marcados "por tema" |
+| 37b | hola como me regitro | El caso real del 03/09: sin expansión el bot preguntaba "¿ya tienes cuenta?" porque solo pasaban los fragmentos de contraseña y de "ya registrado"; con ella entran los pasos del registro |
 | 38 | hola cuanto es la comision | Saludo + pregunta: **no** es trivial, debe responder la consulta |
 | 39 | ¿cuánto está el dólar hoy? | Fuera de dominio: `OTHER` o sin evidencia; **jamás** una cifra inventada |
 | 40 | receta de pastel de chocolate | Fuera de dominio total: respuesta fija de redirección |

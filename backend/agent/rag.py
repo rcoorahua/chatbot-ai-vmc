@@ -21,7 +21,7 @@ derivar a un humano antes que arriesgar una respuesta inventada por una caida de
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from backend.core.config import get_settings
@@ -41,6 +41,10 @@ class Fragment:
     topic: str = ""
     source_url: str = ""
     score: float = 0.0
+    # Entro como evidencia por ser del mismo articulo que uno que supero el umbral, no por su
+    # propio score (expansion por tema, ver `retrieve`). Solo informativo: AIUsage y la
+    # consola lo marcan para poder juzgar la regla con datos.
+    sibling: bool = False
 
     def as_context(self) -> str:
         """El fragmento tal como lo recibe el redactor.
@@ -135,6 +139,17 @@ class RagResult:
         """Relevantes primero (asi los recibe el redactor), descartados despues."""
         return self.relevant + self.discarded
 
+    @property
+    def siblings(self) -> list[Fragment]:
+        """Los relevantes que entraron por expansion de tema y no por su score."""
+        return [f for f in self.relevant if f.sibling]
+
+
+# Cuantos hits de mas se piden al indice, ademas de `rag_top_k`, para tener de donde sacar
+# hermanos: el fragmento con los pasos puede estar en el puesto 5 o 6 cuando una errata
+# reordena la lista. Pinecone cobra por consulta, no por top_k, asi que pedir mas no cuesta.
+_SIBLING_LOOKAHEAD = 4
+
 
 def retrieve(
     question: str, *, top_k: int | None = None, min_score: float | None = None
@@ -148,6 +163,15 @@ def retrieve(
 
     `min_score=0.0` desactiva el corte. Sirve para calibrarlo (ver los scores reales de una
     consulta); el pipeline nunca debe llamarlo asi. Nunca lanza (contrato del modulo).
+
+    **Expansion por tema** (2026-09-03, patron "parent document / small-to-big" de los RAG:
+    trozo chico para buscar, contexto del padre para redactar). El umbral decide UNA cosa: si
+    hay evidencia. Cuando la hay, los fragmentos del MISMO articulo que quedaron hasta
+    `rag_sibling_margin` por debajo entran tambien, hasta llenar `top_k`. Caso real: "hola
+    como me regitro" (errata) puso sobre el umbral dos fragmentos del articulo de registro
+    que hablaban de contraseña olvidada y de "si ya te registraste, inicia sesion", y dejo a
+    0.006 por debajo justo el que tenia los pasos; el bot pregunto "¿ya tienes cuenta?". Un
+    fragmento de OTRO articulo sigue fuera aunque este a un pelo: el tema no esta confirmado.
     """
     settings = get_settings()
     threshold = settings.rag_min_score if min_score is None else min_score
@@ -156,10 +180,12 @@ def retrieve(
         return RagResult(relevant=[], discarded=[], threshold=threshold)
 
     limit = top_k or settings.rag_top_k
+    margin = max(0.0, settings.rag_sibling_margin)
+    search_k = limit + _SIBLING_LOOKAHEAD if margin > 0 else limit
     try:
         response = get_index().search(
             namespace=settings.pinecone_namespace,
-            query={"inputs": {"text": text}, "top_k": limit},
+            query={"inputs": {"text": text}, "top_k": search_k},
             fields=list(_FIELDS),
         )
     except Exception:  # noqa: BLE001 — cualquier fallo se trata como falta de evidencia
@@ -167,8 +193,19 @@ def retrieve(
         return RagResult(relevant=[], discarded=[], threshold=threshold)
 
     fragments = [fragment for hit in _hits(response) if (fragment := _to_fragment(hit))]
-    relevant = [f for f in fragments if f.score >= threshold]
-    discarded = [f for f in fragments if f.score < threshold]
+    # Los primeros `limit` se juzgan como siempre; los de mas alla son solo cantera de hermanos.
+    head, tail = fragments[:limit], fragments[limit:]
+    relevant = [f for f in head if f.score >= threshold]
+    discarded = [f for f in head if f.score < threshold]
+    if relevant and margin > 0:
+        topics = {f.topic for f in relevant if f.topic}
+        admitted = [
+            f for f in discarded + tail
+            if f.topic in topics and f.score >= threshold - margin
+        ][: max(0, limit - len(relevant))]
+        if admitted:
+            relevant = relevant + [replace(f, sibling=True) for f in admitted]
+            discarded = [f for f in discarded if f not in admitted]
     if fragments and not relevant:
         # Sin esto, calibrar el umbral obligaria a reproducir la consulta a mano.
         logger.info(

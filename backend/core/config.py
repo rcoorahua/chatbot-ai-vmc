@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # imprime los scores de una consulta de prueba; el valor por defecto asume el rango tipico
     # de multilingual-e5-large (similitudes altas y comprimidas), no esta medido todavia.
     rag_min_score: float = 0.84
+    # Expansion por tema (2026-09-03, patron "parent document / small-to-big"): el umbral de
+    # arriba decide si HAY evidencia; una vez que un fragmento lo supera, los fragmentos del
+    # MISMO articulo que quedaron hasta esta distancia por debajo entran tambien como
+    # evidencia. Motivo: una errata ("como me regitro") baja todos los scores 0.01-0.02, y los
+    # dos fragmentos que explicaban el registro se quedaron a 0.006 del umbral mientras
+    # entraban dos del mismo articulo que hablaban de otra cosa. 0 lo apaga.
+    rag_sibling_margin: float = 0.04
 
     # ── Pipeline IA (D-006 y D-020 cerradas 2026-08-28) ─────────────────────────────────────
     # D-020: cada mensaje encola su job con este retraso (DelaySeconds de SQS). Al procesarlo,

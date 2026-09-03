@@ -59,7 +59,9 @@ def test_la_busqueda_usa_namespace_top_k_y_campos(fake_index):
 
     call = index.calls[0]
     assert call["namespace"] == "helpcenter"
-    assert call["query"] == {"inputs": {"text": "cuanto es la comision"}, "top_k": 4}
+    # top_k + 4 de cantera para la expansion por tema (RAG_SIBLING_MARGIN > 0); al redactor le
+    # siguen llegando como maximo `rag_top_k` (4). Ver tests/test_agent_rag_siblings.py.
+    assert call["query"] == {"inputs": {"text": "cuanto es la comision"}, "top_k": 8}
     assert set(call["fields"]) == {"text", "topic", "source_url"}, (
         "si falta un campo, el fragmento llega sin fuente y RF-019 no se puede cumplir"
     )
@@ -70,7 +72,7 @@ def test_el_top_k_se_puede_acotar_por_llamada(fake_index):
 
     rag.search("una pregunta", top_k=2)
 
-    assert index.calls[0]["query"]["top_k"] == 2
+    assert index.calls[0]["query"]["top_k"] == 2 + rag._SIBLING_LOOKAHEAD
 
 
 @pytest.mark.parametrize("question", ["", "   ", None])
