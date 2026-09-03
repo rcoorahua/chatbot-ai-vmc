@@ -46,7 +46,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -r requirements-lock.txt
+      - run: pip install -e . --no-deps
       - run: python -m pytest -q
 
   # infra/tests corre primero (aws_cdk.assertions, sin Docker) y luego valida la infra sin
@@ -66,5 +67,5 @@ jobs:
       - run: pip install -r infra/requirements.txt
       - run: python -m pytest tests -q
         working-directory: infra
-      - run: npx -y aws-cdk@2 synth -c stage=stage
+      - run: npx -y aws-cdk@2.1139.0 synth -c stage=stage
         working-directory: infra
