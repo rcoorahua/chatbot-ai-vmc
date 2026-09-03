@@ -44,6 +44,24 @@ from backend.tickets.taxonomy import (
     suggest,
 )
 
+# Namespace fijo para derivar el ticket_id de la conversacion escalada (RF-023: 1:1). Cambiarlo
+# "perderia" los tickets existentes — mismo patron que _USER_CONVERSATION_NAMESPACE en
+# conversations/service.py.
+_TICKET_NAMESPACE = uuid.UUID("d4f3a1e0-6b8c-4f2a-9e1d-7c5b0a3f8e12")
+
+
+def ticket_id_for_conversation(conversation_id: str) -> str:
+    """Id determinista del ticket de una conversacion (DETAILS.md §4.4 / Paso 5).
+
+    Antes era aleatorio (`tick_{uuid4()...}`) y la unicidad dependia de consultar el GSI por
+    conversation_id antes de crear — eventualmente consistente, asi que dos requests casi
+    simultaneos (el handoff real y la red de seguridad `ensure_ticket`) podian pasar los dos el
+    "no existe" y crear dos tickets. Con el id derivado, el `attribute_not_exists(ticket_id)`
+    de `create_ticket` es la exclusion mutua real: dos intentos calculan el MISMO id y solo uno
+    gana la escritura.
+    """
+    return str(uuid.uuid5(_TICKET_NAMESPACE, f"conversation:{conversation_id}"))
+
 
 class TicketAlreadyClosed(RuntimeError):
     """El ticket ya está cerrado: no se reabre ni se vuelve a cerrar (se responde 409)."""
@@ -61,10 +79,14 @@ def open_ticket(conversation: Conversation, *, description: str | None = None) -
     D-027). El asesor la confirma o la corrige, y esa corrección es la medida que necesita
     D-008 antes de cerrarse.
 
-    Idempotente: si la conversación ya tiene ticket, devuelve el que existe. Esa es la
-    garantía de que el handoff y la red de seguridad `ensure_ticket` no dupliquen.
+    Idempotente: si la conversación ya tiene ticket, devuelve el que existe. El id determinista
+    (`ticket_id_for_conversation`) es lo que hace esa garantía real bajo carrera: dos requests
+    casi simultáneos (el handoff y la red de seguridad `ensure_ticket`) calculan el MISMO id, y
+    `create_ticket` (condicionado a `attribute_not_exists`) deja pasar solo al primero — sin
+    depender de la consistencia eventual del GSI, ni para leer ni para crear.
     """
-    existing = repository.find_by_conversation(conversation.conversation_id)
+    ticket_id = ticket_id_for_conversation(conversation.conversation_id)
+    existing = repository.get_ticket(ticket_id)
     if existing is not None:
         return existing
 
@@ -74,7 +96,7 @@ def open_ticket(conversation: Conversation, *, description: str | None = None) -
     tags = [str(tag) for tag in suggestion.tags]
     now = utc_now_iso()
     ticket = Ticket(
-        ticket_id=f"tick_{uuid.uuid4().hex[:12]}",
+        ticket_id=ticket_id,
         conversation_id=conversation.conversation_id,
         user_type=str(conversation.user_type),
         user_id=conversation.user_id,
@@ -96,8 +118,10 @@ def open_ticket(conversation: Conversation, *, description: str | None = None) -
         created_at=now,
         updated_at=now,
     )
-    if not repository.create_ticket(ticket):  # pragma: no cover — colisión de uuid4
-        return repository.find_by_conversation(conversation.conversation_id) or ticket
+    if not repository.create_ticket(ticket):
+        # Otro request gano la carrera (mismo ticket_id determinista): lectura por PK,
+        # fuertemente consistente, no el GSI.
+        return repository.get_ticket(ticket_id) or ticket
     return ticket
 
 

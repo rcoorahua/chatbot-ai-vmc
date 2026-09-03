@@ -19,11 +19,25 @@ debe convertirse en un supuesto. Los datos de prueba no caducan.
 
 from decimal import Decimal
 
+from backend.advisors.service import advisor_id_for_cognito_sub
+from backend.tickets.service import ticket_id_for_conversation
 from scripts.local_setup import nombres_de_tabla, recurso_dynamo
 
 # Instante de referencia fijo, para que los datos sean reproducibles entre corridas.
 DIA = "2026-08-25"
 MES_FACTURACION = "2026-08"
+
+# DETAILS.md §4.4 / Paso 5: advisor_id/ticket_id son deterministas en el sistema real (los
+# unicos que los crean son resolve_advisor y open_ticket). Si el seed usara un id fijo tipo
+# "adv_001" en vez del mismo derivado, el primer login de ese cognito_sub en una prueba no lo
+# encontraria (PK distinta) y crearia una fila duplicada — justo el bug que este paso corrige.
+ANA_ID = advisor_id_for_cognito_sub("sub-ana-001")
+LUIS_ID = advisor_id_for_cognito_sub("sub-luis-002")
+# Nombrados por la conversacion que escalaron, no por el viejo "tick_00N" — evita confundir
+# TICKET_CONV_003_ID (el ticket de conv_003) con lo que antes se llamaba "tick_002".
+TICKET_CONV_002_ID = ticket_id_for_conversation("conv_002")
+TICKET_CONV_003_ID = ticket_id_for_conversation("conv_003")
+TICKET_CONV_004_ID = ticket_id_for_conversation("conv_004")
 
 
 def _t(hora: str) -> str:
@@ -33,7 +47,7 @@ def _t(hora: str) -> str:
 
 ADVISORS = [
     {
-        "advisor_id": "adv_001",
+        "advisor_id": ANA_ID,
         "cognito_sub": "sub-ana-001",
         "name": "Ana Torres",
         "email": "ana.torres@vmc.test",
@@ -44,7 +58,7 @@ ADVISORS = [
         "last_login_at": _t("09:15:00"),
     },
     {
-        "advisor_id": "adv_002",
+        "advisor_id": LUIS_ID,
         "cognito_sub": "sub-luis-002",
         "name": "Luis Ramos",
         "email": "luis.ramos@vmc.test",
@@ -98,7 +112,7 @@ CONVERSATIONS = [
         "user_email": "carlos.mendoza@example.test",
         "status": "IN_ATTENTION",
         "channel": "WEB",
-        "assigned_advisor_id": "adv_001",
+        "assigned_advisor_id": ANA_ID,
         "bot_enabled": False,
         "message_count": 3,
         "unread_count": 0,
@@ -118,7 +132,7 @@ CONVERSATIONS = [
         "user_email": "rosa.diaz@example.test",
         "status": "CLOSED",
         "channel": "WEB",
-        "assigned_advisor_id": "adv_001",
+        "assigned_advisor_id": ANA_ID,
         "bot_enabled": False,
         "message_count": 3,
         "unread_count": 0,
@@ -176,9 +190,9 @@ MESSAGES = [
     _msg("conv_003", "09:20:00", "msg_0301", "USER", "no me aparece mi vehiculo adjudicado",
          client_message_id="cli-0301"),
     _msg("conv_003", "09:30:00", "msg_0302", "SYSTEM", "ADVISOR_ASSIGNED",
-         message_type="SYSTEM", sender_id="adv_001"),
+         message_type="SYSTEM", sender_id=ANA_ID),
     _msg("conv_003", "09:45:00", "msg_0303", "ADVISOR",
-         "Claro, reviso tu caso y te confirmo en unos minutos.", sender_id="adv_001"),
+         "Claro, reviso tu caso y te confirmo en unos minutos.", sender_id=ANA_ID),
 
     # conv_004 — cerrada, con imagen (AC-007). El binario vive en S3, aqui solo metadata.
     _msg("conv_004", "08:05:00", "msg_0401", "USER", "el vehiculo llego con este rayon",
@@ -193,12 +207,12 @@ MESSAGES = [
     _msg("conv_004", "08:50:00", "msg_0402", "USER", "Gracias por la ayuda!",
          client_message_id="cli-0402"),
     _msg("conv_004", "08:55:00", "msg_0403", "SYSTEM", "CONVERSATION_CLOSED",
-         message_type="SYSTEM", sender_id="adv_001"),
+         message_type="SYSTEM", sender_id=ANA_ID),
 ]
 
 TICKETS = [
     {
-        "ticket_id": "tick_001",
+        "ticket_id": TICKET_CONV_002_ID,
         "conversation_id": "conv_002",
         "user_id": "user_001",
         "user_email": "carlos.mendoza@example.test",
@@ -209,12 +223,12 @@ TICKETS = [
         "updated_at": _t("11:05:00"),
     },
     {
-        "ticket_id": "tick_002",
+        "ticket_id": TICKET_CONV_003_ID,
         "conversation_id": "conv_003",
         "user_id": "user_001",
         "user_email": "carlos.mendoza@example.test",
         "status": "IN_PROGRESS",
-        "assigned_advisor_id": "adv_001",
+        "assigned_advisor_id": ANA_ID,
         "handoff_reason": "RAG_SIN_EVIDENCIA",
         "description": "Vehiculo adjudicado no aparece en su cuenta.",
         "created_at": _t("09:30:00"),
@@ -222,18 +236,18 @@ TICKETS = [
         "updated_at": _t("09:45:00"),
     },
     {
-        "ticket_id": "tick_003",
+        "ticket_id": TICKET_CONV_004_ID,
         "conversation_id": "conv_004",
         "user_id": "user_002",
         "status": "CLOSED",
-        "assigned_advisor_id": "adv_001",
+        "assigned_advisor_id": ANA_ID,
         "handoff_reason": "PROBLEMA_CON_VEHICULO",
         "description": "Vehiculo entregado con dano visible.",
         "created_at": _t("08:10:00"),
         "assigned_at": _t("08:15:00"),
         "updated_at": _t("08:55:00"),
         "closed_at": _t("08:55:00"),
-        "closed_by": "adv_001",
+        "closed_by": ANA_ID,
     },
 ]
 
