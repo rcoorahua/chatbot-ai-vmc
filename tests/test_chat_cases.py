@@ -24,7 +24,9 @@ El authorizer del asesor se simula con el middleware de dev (backend/api/dev_aut
 encolado a SQS con un doble, como en tests/test_advisor_api.py y tests/test_chat_api.py.
 """
 
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from boto3.dynamodb.conditions import Key
@@ -322,6 +324,48 @@ def test_el_tope_de_casos_abiertos_es_409(client, limpiar, monkeypatch):
     segundo = _handoff(client, sesion, limpiar, subject="Otro asunto distinto")
     assert segundo.status_code == 409
     assert "1 casos abiertos" in segundo.json()["detail"]
+
+
+def test_seis_handoffs_concurrentes_con_limite_cinco_dejan_como_maximo_cinco(
+    client, limpiar, monkeypatch, tablas
+):
+    """DETAILS.md §4.5 / Paso 6: el limite se hace cumplir con un ADD condicionado en la
+    MISMA transaccion que crea el caso — no con list_open_cases (GSI) antes de crear, que es
+    check-then-act y deja pasar mas de N bajo carrera real."""
+    monkeypatch.setenv("MAX_OPEN_CASES_PER_USER", "5")
+    reset_settings()
+    sesion = _sesion(client, limpiar, autenticado=True)
+    hilo_id = sesion["conversation"]["conversation_id"]
+    user_id = tablas["conversations"].get_item(Key={"conversation_id": hilo_id})["Item"][
+        "user_id"
+    ]
+    limpiar.limite(f"OPEN_CASES#USER#{user_id}")
+
+    n = 8
+    barrera = threading.Barrier(n)
+
+    def intentar(i):
+        barrera.wait(timeout=10)
+        return _handoff(client, sesion, subject=f"Caso concurrente {i}")
+
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        resultados = [f.result() for f in [pool.submit(intentar, i) for i in range(n)]]
+
+    exitosos = [r for r in resultados if r.status_code == 201]
+    rechazados = [r for r in resultados if r.status_code == 409]
+    assert len(exitosos) == 5, [r.status_code for r in resultados]
+    assert len(rechazados) == n - 5
+    for r in exitosos:
+        limpiar.conversacion(r.json()["conversation"]["conversation_id"])
+
+    abiertos = [
+        c
+        for c in tablas["conversations"].query(
+            IndexName="gsi1_user", KeyConditionExpression=Key("user_id").eq(user_id)
+        )["Items"]
+        if c.get("kind") == "CASE" and c.get("status") != "CLOSED"
+    ]
+    assert len(abiertos) == 5, "una sola fila fisica por caso exitoso, no mas de cinco"
 
 
 def test_el_listado_trae_el_hilo_primero_y_los_casos_por_recencia(client, limpiar):
