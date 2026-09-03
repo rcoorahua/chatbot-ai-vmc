@@ -1500,6 +1500,8 @@
   let launcherBadgeEl;
   let lastViewKey = null; // vista dibujada por ultima vez, para animar solo los cambios reales
   let lastViewDepth = 0; // posicion de esa vista, para saber hacia donde cruzar
+  // El render que dibuja el formulario tras la animacion: no debe volver a pedirla (D-030).
+  let dibujandoFormulario = false;
 
   const VIEW_ORDER = { home: 0, inbox: 1, messages: 1.3, help: 2 };
 
@@ -1537,12 +1539,23 @@
     // y el formulario "empuja"); recien al terminar se dibuja el estado nuevo. Mientras dura,
     // cualquier otro render se pospone: reemplazar el DOM a mitad de la animacion la corta.
     if (state.formEntering) return;
-    if (state.view === "messages" && visibleForm() && panelEl.querySelector(".screen:not(.is-leaving) .composer")) {
+    // `dibujando` corta la recursion: el callback vuelve a entrar a render() y, como el
+    // compositor SIGUE en el DOM (todavia no se redibujo), sin esta bandera se pediria otra
+    // vez la misma animacion, para siempre. Con `prefers-reduced-motion` el callback es
+    // sincrono y el desborde de pila era inmediato: el formulario no llegaba a aparecer
+    // (Windows con "efectos de animacion" apagados lo activa; visto el 2026-09-03).
+    if (!dibujandoFormulario && state.view === "messages" && visibleForm() &&
+        panelEl.querySelector(".screen:not(.is-leaving) .composer")) {
       state.formEntering = true;
       fadeOutReplies();
       collapseComposer(() => {
         state.formEntering = false;
-        render();
+        dibujandoFormulario = true;
+        try {
+          render();
+        } finally {
+          dibujandoFormulario = false;
+        }
       });
       return;
     }

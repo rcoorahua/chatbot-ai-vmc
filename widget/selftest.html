@@ -100,6 +100,23 @@
     const tokenA = sessA.token;
     const convA = sessA.conversationId;
 
+    // ── 1b. Badge "Asesor humano" (D-030) ──
+    // Regresion del 2026-09-03: la transicion del formulario se llamaba a si misma y con
+    // `prefers-reduced-motion` (lo que reporta Chrome headless, y Windows con los efectos de
+    // animacion apagados) reventaba la pila: el boton no abria NADA. Solo pide la tarjeta,
+    // no deriva: sin IA y sin caso.
+    const badge = () => shadow() && shadow().querySelector(".tool-advisor");
+    const formCard = () => shadow() && shadow().querySelector(".form-card");
+    const composer = () => shadow() && shadow().querySelector(".composer");
+    check("el badge de asesor esta en el compositor", await until(() => badge() && !badge().disabled));
+    badge().click();
+    check("el badge abre el formulario de asesor", await until(() => formCard(), 6000));
+    check("con el formulario abierto no hay compositor", !composer());
+    const cerrar = formCard() && formCard().querySelector(".form-close");
+    check("el formulario trae su boton de cerrar", Boolean(cerrar));
+    if (cerrar) cerrar.click();
+    check("cerrar el formulario devuelve el compositor", await until(() => composer() && !formCard()));
+
     // ── 2. A → B sin recargar y SIN avisar: la pagina solo reasigna el JWT ──
     const tSwitch = Date.now();
     window.subastinSettings.userJwt = jwtB;
