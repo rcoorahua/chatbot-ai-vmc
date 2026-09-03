@@ -181,6 +181,14 @@ def _signing_key() -> str:
     return key
 
 
+def ensure_session_signing_configured() -> None:
+    """Falla temprano si falta `SESSION_SIGNING_KEY`, ANTES de crear nada (DETAILS.md §4.2):
+    sin este chequeo, `create_session` abria la conversacion (fila real, tambien para el
+    anonimo) y recien despues intentaba firmar el token — un 503 dejaba una fila huerfana en
+    cada intento mientras el secreto siguiera sin configurar."""
+    _signing_key()
+
+
 def new_session(
     *,
     user_type: str,
