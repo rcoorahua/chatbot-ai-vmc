@@ -272,6 +272,40 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   siguiente**: si el usuario la ignora y pregunta otra cosa, se descarta (a diferencia de un
   flujo del corpus, que espera 24 h) — un "sí" de mañana no puede derivar por un tema olvidado.
 
+- **D-030 Respuesta completa por pregunta, estado de cuenta conocido, fuentes como chip y
+  preguntas hermanas (2026-09-03, Aaron; cierra TD-009)**. El redactor ya **no dosifica**:
+  "un paso a la vez" venía del proyecto de WhatsApp y en una burbuja web cabe entera la
+  pregunta del corpus (mediana 76 palabras, máximo 208). **Medido en la consola** sobre una
+  conversación real del 03/09: "¿Cómo me registro?" costó **4 llamadas** al redactor (una por
+  cada "sí", ~1.900 tokens de entrada por 25–80 de salida; $0.0128 y 43 s de espera
+  acumulada) donde una completa cuesta ~$0.004 — la entrada es el 93 % del costo de cada
+  llamada, así que partir una respuesta en N turnos la multiplica por N. Y "¿persona
+  jurídica?" se guardó la advertencia de la factura para un turno siguiente: ahora **las
+  advertencias del contexto se dicen siempre**. La unidad es la **pregunta**, no el artículo
+  (mediana 435 palabras, hasta 13 preguntas de intenciones distintas: sería un muro).
+  El bot **no cierra preguntando si continuar**. **Estado de cuenta**: lo sabe la sesión
+  (JWT de VMC o anónimo) y viaja al prompt en `<usuario>` (`prompts.WRITER_USER_*`, al final
+  para no romper el prefijo cacheable): autenticado = tiene cuenta; anónimo = se **asume sin
+  cuenta**, neutro como el Centro de Ayuda; el bot **nunca pregunta** "¿ya tienes cuenta?".
+  **Fuentes**: el enlace ya no va en el texto (el prompt lo prohíbe y `Fragment.as_context`
+  ya no pega "(Fuente: url)"); viaja en `metadata.sources` y el widget lo dibuja como **chip**
+  bajo la burbuja, determinista desde la evidencia (RF-019 sin que el modelo escriba URLs).
+  **Preguntas hermanas**: bajo cada respuesta con evidencia, hasta 3 botones con las OTRAS
+  preguntas del mismo artículo (`metadata.interaction.type = RELATED_QUESTIONS`, **sin
+  estado ni `flow_version`**); el clic manda la pregunta canónica al RAG **sin clasificador**
+  (`related:model` en AIUsage) y se valida contra la metadata del **último mensaje del bot**,
+  nunca contra el payload; un clic sobre botones viejos se degrada a texto. **Franja del
+  visitante** en el hilo del widget ("inicia sesión para guardar tu conversación…"): parte de
+  la UI, no un mensaje, una vez por pestaña (sessionStorage; nada en localStorage) y con un
+  texto que promete solo lo que hoy es verdad. `agent/followups.py` queda como **red de
+  seguridad** para continuaciones espontáneas ("y luego?"). Código: `agent/related.py`
+  (puro), `agent/prompts.py`, `agent/writer.py` (`user_state`), `workers/ai_worker.py`
+  (`ai.related.click`), `api/routers/chat.py` (`flow_version` opcional),
+  `widget/subastin.js`. Tests: `tests/test_agent_related.py`,
+  `tests/test_ai_worker_related.py`. **Pendiente de medir en stage**: `cached_tokens` (las 14
+  filas locales traen 0: el prefijo de ~1.000 tokens no se está cacheando; un caché explícito
+  recortaría cerca de la mitad de la entrada) y la tasa de clic en hermanas.
+
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
 Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
@@ -288,7 +322,7 @@ Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-007, D-017, D-019, D-020, D-021…D-029 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-017, D-019, D-020, D-021…D-030 **cerradas** (arriba); D-018 provisional.
 D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagados en dev**
 (`AI_QUOTA_* = 0`); en stage/prod se encienden por variables de entorno.
 
@@ -302,7 +336,7 @@ D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagado
 | TD-004 | Cuentas AWS separadas stage/prod vs una sola | Separadas si el equipo AWS lo permite |
 | TD-005 | `PythonFunction` (bundling) vs `DockerImageFunction` | PythonFunction mientras deps < 250 MB descomprimido |
 | TD-007 | Dominio custom para la API + DNS/ACM | No bloquea MVP; URL default de API Gateway mientras tanto |
-| TD-009 | **Procesos multi-paso: ¿reglas de texto, flujo con estado, o acotar el prompt?** | **Abierta desde 2026-09-02.** El prompt del redactor manda explicar "un paso a la vez" y preguntar si continuar (`WRITER_SYSTEM_PROMPT`, bloque `<conversacion>`), así que el bot abre contratos de varios turnos ("¿Deseas que te explique el siguiente paso?"). Detrás de esa promesa **no hay estado**: la sostiene `agent/followups.py`, que al detectar una continuación busca en el RAG **la pregunta previa del usuario** en lugar del mensaje actual. Funciona y está medido (ver la viñeta de continuidad en "Invariantes"), pero es heurística: una continuación que las reglas no reconozcan vuelve a buscar el texto suelto y deriva. **Las cuatro salidas:** (a) **medir primero** — el log `ai.rag` ya trae `contextualized` y `followup_rule`, así que se puede contar cuántas continuaciones caen fuera de las reglas antes de decidir nada; (b) **acotar el prompt** para que no prometa pasos que el sistema no sostiene (toca `agent/prompts.py` → exige golden set y eval real, D-026); (c) **modelar los procesos como flujos** de D-028 con estado y botones, que es lo que MAPEO.md §4.1 ya mapea — ojo que el registro **no** es uno hoy ("cada pregunta se autocontiene"); (d) **reescribir la consulta con el modelo** (query rewriting), la respuesta estándar de la industria, pero cuesta una llamada por turno de continuación y choca con D-027. **Recomendación: (a) y luego (b) o (c).** Dato para dimensionar: el margen es angosto — con la pregunta previa sola, "Hola como me registro" recupera 4/4 con 0.859 contra un umbral de 0.84 |
+| TD-009 | Procesos multi-paso: ¿reglas de texto, flujo con estado, o acotar el prompt? | **Cerrada el 2026-09-03 con D-030** (opción b + botones sin estado): el redactor responde **completa** la pregunta del corpus y no promete "el siguiente paso"; lo relacionado sale como botones de preguntas hermanas (`agent/related.py`). `agent/followups.py` queda como red de seguridad para continuaciones espontáneas. Historia y datos en la viñeta D-030 |
 | TD-010 | **¿Reranker como decisor de evidencia, en lugar del umbral de e5?** | **Abierta desde 2026-09-03**, con datos en [BENCHMARK.md](docs/BENCHMARK.md) §3–4. El score de `multilingual-e5-large` comprime todo el corpus entre 0.78 y 0.88, así que **no existe un `RAG_MIN_SCORE` bueno**: 0.84 da recall 84% / rechazo 90%, y cada centésima mueve decenas de casos (0.83 → 91/55, 0.85 → 76/95). Un cross-encoder alojado en Pinecone (`bge-reranker-v2-m3`, `pc.inference.rerank`, mismo proveedor, sin Gemini) puntúa "¿este fragmento responde la pregunta?" y separa de verdad: negativos en 0.00–0.02, positivos en 0.6–0.99; con umbral **0.10** da **89% / 95%** sobre los mismos 121 casos, y "¿pongo RUC o DNI?" (que el corpus no responde) cae a 0.001. **Lo que ni el reranker arregla**: sinónimos del rubro (garantía = consignación, me cobran = comisión) y erratas en la palabra clave (komision); eso es del **corpus** — preguntas alternativas por fragmento en la ingesta y corrección ortográfica contra el vocabulario — no del decisor. **Recomendación**: reranker ≥ 0.10 como decisor, e5 como prefiltro de 8 candidatos con piso flojo (≈ 0.75); antes, verificar cuota del reranker en el plan de Pinecone y latencia desde Lambda. Hasta decidirlo, `--rerank` en `scripts/eval_retrieval.py` es solo medición |
 | TD-008 | ¿Gemini también clasifica, o vuelve Haiku (T9)? | **Gemini provisional** desde 2026-08-27; **modelos recalibrados 2026-09-01** contra la página oficial de precios: `gemini-3.5-flash-lite` clasifica ($0.30/$2.50 por 1M; respaldo `3.1-flash-lite`) y `gemini-3.6-flash` redacta ($1.50/$7.50; respaldo `3.5-flash` a $1.50/$9.00). Se abandonó `3.7-flash`: existe en la API pero NO figura en la tabla de precios (preview sin tarifa) y con key gratuita rechazaba sostenido ("high demand") — en la práctica todo caía al respaldo con un costo estimado inventado. Un solo proveedor = una credencial y una integración menos. Se decide con el golden set de intents: si el routing no alcanza, el tier `FAST` de `core/llm.py` vuelve a Haiku (y ahí sí aplica TD-002) |
 
@@ -416,8 +450,10 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   nunca "no tengo ese dato". **La key gratuita de Gemini tiene 20 peticiones por ventana en
   `3.6-flash`**: una batería la agota y toda prueba manual posterior cae en ese mensaje.
 - **Lo que se BUSCA en el RAG no siempre es lo que el usuario escribió** (`agent/followups.py`,
-  2026-09-02; decisión de fondo pendiente en **TD-009**). El prompt del redactor promete
-  continuidad ("un paso a la vez, pregunta si continuar") y la recuperación era de un solo
+  2026-09-02; **TD-009 cerrada con D-030 el 2026-09-03**: el redactor ya responde completo y
+  no promete pasos, así que esto queda como red de seguridad para continuaciones espontáneas
+  del usuario). Hasta entonces el prompt prometía continuidad ("un paso a la vez, pregunta si
+  continuar") y la recuperación era de un solo
   turno: "Ya estoy ahí" no se parece a nada del corpus, así que un usuario a mitad de una
   explicación terminaba derivado por "falta de evidencia" **con el artículo correcto entre los
   descartados** (0.789 contra el umbral 0.84, medido en el índice real). Ahora, si el mensaje es

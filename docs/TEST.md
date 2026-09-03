@@ -104,12 +104,16 @@ Marca esperada de cada bloque: **qué capa debería resolverlo** (se lee en la C
 
 ### 2.1 · Treinta mensajes que cubren el Centro de Ayuda
 
-Deben responderse con evidencia del RAG (fuente citada) o, en los marcados, por flujo o regla.
+Deben responderse con evidencia del RAG o, en los marcados, por flujo o regla. Desde el 03/09
+(D-030) una respuesta con evidencia se ve así: **la respuesta completa** en una burbuja (todos
+los pasos, sin "¿te explico el siguiente?"), **sin URL en el texto**, un **chip de fuente**
+debajo con el título del artículo, y hasta **tres botones** con las otras preguntas del mismo
+artículo. Un solo turno = **una** llamada al redactor en la Consola IA.
 
 | # | Mensaje | Qué esperar |
 |---|---|---|
 | 1 | ¿Cómo me registro en VMC? | RAG · Registro |
-| 2 | ¿Puedo registrarme como persona jurídica? | RAG · Registro |
+| 2 | ¿Puedo registrarme como persona jurídica? | RAG · Registro. La **advertencia** de que todas las compras irán con factura va en la MISMA respuesta (antes el bot la guardaba para "¿quieres que te explique qué pasa con tus comprobantes?") |
 | 3 | Olvidé mi contraseña, ¿cómo la recupero? | RAG · Registro |
 | 4 | ¿Cuánto es la comisión y cómo se paga? | RAG · Comisión |
 | 5 | ¿Mi bid incluye la comisión? | RAG · Comisión |
@@ -187,24 +191,37 @@ de turnos que hay que mandar en orden, en una conversación limpia.
 > anónima vive en la pestaña), o `python -m scripts.reset_local` para dejar todo en cero.
 > Donde dice **(autenticado)**, entra con el botón de usuario de `test.html`.
 
-### 3.1 · Continuidad: el bot explica por pasos
+### 3.1 · Respuesta completa, preguntas hermanas y red de seguridad (D-030)
 
-Lo que se prueba: que un mensaje que **solo tiene sentido pegado al anterior** siga la
-conversación en vez de perderse. Antes del 02/09, "ya estoy ahí" derivaba a un asesor con el
+Desde el 03/09 el bot **no explica por pasos**: responde entera la pregunta del corpus y
+debajo ofrece las otras preguntas del artículo como botones. La heurística de continuidad
+(`agent/followups.py`) sigue viva como **red de seguridad** para cuando el usuario continúa
+por su cuenta ("y luego?"): antes del 02/09, "ya estoy ahí" derivaba a un asesor con el
 artículo correcto entre los descartados.
 
 | # | Turnos | Qué esperar |
 |---|---|---|
-| C1 | `¿Cómo me registro en VMC?` → `Ya estoy ahi` | El bot da el **siguiente paso** del registro. En la Consola IA el segundo turno debe traer RAG **con** evidencia |
-| C2 | `¿Cómo me registro en VMC?` → `y luego?` | Igual que C1: continúa, no deriva |
+| C1 | `¿Cómo me registro en VMC?` | **Una sola respuesta con los 4 pasos** (lista 1) 2) 3) 4)), sin "¿te explico el siguiente paso?" y sin URL en el texto. Debajo, el **chip** "¡Registrarte es fácil y rápido!" y los botones **¿Puedo registrarme como persona jurídica?**, **He olvidado mi contraseña…** y **…el formulario me impide realizarlo…**. Consola IA: 1 clasificación + **1** llamada al redactor (antes eran 4) |
+| C1b | *(tras C1)* pulsar **¿Puedo registrarme como persona jurídica?** | Responde con la **advertencia de la factura** incluida. Consola IA: el turno sale como `related:model`, **sin fila de clasificación**; en el detalle, la consulta del RAG es la pregunta del botón |
+| C1c | *(tras C1)* escribir `¿cuánto es la comisión?` *(sin tocar los botones)* | Tema nuevo: responde de comisión con su propio chip y sus propias hermanas. Los botones del registro quedan atrás sin más |
+| C2 | `¿Cómo me registro en VMC?` → `y luego?` | Red de seguridad: se busca con `metadata.rag_query` de la respuesta anterior (no deriva). El bot puede decir que ya te dio todos los pasos y qué sigue |
 | C3 | `¿Cómo consigno un vehículo?` → `listo` → `y ahora?` | Dos continuaciones seguidas: las dos siguen anclando al tema de la consignación |
-| C4 | `¿Cómo me registro?` → `ok` → `¿cuánto es la comisión?` | La tercera es una **pregunta nueva**: NO debe arrastrar el registro. Debe responder de comisión |
+| C4 | `¿Cómo me registro?` → `ok` → `¿cuánto es la comisión?` | "ok" tras una respuesta completa es el **cierre trivial** ("¡Con gusto!", coste 0: la respuesta ya no termina preguntando). La tercera es una pregunta nueva y responde de comisión |
 | C5 | *(conversación nueva)* `ya estoy ahi` | Sin nada previo que continuar: no inventa. Pregunta por el asesor o pide precisión |
 | C6 | `¿Cómo me registro?` → `ya estoy ahí pero me sale un error al poner mi documento y no sé si es por el navegador` | Mensaje largo: se busca **tal cual**, no se le pega el tema anterior (ya se sostiene solo) |
-| C6b | `quiero registrarme` → `si` → `si` → `y luego?` | **Explicación por pasos** (arreglado el 03/09): cada "sí" trae el paso siguiente. El segundo "sí" NO es "mensaje repetido" ni cae en silencio; en la Consola IA la clasificación sale como `continuation:acuse` / `continuation:pide_seguir` **sin modelo** (solo paga el redactor) y el RAG trae 4/4 con la consulta `quiero registrarme` |
-| C6c | `quiero registrarme` → *(el bot pregunta si sigue)* → `ok` / `listo` / `vale` | Continúan la explicación (no es el "¡Con gusto!" de cierre). Si el bot **no** preguntó nada (cerró con punto), "ok" sí es el cierre trivial. `gracias` cierra siempre |
-| C6d | `quiero participar` → `en vivo` → `si` | Continuar un **paso de flujo**: el "sí" busca con la consulta canónica del paso (viaja en `metadata.rag_query` de la respuesta del bot), no con el texto del botón. En el log del worker, `ai.rag` trae `contextualized=true` |
+| C6b | `quiero registrarme` → `si` → `si` | El primer "sí" es continuación (busca `quiero registrarme`, `continuation:acuse` sin modelo); el bot ya dio todo, así que responderá que no hay más pasos o resumirá. El segundo "sí" NO es "mensaje repetido" ni cae en silencio. Lo importante: **nunca deriva** |
+| C6d | `quiero participar` → `en vivo` | **Paso de flujo resuelto**: respuesta completa con la consulta canónica, chip del artículo "En Vivo" y las hermanas de ese artículo como botones. Un `y luego?` después busca con la consulta canónica (`metadata.rag_query`), no con el texto del botón; en el log del worker, `ai.rag` trae `contextualized=true` |
 | C6e | `quiero participar` → `si` / `listo` / `y ahora?` *(con los botones en pantalla, sin elegir)* | El bot **repite los botones** (gratis, `flow:PARTICIPATION:offered` otra vez) en vez de "no tengo ese dato". Luego `en vivo` resuelve el flujo normal |
+
+### 3.1b · Estado de cuenta y franja del visitante (D-030)
+
+El bot **nunca pregunta "¿ya tienes cuenta?"**: lo sabe la sesión.
+
+| # | Turnos | Qué esperar |
+|---|---|---|
+| C1d | *(anónimo)* `¿cómo participo en una subasta?` → `en vivo` | Asume que **no tiene cuenta**: menciona en una frase que primero debe registrarse (o iniciar sesión si ya la tiene) y sigue con lo que preguntó. No pregunta si tiene cuenta |
+| C1e | *(autenticado)* la misma pregunta | Va directo a participar: **no** menciona el registro ni pregunta por la cuenta |
+| C1f | *(anónimo)* abrir el chat | Franja violeta bajo la cabecera: "Estás como visitante. Inicia sesión en VMC para guardar tu conversación…" con **Entendido**. Al cerrarla no vuelve en esa pestaña (sí en una pestaña nueva). Como autenticado no aparece |
 
 ### 3.2 · Cambio de tema
 
@@ -212,7 +229,7 @@ artículo correcto entre los descartados.
 |---|---|---|
 | C7 | `¿Cuánto es la comisión?` → `¿Y los SubasCoins?` → `Volviendo a la comisión, ¿cuándo se paga?` | Cada turno responde **su** tema. El tercero no debe contestar de SubasCoins |
 | C8 | `¿Qué es SubasPass?` → `gracias` → `¿cómo hago una recarga?` | El "gracias" es trivial (fijo, coste 0) y no rompe el hilo |
-| C9 | `¿Cómo me registro y cuánto es la comisión?` | Dos preguntas en un mensaje: responde la primera y ofrece seguir con la segunda (D-025) |
+| C9 | `¿Cómo me registro y cuánto es la comisión?` | Dos preguntas en un mensaje: responde **las dos** si el RAG trajo evidencia de ambas; si solo trajo una, responde esa y dice que la otra la confirma un asesor (D-030). Ya no "ofrece seguir con la segunda" |
 
 ### 3.3 · Flujos guiados (D-028)
 
