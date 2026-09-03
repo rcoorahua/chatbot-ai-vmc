@@ -234,6 +234,35 @@ def test_la_evidencia_viaja_en_el_prompt_de_sistema(fake_llm):
     assert "FRAGMENTO UNO" in system and "FRAGMENTO DOS" in system
     # El bloque estable va primero para que el caching de prefijo sirva de algo.
     assert system.startswith(prompts.WRITER_SYSTEM_PROMPT)
+    assert prompts.WRITER_USER_ANONYMOUS not in system, "sin user_state no hay bloque"
+    assert prompts.WRITER_USER_AUTHENTICATED not in system
+
+
+def test_el_estado_de_cuenta_entra_al_final_del_prompt(fake_llm):
+    """D-030: la sesion sabe si el usuario tiene cuenta; el redactor lo recibe en <usuario>
+    DESPUES del contexto, para no invalidar el prefijo cacheable."""
+    client = fake_llm(text="respuesta")
+
+    writer.write_answer(
+        "pregunta", ["EVIDENCIA"], user_state=prompts.WRITER_USER_ANONYMOUS
+    )
+
+    system = client.calls[0]["system"]
+    assert system.startswith(prompts.WRITER_SYSTEM_PROMPT)
+    assert prompts.WRITER_USER_ANONYMOUS in system
+    assert system.index("EVIDENCIA") < system.index(prompts.WRITER_USER_ANONYMOUS)
+
+
+def test_el_prompt_del_redactor_no_dosifica_ni_pide_enlaces():
+    """Lo que D-030 retiro del prompt no puede volver sin pasar por aqui: ni "un paso a la
+    vez" (costaba una llamada por cada "si"), ni "incluye el enlace" (va como chip), ni
+    preguntar si tiene cuenta (lo dice <usuario>)."""
+    prompt = " ".join(prompts.WRITER_SYSTEM_PROMPT.lower().split())
+    assert "un paso a la vez" not in prompt
+    assert "incluyelo" not in prompt
+    assert "respuesta completa" in prompt
+    assert "no escribes enlaces" in prompt
+    assert "nunca le preguntas si ya tiene cuenta" in prompt
 
 
 def test_la_ventana_de_conversacion_se_acota(fake_llm):

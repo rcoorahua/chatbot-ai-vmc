@@ -62,11 +62,17 @@ def write_answer(
     message: str,
     context_fragments: list[str],
     history: list[dict[str, str]] | None = None,
+    *,
+    user_state: str | None = None,
 ) -> WriterResult:
     """Redacta la respuesta a partir de la evidencia recuperada.
 
     `context_fragments` son los textos ya recuperados (chunks de Pinecone, resultado de HERALD).
     Una lista vacia no es un caso de error: es la señal de que no hay con que responder.
+
+    `user_state` es lo que la sesion sabe del usuario (D-030: `prompts.WRITER_USER_*`, tiene
+    cuenta o es anonimo) y entra al final del system prompt, despues del contexto, para que
+    el bloque estable siga cacheable. Sin el, el prompt no trae bloque <usuario>.
     """
     fragments = [
         # Los angulos se neutralizan porque el fragmento va DENTRO del system prompt: un
@@ -86,6 +92,10 @@ def write_answer(
     system_prompt = prompts.WRITER_SYSTEM_PROMPT + prompts.WRITER_CONTEXT_TEMPLATE.format(
         context=_build_context(fragments)
     )
+    if user_state:
+        system_prompt += prompts.WRITER_USER_TEMPLATE.format(
+            user_state=guardrails.neutralize_tags(user_state)
+        )
 
     try:
         response = get_client().generate(
