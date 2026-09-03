@@ -40,13 +40,6 @@ export const SYSTEM_EVENT_LABEL: Record<string, string> = {
   CONVERSATION_CLOSED: "Conversación finalizada",
 };
 
-/**
- * "Ahora" fijo para el mock (en vez de Date.now(), impuro y con reglas de purity de React
- * en contra de calcularlo en render/efecto). Los timestamps de mock-data.ts son anteriores
- * a este instante para que los tiempos de espera se vean creíbles.
- */
-export const MOCK_NOW_MS = new Date("2026-08-27T14:20:00Z").getTime();
-
 export function formatWaitTime(fromIso: string, nowMs: number): string {
   const minutes = Math.max(0, Math.round((nowMs - new Date(fromIso).getTime()) / 60_000));
   if (minutes < 60) return `${minutes} min`;
