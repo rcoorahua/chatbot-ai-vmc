@@ -837,8 +837,12 @@
       // existe (solo se guardaban los que superaban el umbral) y ausente = relevante.
       const used = fragments.filter((f) => f.relevant !== false).length;
       const discarded = fragments.length - used;
+      const siblings = fragments.filter((f) => f.sibling).length;
       const threshold = Number(execution.rag_min_score) || 0;
       let title = "RAG · " + used + (used === 1 ? " usado" : " usados");
+      // Los "por tema" entraron por ser del mismo articulo que uno sobre el umbral, no por
+      // su score (RAG_SIBLING_MARGIN): se cuentan aparte para poder juzgar la regla.
+      if (siblings) title += " (" + siblings + " por tema)";
       if (discarded) {
         title += " · " + discarded + " bajo el umbral" + (threshold ? " (" + threshold.toFixed(2) + ")" : "");
       }
@@ -860,6 +864,7 @@
         }
         row.appendChild(topic);
         if (isDiscarded) row.appendChild(node("span", "rag-discarded-tag", "descartado"));
+        else if (fragment.sibling) row.appendChild(node("span", "rag-discarded-tag", "por tema"));
         const score = Number(fragment.score) || 0;
         const level = isDiscarded ? "off" : score >= 0.9 ? "high" : score >= 0.86 ? "mid" : "low";
         row.appendChild(node("span", "rag-score " + level, score.toFixed(3)));

@@ -497,6 +497,14 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   es el respaldo para cuando el clasificador falla o Gemini no responde (`classify()` cae a
   `FAQ` ante un `LLMError`). Re-verificar con `python -m scripts.helpcenter_upload --verify`
   si el corpus crece o si `RB-009` falla en producción.
+- **Expansión por tema (2026-09-03, `RAG_SIBLING_MARGIN=0.04`)**: el umbral decide solo si
+  HAY evidencia; con un fragmento por encima, los del **mismo artículo** hasta 0.04 por debajo
+  entran también (marcados `sibling` en AIUsage y "por tema" en la consola), hasta llenar
+  `RAG_TOP_K`; se piden `top_k + 4` hits como cantera. Es el patrón *parent document /
+  small-to-big*. Motivo: "hola como me **regitro**" dejó sobre el umbral dos fragmentos del
+  artículo de registro que no explicaban el registro y a 0.006 por debajo el que sí; el bot
+  preguntó "¿ya tienes cuenta?". Un fragmento de OTRO artículo sigue fuera aunque esté a un
+  pelo: no baja el umbral, no deja entrar temas ajenos.
 - Los ids de chunk son estables (`hc-<artículo>-<pregunta>-<huella>`): con ids posicionales, una
   pregunta nueva corre a todas las siguientes y el upsert sobrescribe cada vector con el texto de
   otro, sin fallar. El upsert es aditivo: para un refresco completo, `--replace`.

@@ -44,6 +44,9 @@ class RagFragmentOut(BaseModel):
     score: float
     source_url: str = ""
     relevant: bool = True
+    # Entro como evidencia por ser del mismo articulo que uno sobre el umbral (expansion por
+    # tema, `RAG_SIBLING_MARGIN`), no por su propio score.
+    sibling: bool = False
 
 
 class ExecutionOut(BaseModel):

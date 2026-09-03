@@ -126,6 +126,9 @@ def record_execution(
                 # Filas viejas no traen el flag; ausente = era relevante (antes solo se
                 # guardaban los que superaban el umbral).
                 "relevant": bool(fragment.get("relevant", True)),
+                # Entro por expansion de tema (mismo articulo que uno sobre el umbral), no
+                # por su propio score: la consola lo marca para juzgar la regla.
+                "sibling": bool(fragment.get("sibling", False)),
             }
             for fragment in rag_fragments
         ]

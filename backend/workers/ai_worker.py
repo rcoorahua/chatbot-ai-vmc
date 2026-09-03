@@ -322,6 +322,7 @@ def _answer_faq(
             "conversation_id": conversation.conversation_id,
             "message_id": message.message_id,
             "results": len(fragments),
+            "siblings": len(retrieved.siblings),
             "discarded": len(retrieved.discarded),
             "threshold": retrieved.threshold,
             # Si la regla de continuidad intervino, se ve aqui sin reproducir la charla.
@@ -371,7 +372,8 @@ def _answer_faq(
                 "topic": f.topic,
                 "score": f.score,
                 "source_url": f.source_url,
-                "relevant": f.score >= retrieved.threshold,
+                "relevant": f in retrieved.relevant,
+                "sibling": f.sibling,
             }
             for f in retrieved.all_fragments
         ],
