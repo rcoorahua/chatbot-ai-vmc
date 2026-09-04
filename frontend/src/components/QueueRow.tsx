@@ -11,6 +11,19 @@ const URGENCY_COLOR: Record<ConversationStatus, string> = {
 };
 
 /**
+ * `closed_by` solo distingue ADVISOR de todo lo demás (D-029): "AUTO" y `null`/`undefined`
+ * (conversaciones cerradas antes de que el campo existiera) caen a "Subastín" — ningún otro
+ * actor cierra una conversación hoy. Mismos colores que el dot de estado (morado = bot, verde
+ * azulado = asesor) para que la cola no invente una tercera paleta. Panel de KAMs: "asesor",
+ * no "humano" — la palabra suena a etiqueta de laboratorio, no a quién los usa.
+ */
+function closedByTag(closedBy: Conversation["closed_by"]): { label: string; color: string } {
+  return closedBy === "ADVISOR"
+    ? { label: "Cerrado por asesor", color: URGENCY_COLOR.IN_ATTENTION }
+    : { label: "Cerrado por Subastín", color: URGENCY_COLOR.BOT_ATTENDING };
+}
+
+/**
  * Fila compacta de la cola del cockpit (RF-029/RF-032 condensados). Tomar un
  * caso pasa por abrir el hilo, no por esta fila — la fila solo triage.
  */
@@ -61,6 +74,18 @@ export default function QueueRow({
         <span className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-neutral-400">
           {mostUrgent ? (
             <span className="font-bold text-[#9A4A0F]">Más urgente</span>
+          ) : conversation.status === "CLOSED" ? (
+            (() => {
+              const tag = closedByTag(conversation.closed_by);
+              return (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                  style={{ background: `${tag.color}1A`, color: tag.color }}
+                >
+                  {tag.label}
+                </span>
+              );
+            })()
           ) : (
             isMine ? "Tú" : STATUS_LABEL[conversation.status]
           )}
