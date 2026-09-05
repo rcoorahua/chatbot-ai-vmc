@@ -17,7 +17,8 @@
   <p>Corre sola contra la API local (<code>:8000</code>) y escribe el resultado abajo. Sin
     dependencias: sirve para verificar a mano o desde Chrome headless
     (<code>chrome --headless=new --dump-dom http://localhost:8080/selftest.html</code>).
-    No manda mensajes al bot: no gasta llamadas de IA.</p>
+    No gasta llamadas de IA: el unico mensaje que manda (el visitante pidiendo asesor, D-031)
+    se resuelve por reglas.</p>
   <ul id="checks"></ul>
   <pre id="results">(corriendo…)</pre>
 
@@ -120,15 +121,6 @@
       Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
       el.dispatchEvent(new Event("input", { bubbles: true }));
     };
-    const campos = () => Array.from(formCard().querySelectorAll("input, textarea"));
-    if (formCard() && !formCard().querySelector("textarea")) {
-      // Paso 1 (anonimo): nombre y correo antes de poder avanzar al detalle.
-      const inputs = campos();
-      escribir(inputs[0], "Selftest");
-      if (inputs[1]) escribir(inputs[1], "selftest@example.test");
-      formCard().querySelector(".form-actions button[type=submit]").click();
-      await until(() => formCard() && formCard().querySelector("textarea"), 4000);
-    }
     const detalle = formCard() && formCard().querySelector("textarea");
     check("el formulario llega al campo de detalle", Boolean(detalle));
     if (detalle) escribir(detalle, "TEXTO-DEL-FORMULARIO");
@@ -168,6 +160,14 @@
     window.Subastin.setIdentity(null);
     check("logout deja sesion anonima (panel abierto)", await until(() => session() && session().userType === "ANONYMOUS"));
     check("el anonimo no ve mensajes de B", !bubbles().some((t) => t.includes("Beto Selftest")));
+    // ── 3b. Visitante = solo FAQ (D-031): franja con enlace a crear cuenta y badge sin formulario ──
+    const signupLink = () => shadow() && shadow().querySelector(".banner-anon a.link");
+    check("la franja del visitante trae el enlace a crear cuenta", await until(() => signupLink() && signupLink().href === session().signupUrl), signupLink() && signupLink().href);
+    await until(() => badge() && !badge().disabled);
+    badge().click();
+    // Sin formulario: el badge manda "Quiero hablar con un asesor" al bot (se resuelve por
+    // reglas, sin IA; aqui el worker ni corre, el mensaje solo queda en la cola).
+    check("el badge del visitante no abre formulario", await until(() => bubbles().some((t) => t.includes("Quiero hablar con un asesor")), 4000) && !formCard());
 
     // ── 4. JWT invalido: error de identidad, sin conservar lo anterior ──
     window.Subastin.setIdentity(jwtBad);

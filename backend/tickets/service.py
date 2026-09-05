@@ -27,7 +27,6 @@ from backend.conversations.models import (
     Conversation,
     ConversationStatus,
     MessageType,
-    UserType,
 )
 from backend.core.clock import utc_now_iso
 from backend.tickets import repository
@@ -101,9 +100,6 @@ def open_ticket(conversation: Conversation, *, description: str | None = None) -
         user_type=str(conversation.user_type),
         user_id=conversation.user_id,
         user_email=conversation.user_email,
-        contact_name=conversation.contact_name,
-        contact_email=conversation.contact_email,
-        contact_phone=conversation.contact_phone,
         status=TicketStatus.PENDING,
         problem_type=suggestion.problem_type,
         category=spec.category,
@@ -251,16 +247,9 @@ def close(ticket: Ticket, *, advisor_id: str, resolution: str | None = None) -> 
     return updated
 
 
-def anonymous(ticket: Ticket) -> bool:
-    """El caso lo abrió un visitante: el asesor solo puede ubicarlo por el contacto del
-    formulario (RF-003), no por su cuenta VMC."""
-    return ticket.user_type == str(UserType.ANONYMOUS)
-
-
 __all__ = [
     "Tag",
     "TicketAlreadyClosed",
-    "anonymous",
     "assign",
     "close",
     "ensure_ticket",

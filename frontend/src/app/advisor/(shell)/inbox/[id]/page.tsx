@@ -278,7 +278,7 @@ export default function ConversationDetailPage() {
           <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
           <dl className="mt-2.5 space-y-1.5 text-sm">
             <Field label="Nombre" value={conversation.user_name} />
-            <Field label="Correo" value={conversation.user_email ?? conversation.contact_email ?? null} />
+            <Field label="Correo" value={conversation.user_email} />
             <Field label="Empresa" value={conversation.user_company} />
             <Field label="ID VMC" value={conversation.user_id} />
           </dl>

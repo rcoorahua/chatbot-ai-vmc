@@ -1,14 +1,14 @@
 """Orquestacion del dominio conversacion (SIN llamar integraciones — regla de backend/__init__.py).
 
-Reglas de negocio (CLAUDE.md; D-029 cerrada el 2026-09-02 revisa D-002/D-003/D-017/D-019):
+Reglas de negocio (CLAUDE.md; D-029 cerrada el 2026-09-02, revisada por D-031 el 2026-09-05):
 - Autenticado: UN hilo permanente con el bot (kind=THREAD, id determinista, D-003) y hasta N
   CASOS abiertos (kind=CASE) que nacen del formulario de handoff. Escalar no apaga el hilo:
   el caso espera al asesor aparte y el bot sigue respondiendo en el hilo.
-- Anonimo: UNA conversacion por sesion (D-002/D-018), sin cuenta no se recupera (RF-004).
-  Puede pedir asesor dejando nombre y correo en el formulario (RF-003): la derivacion es en
-  el sitio (esa conversacion pasa a PENDING_ADVISOR) y caduca por TTL.
-- CLOSED es definitivo y de solo lectura (caso o conversacion anonima); el hilo del
-  autenticado nunca se cierra: si un asesor lo tomo y lo cierra, vuelve al bot (D-023).
+- Anonimo: UNA conversacion por sesion (D-002/D-018), sin cuenta no se recupera (RF-004) y
+  caduca por TTL. Solo FAQ: no deriva ni deja datos; para un asesor se le manda a crear
+  cuenta (D-031).
+- CLOSED es definitivo y de solo lectura y solo lo alcanza un CASO; un hilo (autenticado o
+  anonimo) nunca se cierra: si un asesor lo tomo y lo cierra, vuelve al bot (D-023).
 - RF-014: el largo del mensaje se limita por configuracion (D-005).
 
 Lo que NO hace: encolar el job de IA. Eso lo compone la entrada (api/routers/chat.py) con
@@ -262,91 +262,40 @@ def latest_messages(
 
 
 def handoff_allowed(conversation: Conversation) -> bool:
-    """Desde esta conversacion se puede pedir un asesor: es el hilo con el bot (no un caso),
-    el bot esta atendiendo y nadie la tomo. La misma regla decide el 409 de POST /handoff y
-    si el widget puede abrir el formulario desde su badge (GET /handoff/form)."""
+    """Desde esta conversacion se puede pedir un asesor: es el hilo de un AUTENTICADO (D-031:
+    el anonimo no deriva), el bot esta atendiendo y nadie la tomo. La misma regla decide el
+    409 de POST /handoff y si el widget puede abrir el formulario desde su badge
+    (GET /handoff/form)."""
     return (
-        conversation.kind == ConversationKind.THREAD
+        conversation.user_type == UserType.AUTHENTICATED
+        and conversation.kind == ConversationKind.THREAD
         and conversation.status == ConversationStatus.BOT_ATTENDING
         and not conversation.assigned_advisor_id
     )
 
 
 def handoff_form_for(conversation: Conversation) -> dict:
-    """La tarjeta de formulario que le corresponde a esta conversacion (D-029): al anonimo se
-    le piden nombre y correo; al autenticado solo el correo si el JWT de VMC no lo trajo.
-    Es la misma spec que ofrece el bot; el badge del widget la pide por aqui (D-030)."""
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    return forms.handoff_form_spec(
-        anonymous=anonymous, needs_email=not anonymous and not conversation.user_email
-    )
+    """La tarjeta de formulario que le corresponde a esta conversacion (D-029): el correo
+    solo si el JWT de VMC no lo trajo. Es la misma spec que ofrece el bot; el badge del
+    widget la pide por aqui (D-030)."""
+    return forms.handoff_form_spec(needs_email=not conversation.user_email)
 
 
 def request_handoff(
-    conversation: Conversation, form: forms.HandoffForm, *, confirmation: str
+    thread: Conversation, form: forms.HandoffForm, *, confirmation: str
 ) -> Conversation:
-    """El usuario envio el formulario de handoff (RF-022 / RF-024; RF-003 para el anonimo).
-
-    Anonimo: su unica conversacion se deriva en el sitio (PENDING_ADVISOR, bot apagado) con
-    el asunto y el contacto guardados en la fila. Autenticado: se abre un CASO nuevo con el
-    formulario y una transcripcion del hilo; el hilo sigue con el bot encendido.
-    `confirmation` es el texto fijo del bot (lo trae la entrada: el dominio no importa
-    prompts). Devuelve la conversacion que espera al asesor (la misma o el caso).
+    """El usuario autenticado envio el formulario de handoff (RF-022 / RF-024): se abre un
+    CASO nuevo con el formulario y una transcripcion del hilo; el hilo sigue con el bot
+    encendido. `confirmation` es el texto fijo del bot (lo trae la entrada: el dominio no
+    importa prompts). Devuelve el caso, que ya espera al asesor.
     """
-    if not handoff_allowed(conversation):
-        raise HandoffNotAllowed(conversation.conversation_id)
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    needs_email = not anonymous and not conversation.user_email
+    if not handoff_allowed(thread):
+        raise HandoffNotAllowed(thread.conversation_id)
     clean = forms.validate_handoff_form(
         form,
-        anonymous=anonymous,
-        needs_email=needs_email,
+        needs_email=not thread.user_email,
         max_detail_chars=get_settings().max_message_chars,
     )
-    if anonymous:
-        return _handoff_in_place(conversation, clean, confirmation=confirmation)
-    return _open_case(conversation, clean, confirmation=confirmation)
-
-
-def _handoff_in_place(
-    conversation: Conversation, clean: forms.HandoffForm, *, confirmation: str
-) -> Conversation:
-    t0, t1, t2 = _stamps(3)
-    ttl = conversation.expires_at
-    # DETAILS.md §4.5 / Paso 6: el CAS (`start_handoff`) va PRIMERO. Antes se escribia el
-    # FORM_RESPONSE (con el contacto del anonimo, RF-003) sin haber ganado la carrera todavia
-    # — si `start_handoff` perdia (alguien mas ya la derivo/asigno), quedaba un mensaje con PII
-    # huerfano en una conversacion que nunca transiciono. Nada se persiste hasta ganarla.
-    note = _system_note(conversation.conversation_id, SystemEvent.HANDOFF_REQUESTED,
-                        {"reason": "user_form"}, created_at=t0, expires_at=ttl)
-    started = repository.start_handoff(
-        conversation.conversation_id,
-        reason="user_form",
-        at=t0,
-        note=note,
-        title=clean.subject,
-        contact={
-            "contact_name": clean.name or "",
-            "contact_email": clean.email or "",
-            "contact_phone": clean.phone or "",
-        },
-    )
-    if not started:
-        raise HandoffNotAllowed(conversation.conversation_id)
-    response = _form_response_message(conversation.conversation_id, clean, created_at=t1,
-                                      transcript=None, expires_at=ttl)
-    # Cuenta como no leido: desde aqui quien lee es el asesor (RF-035).
-    repository.put_message(response, count_as_unread=True)
-    post_bot_message(conversation.conversation_id, confirmation, created_at=t2, expires_at=ttl)
-    current = repository.get_conversation(conversation.conversation_id)
-    if current is None:  # pragma: no cover
-        raise repository.ConversationNotFound(conversation.conversation_id)
-    return current
-
-
-def _open_case(
-    thread: Conversation, clean: forms.HandoffForm, *, confirmation: str
-) -> Conversation:
     # El limite se hace cumplir de verdad dentro de create_conversation_with_messages
     # (contador condicional en la MISMA transaccion que crea el caso, DETAILS.md §4.5 /
     # Paso 6) — chequearlo aqui antes con list_open_cases (GSI, eventualmente consistente)
@@ -358,7 +307,7 @@ def _open_case(
     opened = _system_note(case_id, SystemEvent.CASE_OPENED,
                           {"source_conversation_id": thread.conversation_id}, created_at=t0)
     response = _form_response_message(case_id, clean, created_at=t1,
-                                      transcript=_transcript(thread), expires_at=None)
+                                      transcript=_transcript(thread))
     confirm = _bot_message(case_id, confirmation, created_at=t2)
     case = Conversation(
         conversation_id=case_id,
@@ -371,7 +320,6 @@ def _open_case(
         user_email=thread.user_email or clean.email,
         user_company=thread.user_company,
         title=clean.subject,
-        contact_email=clean.email,
         source_conversation_id=thread.conversation_id,
         message_count=3,
         unread_count=1,
@@ -412,18 +360,12 @@ def _transcript(thread: Conversation) -> list[dict]:
 
 
 def _form_response_message(
-    conversation_id: str,
-    clean: forms.HandoffForm,
-    *,
-    created_at: str,
-    transcript: list[dict] | None,
-    expires_at: int | None,
+    conversation_id: str, clean: forms.HandoffForm, *, created_at: str, transcript: list[dict]
 ) -> Message:
     message_id = str(uuid.uuid4())
     values = {
         k: v
-        for k, v in (("subject", clean.subject), ("detail", clean.detail), ("name", clean.name),
-                     ("email", clean.email), ("phone", clean.phone))
+        for k, v in (("subject", clean.subject), ("detail", clean.detail), ("email", clean.email))
         if v
     }
     metadata: dict = {
@@ -446,7 +388,6 @@ def _form_response_message(
         content=forms.summary_text(clean),
         metadata=metadata,
         created_at=created_at,
-        expires_at=expires_at,
     )
 
 
@@ -708,42 +649,36 @@ def send_wait_message_once(conversation: Conversation, text: str) -> bool:
 
 
 def returns_to_bot_on_close(conversation: Conversation) -> bool:
-    """El hilo permanente del autenticado no se cierra (D-003): cerrarlo lo devuelve al bot.
-    Un caso o la conversacion anonima si terminan CLOSED (D-029)."""
-    return (
-        conversation.kind == ConversationKind.THREAD
-        and conversation.user_type == UserType.AUTHENTICATED
-    )
+    """Un hilo con el bot no se cierra (D-003; el anonimo tampoco, D-031: lo que lo termina
+    es cerrar la pestaña): cerrarlo lo devuelve al bot. Solo un caso termina CLOSED (D-029)."""
+    return conversation.kind == ConversationKind.THREAD
 
 
 def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
     """Cierre por el asesor (RF-031). Dos destinos segun `returns_to_bot_on_close`:
-    - hilo del autenticado: nota TICKET_CLOSED y vuelve a BOT_ATTENDING con el bot encendido;
-    - caso o conversacion anonima: nota CONVERSATION_CLOSED y queda CLOSED, solo lectura.
+    - hilo (tomado por intervencion proactiva, D-022): nota TICKET_CLOSED y vuelve a
+      BOT_ATTENDING con el bot encendido;
+    - caso: nota CONVERSATION_CLOSED y queda CLOSED, solo lectura; libera su cupo de casos.
     Solo el asesor asignado cierra."""
     if conversation.assigned_advisor_id != advisor_id:
         raise NotAssignedToAdvisor(conversation.conversation_id)
     if returns_to_bot_on_close(conversation):
         note = _system_note(
-            conversation.conversation_id, SystemEvent.TICKET_CLOSED, {"advisor_id": advisor_id}
+            conversation.conversation_id, SystemEvent.TICKET_CLOSED, {"advisor_id": advisor_id},
+            expires_at=conversation.expires_at,
         )
         done = repository.release_advisor(conversation.conversation_id, advisor_id, note=note)
     else:
         note = _system_note(
             conversation.conversation_id, SystemEvent.CONVERSATION_CLOSED,
-            {"advisor_id": advisor_id}, expires_at=conversation.expires_at,
-        )
-        # Solo un CASO conto para OPEN_CASES#USER#<id> al abrirse (Paso 6); la conversacion
-        # anonima pasa por aqui tambien (no returns_to_bot_on_close) pero nunca conto.
-        release_for = (
-            conversation.user_id if conversation.kind == ConversationKind.CASE else None
+            {"advisor_id": advisor_id},
         )
         done = repository.close_conversation(
             conversation.conversation_id,
             advisor_id,
             note=note,
             closed_by=str(ClosedBy.ADVISOR),
-            release_case_slot_for_user=release_for,
+            release_case_slot_for_user=conversation.user_id,
         )
     if not done:
         raise NotAssignedToAdvisor(conversation.conversation_id)

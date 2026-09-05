@@ -18,11 +18,10 @@ class ConversationStatus(StrEnum):
     BOT_ATTENDING = "BOT_ATTENDING"
     PENDING_ADVISOR = "PENDING_ADVISOR"
     IN_ATTENTION = "IN_ATTENTION"
-    # D-029 (2026-09-02): CLOSED es el estado final de un CASO (autenticado) y de la
-    # conversacion anonima cuando el asesor la cierra. Una conversacion cerrada es de solo
-    # lectura: el widget ofrece volver al hilo del bot (autenticado) o abrir una sesion nueva
-    # (anonimo). El hilo permanente del autenticado (kind=THREAD) nunca pasa a CLOSED: si un
-    # asesor lo tomo (D-022) y lo cierra, vuelve a BOT_ATTENDING con la nota `TICKET_CLOSED`.
+    # D-029 (2026-09-02): CLOSED es el estado final de un CASO cuando el asesor lo cierra; es
+    # de solo lectura y el widget ofrece volver al hilo del bot. Un hilo (kind=THREAD) nunca
+    # pasa a CLOSED: si un asesor lo tomo (D-022) y lo cierra, vuelve a BOT_ATTENDING con la
+    # nota `TICKET_CLOSED`.
     CLOSED = "CLOSED"
 
 
@@ -33,7 +32,7 @@ class ConversationKind(StrEnum):
             D-003) y unico por sesion para el anonimo (D-002/D-018).
     CASE    un caso para asesor, creado por el formulario de handoff de un usuario
             autenticado. Nace PENDING_ADVISOR con el bot apagado y termina CLOSED. El anonimo
-            no crea casos: su unica conversacion se deriva en el sitio (RF-003 con correo).
+            no crea casos ni deriva (D-031): para un asesor se le manda a crear cuenta.
     """
 
     THREAD = "THREAD"
@@ -119,13 +118,8 @@ class Conversation(_DynamoModel):
     user_email: str | None = None
     user_company: str | None = None
     assigned_advisor_id: str | None = None
-    # D-029: asunto del caso (lo escribe el usuario en el formulario) y, para el anonimo, el
-    # contacto que dejo para que el asesor pueda buscarlo fuera del chat (RF-003). Datos
-    # personales: nunca van a logs (core/observability.py) y solo los ve el asesor.
+    # D-029: asunto del caso (lo escribe el usuario en el formulario).
     title: str | None = None
-    contact_name: str | None = None
-    contact_email: str | None = None
-    contact_phone: str | None = None
     # Hilo del que salio el caso (autenticado). El asesor lo tiene como contexto ademas de la
     # transcripcion que viaja en el FORM_RESPONSE.
     source_conversation_id: str | None = None

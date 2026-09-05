@@ -9,7 +9,7 @@ atiende desde su propia bandeja.
 
 | Quién | Qué obtiene |
 |---|---|
-| **Usuario anónimo** | Abre el chat sin login ni datos; FAQ y catálogo automáticos. Para hablar con un asesor tiene que iniciar sesión en VMC (D-002): sin identidad no hay forma de continuar un ticket días después |
+| **Usuario anónimo** | Abre el chat sin login ni datos; FAQ y catálogo automáticos, y su conversación dura lo que la pestaña. Para hablar con un asesor tiene que crear una cuenta gratis en VMC (D-002/D-031): el bot se lo dice y le da el botón |
 | **Usuario autenticado en VMC** | Lo mismo, más saludo por nombre y **una conversación permanente** asociada a su identidad VMC; los tickets son el historial y se cierran dentro del hilo (D-003) |
 | **Asesor / CSM** | Bandeja de pendientes, "Tomar conversación" (atómica), hilo con contexto del usuario, respuesta con texto e imágenes, cierre y dashboard operativo |
 

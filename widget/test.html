@@ -357,7 +357,7 @@
           </div>
         </div>
         <p class="mode-hint" id="anon-hint">El visitante anónimo no manda identidad: sesión de
-          pestaña (24 h) y solo FAQ — sin handoff ni ticket (D-002).</p>
+          pestaña (24 h) y solo FAQ — pedir asesor lo manda a crear cuenta (D-031).</p>
         <div class="field">
           <label for="api">URL de la API</label>
           <input type="text" id="api" name="api" value="http://localhost:8000">
@@ -619,7 +619,7 @@
     trivial_repeat_silent: "Repetido: silencio",
     fixed_other: "Fuera de dominio (fijo)",
     fixed_catalog: "Catálogo (fijo, D-011)",
-    fixed_anonymous_advisor: "Anónimo pide asesor (fijo)",
+    fixed_model_unavailable: "Modelo caído (fijo)",
     model: "Modelo",
     rules: "Reglas",
     fallback: "Fallback (sin modelo)",
@@ -698,6 +698,7 @@
     if (SOURCE_LABELS[raw]) return SOURCE_LABELS[raw];
     if (raw.startsWith("guardrail:")) return "Guardrail · " + raw.slice("guardrail:".length).replace(/:/g, " · ");
     if (raw.startsWith("handoff:")) return "Handoff · " + raw.slice("handoff:".length);
+    if (raw.startsWith("signup:")) return "Anónimo → crear cuenta · " + raw.slice("signup:".length);
     if (raw.startsWith("flow:")) return "Flujo · " + raw.slice("flow:".length).replace(/:/g, " · ");
     return raw || "—";
   }

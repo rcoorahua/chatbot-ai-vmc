@@ -98,11 +98,11 @@ BUSINESS_ENV = {
     "AI_QUOTA_AUTH_PER_HOUR": "20",
     "AI_QUOTA_AUTH_PER_DAY": "40",
     "MAX_OPEN_CASES_PER_USER": "5",
-    "ANON_HANDOFFS_PER_IP_PER_DAY": "5",
-    # DETAILS.md §4.9/Paso 11: mas holgado que el handoff (crear una sesion no manda PII ni
-    # notifica a un asesor), pero acota al script que llama POST /chat/sessions en bucle.
+    # DETAILS.md §4.9/Paso 11: acota al script que llama POST /chat/sessions en bucle.
     "ANON_SESSIONS_PER_IP_PER_DAY": "30",
     "ANONYMOUS_CONVERSATION_TTL_DAYS": "30",
+    # D-031: a donde se manda al anonimo que pide asesor. MOCK hasta que VMC confirme la URL.
+    "VMC_SIGNUP_URL": "https://www.vmcsubastas.com/registro",
     "MAX_IMAGE_BYTES": str(5 * 1024 * 1024),
     "MAX_IMAGES_PER_MESSAGE": "3",
     "MAX_IMAGES_PER_HOUR": "20",

@@ -230,8 +230,8 @@ corpus, y todas sus preguntas empiezan igual: candidato natural a desambiguar co
 Lo que SÍ limpia el flujo: resolver el paso, handoff, cierre del ticket, guardrail de
 seguridad, o el vencimiento de 24 h.
 
-**Anónimos:** los flujos funcionan igual (son FAQ guiadas, no requieren identidad). El
-handoff sigue las reglas de D-002.
+**Anónimos:** los flujos funcionan igual (son FAQ guiadas, no requieren identidad). Sin
+evidencia al resolver un paso no se le ofrece asesor: recibe el botón de crear cuenta (D-031).
 
 ## 5. Qué NO es esto
 
