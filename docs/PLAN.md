@@ -19,7 +19,7 @@ Subastín reemplaza a Intercom como plataforma propia de atención de **VMC**:
 - **Canal único del MVP:** chat web embebido en VMC (WhatsApp/Kapso queda fuera; sin timeline
   omnicanal).
 - **Usuarios:** anónimos (sin datos, sin historial persistente — RF-002/004; solo FAQ, sin
-  handoff — D-002) y autenticados (identidad validada por VMC — RF-005; **D-001 cerrada**: JWT
+  handoff: para un asesor se les manda a crear cuenta — D-002/D-031) y autenticados (identidad validada por VMC — RF-005; **D-001 cerrada**: JWT
   firmado por el servidor de VMC, ver el flujo de sesión en §2).
 - **Automatización:** clasificación de intención (RF-015; **Gemini flash-lite** por TD-008, Haiku
   como plan B), FAQ con **RAG sobre
@@ -108,7 +108,8 @@ DynamoDB**, definida con **CDK v2 en Python**, escala a cero y con dev 100% loca
    (D-020), clasifica (`agent.classifier`, `FAQ`/`CATALOG`/`ADVISOR`/`OTHER` — RF-016), según
    intención consulta Pinecone o HERALD, redacta (`agent.writer`, o inicia handoff si no hay
    evidencia — RF-018), persiste la respuesta, registra `AIUsage`, y si hay handoff encola
-   notificación Slack. Anónimo + `ADVISOR` = texto fijo invitando a iniciar sesión (D-002).
+   notificación Slack. Anónimo + `ADVISOR` (o sin evidencia) = texto fijo con el botón de
+   crear cuenta (`interaction.type = LINKS`, D-031).
 4. El widget sondea mensajes nuevos (`GET …/messages?after=<message_key>`) y muestra la
    respuesta. **Implementado.**
 
@@ -238,8 +239,8 @@ del modelo. Ajustes detectados (agregar al modelo antes de crear tablas):
     condicional, sin consultar GSI1 antes de crear (dos pestañas a la vez no crean dos). GSI1
     sigue sirviendo para el historial que ve el asesor (RF-012).
 11. **D-029 (2026-09-02): hilo + casos sin GSI nuevos** — `Conversations` gana `kind`
-    (`THREAD`/`CASE`), `title`, `contact_name/email/phone`, `source_conversation_id` y
-    `closed_by`; GSI1 (`user_id`/`updated_at`) lista el hilo y los casos del usuario y, con
+    (`THREAD`/`CASE`), `title`, `source_conversation_id` y `closed_by` (los `contact_*` del
+    anónimo se retiraron con D-031); GSI1 (`user_id`/`updated_at`) lista el hilo y los casos del usuario y, con
     filtro, cuenta los casos abiertos para el tope. `Messages` gana el tipo `FORM_RESPONSE`
     (resumen legible en `content`, valores y transcripción del hilo en `metadata`). La
     conversación anónima y sus mensajes llevan `expires_at` (TTL, `ANONYMOUS_CONVERSATION_TTL_DAYS`).
@@ -494,6 +495,13 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   `POST /chat/conversations/{id}/handoff`. Un caso o la anónima cerrados quedan `CLOSED` y de
   solo lectura; el hilo del autenticado vuelve al bot (D-023). Sin GSI nuevos. Detalle y
   código en [CLAUDE.md](../CLAUDE.md).
+- **De negocio cerrada (2026-09-05, Aaron): D-031 — anónimo solo FAQ; asesor = crear
+  cuenta.** Revisa la parte anónima de D-029: el visitante tiene una conversación por pestaña
+  y no deriva ni deja datos; pedir asesor, sin evidencia o cuota agotada responden fijo con el
+  botón **Crear cuenta gratis** (URL mock `VMC_SIGNUP_URL`, también en `links.signup` de la
+  sesión). Se retiran el formulario de contacto, el handoff en el sitio, el `CLOSED` de la
+  anónima, el tope de handoffs por IP y los campos `contact_*`; el formulario del autenticado
+  queda en un solo paso. Detalle en [CLAUDE.md](../CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-008** (taxonomía tickets), **D-010** (campos de usuario),

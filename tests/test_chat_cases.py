@@ -1,24 +1,20 @@
-"""Casos y handoff con formulario (D-029, cerrada 2026-09-02) — RF-003, RF-022, RF-024,
-RF-025, RF-031, RF-035, RNF-005.
+"""Casos y handoff con formulario (D-029, cerrada 2026-09-02; D-031 el 2026-09-05) — RF-022,
+RF-024, RF-025, RF-031, RF-035, RNF-005.
 
 Criterios:
-  AC-H1  anonimo: el formulario exige nombre y correo (422 con `field`), telefono opcional; al
-         enviarlo su conversacion pasa a PENDING_ADVISOR con el bot apagado, guarda asunto y
-         contacto (los ve el asesor), deja nota HANDOFF_REQUESTED + FORM_RESPONSE +
-         confirmacion fija, y cuenta 1 no leido; un segundo envio es 409
+  AC-H1  anonimo: solo FAQ (D-031). POST /handoff y GET /handoff/form son 409, nada cambia
+         en su conversacion, y la sesion trae el enlace para crear cuenta
   AC-H2  la conversacion anonima nace con TTL y sus mensajes lo heredan (sin chats muertos)
   AC-H3  autenticado: el formulario abre un CASO (PENDING_ADVISOR, bot apagado, asunto,
          transcripcion del hilo) y el hilo sigue BOT_ATTENDING con el bot encendido y la nota
          CASE_OPENED; el correo del JWT se usa sin pedirlo, y si falta se exige en el formulario
   AC-H4  tope de casos abiertos → 409; GET /chat/conversations lista el hilo primero y los
          casos por recencia; el caso de OTRO usuario (o para un anonimo) es 403
-  AC-H5  cerrar un caso o la conversacion anonima los deja CLOSED y de solo lectura (mensaje
-         → 409, nota CONVERSATION_CLOSED) y fuera de "mis casos"; el hilo del autenticado sigue
+  AC-H5  cerrar un caso lo deja CLOSED y de solo lectura (mensaje → 409, nota
+         CONVERSATION_CLOSED) y fuera de "mis casos"; un hilo (autenticado o anonimo) sigue
          volviendo al bot (AC-A7)
   AC-H6  GET .../messages sin cursor entrega los ULTIMOS N con el estado de la conversacion y
          `has_more`; `before` pagina hacia atras
-  AC-H7  con el tope por IP encendido, la segunda solicitud anonima del dia desde la misma IP
-         es 429; con el tope en 0 no se frena nada
 
 El authorizer del asesor se simula con el middleware de dev (backend/api/dev_auth.py) y el
 encolado a SQS con un doble, como en tests/test_advisor_api.py y tests/test_chat_api.py.
@@ -36,9 +32,6 @@ from backend.agent import prompts, quota
 from backend.api import dev_auth
 from backend.api.main import app
 from backend.api.routers import chat as chat_router
-from backend.conversations import forms as conversations_forms
-from backend.conversations import repository as conversations_repository
-from backend.conversations import service as conversations_service
 from backend.core import auth
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings, reset_settings
@@ -133,7 +126,6 @@ def _escribe(client, sesion, texto="hola", conversation_id=None):
 
 
 FORMULARIO = {"subject": "Problema con mi puja", "detail": "No me deja ofertar en la subasta."}
-CONTACTO = {"name": "Ana Torres", "email": "ana@example.test"}
 
 
 def _handoff(client, sesion, limpiar=None, **campos):
@@ -174,59 +166,23 @@ def _tomar_y_cerrar(client, headers, conversation_id) -> dict:
     return response.json()
 
 
-# ───────────────────────────── AC-H1: el anonimo deriva con contacto ─────────────────────────────
+# ───────────────────────────── AC-H1: el anonimo no deriva (D-031) ─────────────────────────────
 
 
-def test_el_anonimo_debe_dejar_nombre_y_correo(client, limpiar):
+def test_el_anonimo_no_puede_pedir_asesor(client, limpiar):
+    """D-031: al visitante no se le pide contacto ni se le abre nada; el widget lo manda a
+    crear cuenta con el enlace que viaja en la sesion."""
     sesion = _sesion(client, limpiar)
+    assert sesion["links"]["signup"] == get_settings().vmc_signup_url
 
-    sin_nombre = _handoff(client, sesion, email="ana@example.test")
-    assert sin_nombre.status_code == 422 and sin_nombre.json()["detail"]["field"] == "name"
-
-    mal_correo = _handoff(client, sesion, name="Ana", email="ana-arroba")
-    assert mal_correo.status_code == 422 and mal_correo.json()["detail"]["field"] == "email"
-
-    mal_telefono = _handoff(client, sesion, **CONTACTO, phone="abc")
-    assert mal_telefono.status_code == 422 and mal_telefono.json()["detail"]["field"] == "phone"
+    assert _handoff(client, sesion, email="ana@example.test").status_code == 409
+    assert _formulario(client, sesion).status_code == 409
 
     actual = client.get(
         f"/chat/conversations/{sesion['conversation']['conversation_id']}", headers=_auth(sesion)
     ).json()
-    assert actual["status"] == "BOT_ATTENDING", "nada cambio con formularios invalidos"
-
-
-def test_el_anonimo_deriva_en_el_sitio_y_el_asesor_ve_el_contacto(client, limpiar):
-    sesion = _sesion(client, limpiar)
-    conversation_id = sesion["conversation"]["conversation_id"]
-
-    respuesta = _handoff(client, sesion, **CONTACTO, phone="+51 999 888 777")
-    assert respuesta.status_code == 201, respuesta.text
-    derivada = respuesta.json()["conversation"]
-    assert derivada["conversation_id"] == conversation_id, "anonimo: no hay caso aparte"
-    assert derivada["status"] == "PENDING_ADVISOR" and derivada["bot_enabled"] is False
-    assert derivada["kind"] == "THREAD" and derivada["title"] == FORMULARIO["subject"]
-
-    hilo = _mensajes(client, sesion)
-    assert hilo["conversation"]["status"] == "PENDING_ADVISOR"
-    ultimos = hilo["messages"][-3:]
-    # DETAILS.md §4.5 / Paso 6: la nota SYSTEM va primero, junto con el CAS de start_handoff;
-    # el FORM_RESPONSE (con el contacto, RF-003) solo se escribe despues de ganar la carrera.
-    assert [m["message_type"] for m in ultimos] == ["SYSTEM", "FORM_RESPONSE", "TEXT"]
-    assert [m["sender_type"] for m in ultimos] == ["SYSTEM", "USER", "BOT"]
-    assert ultimos[0]["content"] == "HANDOFF_REQUESTED"
-    assert "Asunto: Problema con mi puja" in ultimos[1]["content"]
-    assert "Correo: ana@example.test" in ultimos[1]["content"]
-    assert ultimos[2]["content"] == prompts.HANDOFF_ANON_CONFIRMATION
-
-    _, headers = _asesor_nuevo(client, limpiar)
-    detalle = client.get(f"/advisor/conversations/{conversation_id}", headers=headers).json()
-    assert detalle["contact_name"] == "Ana Torres"
-    assert detalle["contact_email"] == "ana@example.test"
-    assert detalle["contact_phone"] == "+51 999 888 777"
-    assert detalle["unread_count"] == 1, "RF-035: el formulario es lo primero que lee el asesor"
-
-    otra_vez = _handoff(client, sesion, **CONTACTO)
-    assert otra_vez.status_code == 409
+    assert actual["status"] == "BOT_ATTENDING" and actual["bot_enabled"] is True
+    assert _mensajes(client, sesion)["messages"] == [], "no quedo ninguna nota ni formulario"
 
 
 # ───────────────────────────── AC-H2: TTL de la conversacion anonima ─────────────────────────────
@@ -308,8 +264,7 @@ def test_el_autenticado_sin_correo_en_el_jwt_debe_darlo(client, limpiar):
     _, headers = _asesor_nuevo(client, limpiar)
     caso_id = con_correo.json()["conversation"]["conversation_id"]
     detalle = client.get(f"/advisor/conversations/{caso_id}", headers=headers).json()
-    assert detalle["user_email"] == "jorge@otro.test"
-    assert detalle["contact_email"] == "jorge@otro.test"
+    assert detalle["user_email"] == "jorge@otro.test", "el correo del formulario es el del caso"
 
 
 # ───────────────────────────── AC-H4: tope, listado y autorizacion ─────────────────────────────
@@ -435,28 +390,19 @@ def test_cerrar_un_caso_lo_deja_cerrado_y_de_solo_lectura(client, limpiar):
     assert _handoff(client, sesion, limpiar, subject="Otro caso").status_code == 201
 
 
-def test_cerrar_la_conversacion_anonima_la_deja_cerrada(client, limpiar):
-    sesion = _sesion(client, limpiar)
-    conversation_id = sesion["conversation"]["conversation_id"]
-    assert _handoff(client, sesion, **CONTACTO).status_code == 201
-    _, headers = _asesor_nuevo(client, limpiar)
-
-    cerrado = _tomar_y_cerrar(client, headers, conversation_id)
-    assert cerrado["status"] == "CLOSED" and cerrado["closed_at"]
-    assert _escribe(client, sesion, "hola?").status_code == 409
-    assert _handoff(client, sesion, **CONTACTO).status_code == 409
-
-
-def test_cerrar_el_hilo_del_autenticado_lo_devuelve_al_bot(client, limpiar):
-    """AC-A7 sigue valiendo para el hilo permanente: un asesor que lo tomo (D-022) y lo
-    cierra lo devuelve al bot; no queda CLOSED."""
-    sesion = _sesion(client, limpiar, autenticado=True)
+@pytest.mark.parametrize("autenticado", [True, False], ids=["autenticado", "anonimo"])
+def test_cerrar_un_hilo_lo_devuelve_al_bot(client, limpiar, autenticado):
+    """AC-A7 vale para todo hilo con el bot: un asesor que lo tomo (D-022, intervencion
+    proactiva) y lo cierra lo devuelve al bot; no queda CLOSED. Al anonimo lo termina cerrar
+    la pestaña (D-031), no el asesor."""
+    sesion = _sesion(client, limpiar, autenticado=autenticado)
     hilo_id = sesion["conversation"]["conversation_id"]
     _, headers = _asesor_nuevo(client, limpiar)
 
     cerrado = _tomar_y_cerrar(client, headers, hilo_id)
     assert cerrado["status"] == "BOT_ATTENDING" and cerrado["bot_enabled"] is True
     assert cerrado["closed_at"] is None
+    assert _mensajes(client, sesion)["messages"][-1]["content"] == "TICKET_CLOSED"
     assert _escribe(client, sesion, "sigo aqui").status_code == 202
 
 
@@ -486,44 +432,6 @@ def test_sin_cursor_llegan_los_ultimos_y_before_pagina_hacia_atras(client, limpi
         headers=_auth(sesion),
     )
     assert ambos.status_code == 422
-
-
-# ───────────────────────── AC-H7: tope de handoffs anonimos por IP ─────────────────────────
-
-
-def test_con_el_tope_por_ip_la_segunda_solicitud_del_dia_es_429(client, limpiar, monkeypatch):
-    ip = f"10.0.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
-    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
-    monkeypatch.setenv("ANON_HANDOFFS_PER_IP_PER_DAY", "1")
-    reset_settings()
-    limpiar.limite(f"HANDOFF#IP#{quota.hash_ip(ip)}")
-
-    primera = _sesion(client, limpiar)
-    assert _handoff(client, primera, **CONTACTO).status_code == 201
-
-    segunda = _sesion(client, limpiar)
-    bloqueada = _handoff(client, segunda, **CONTACTO)
-    assert bloqueada.status_code == 429 and bloqueada.headers["Retry-After"]
-    assert (
-        client.get(
-            f"/chat/conversations/{segunda['conversation']['conversation_id']}",
-            headers=_auth(segunda),
-        ).json()["status"]
-        == "BOT_ATTENDING"
-    )
-
-
-def test_con_el_tope_en_cero_no_se_cuenta_nada(client, limpiar, monkeypatch, tablas):
-    ip = f"10.1.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
-    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
-    assert get_settings().anon_handoffs_per_ip_per_day == 0, "dev: apagado, como AI_QUOTA_*"
-
-    for _ in range(2):
-        assert _handoff(client, _sesion(client, limpiar), **CONTACTO).status_code == 201
-    contados = tablas["rate_limits"].query(
-        KeyConditionExpression=Key("limit_key").eq(f"HANDOFF#IP#{quota.hash_ip(ip)}")
-    )["Items"]
-    assert contados == []
 
 
 # ────────────── DETAILS.md §4.9 / Paso 11: tope de sesiones anonimas por IP ──────────────
@@ -561,53 +469,6 @@ def test_el_tope_de_sesiones_no_aplica_al_autenticado(client, limpiar, monkeypat
     assert autenticada
 
 
-# ──────────────────── DETAILS.md §4.5 / Paso 6: idempotencia del handoff ────────────────────
-
-
-def test_un_formulario_invalido_no_consume_el_cupo_de_ip(client, limpiar, monkeypatch, tablas):
-    """Antes el cupo se quemaba en el router ANTES de validar el formulario: un 422 costaba
-    el mismo cupo que un handoff real. Ahora la validacion va primero (sin efecto en la
-    cuota) y solo un intento realmente valido debe descontar el cupo."""
-    ip = f"10.2.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}"
-    monkeypatch.setattr(chat_router, "_client_ip", lambda request: ip)
-    monkeypatch.setenv("ANON_HANDOFFS_PER_IP_PER_DAY", "1")
-    reset_settings()
-    limpiar.limite(f"HANDOFF#IP#{quota.hash_ip(ip)}")
-
-    invalido = _handoff(client, _sesion(client, limpiar), subject="", detail="")
-    assert invalido.status_code == 422
-
-    valido = _handoff(client, _sesion(client, limpiar), **CONTACTO)
-    assert valido.status_code == 201, "el 422 anterior no debio consumir el cupo"
-
-
-def test_perder_la_carrera_de_handoff_no_deja_form_response_huerfano(client, limpiar, tablas):
-    """Dos intentos con la MISMA foto de la conversacion (la carrera real de dos requests
-    casi simultaneos): el primero gana el CAS de start_handoff, el segundo lo pierde. Antes
-    el FORM_RESPONSE (con el contacto del anonimo) se escribia ANTES de saber quien ganaba, asi
-    que el perdedor dejaba un mensaje huerfano con PII. Ahora nada se persiste hasta ganar."""
-    sesion = _sesion(client, limpiar)
-    conversation_id = sesion["conversation"]["conversation_id"]
-    snapshot = conversations_repository.get_conversation(conversation_id)
-
-    form = conversations_forms.HandoffForm(**FORMULARIO, **CONTACTO)
-    clean = conversations_forms.validate_handoff_form(
-        form, anonymous=True, needs_email=False, max_detail_chars=get_settings().max_message_chars
-    )
-
-    ganador = conversations_service.request_handoff(snapshot, clean, confirmation="listo")
-    assert ganador.status == "PENDING_ADVISOR"
-
-    with pytest.raises(conversations_service.HandoffNotAllowed):
-        conversations_service.request_handoff(snapshot, clean, confirmation="listo")
-
-    mensajes = tablas["messages"].query(
-        KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-    )["Items"]
-    respuestas = [m for m in mensajes if m.get("message_type") == "FORM_RESPONSE"]
-    assert len(respuestas) == 1, "el intento que perdio la carrera no debio dejar FORM_RESPONSE"
-
-
 # ───────────── AC-H9: la tarjeta de formulario para el badge "Asesor humano" (D-030) ─────────────
 
 
@@ -619,28 +480,26 @@ def _formulario(client, sesion, conversation_id=None):
 
 
 def test_el_badge_recibe_la_misma_tarjeta_que_ofrece_el_bot(client, limpiar):
-    """Anonimo: nombre, correo y telefono en el paso 1, asunto y detalle en el 2; autenticado
-    con correo en el JWT: solo asunto y detalle. Sin pasar por el bot ni por ningun modelo."""
-    anon = _sesion(client, limpiar)
-    response = _formulario(client, anon)
+    """Con correo en el JWT: solo asunto y detalle; sin correo, se pide primero. Un solo
+    paso. Sin pasar por el bot ni por ningun modelo."""
+    con_correo = _sesion(client, limpiar, autenticado=True)
+    response = _formulario(client, con_correo)
     assert response.status_code == 200, response.text
     spec = response.json()["interaction"]
     assert spec["type"] == "HANDOFF_FORM"
-    assert [f["name"] for f in spec["fields"]] == ["name", "email", "phone", "subject", "detail"]
-    assert [f["name"] for f in spec["fields"] if f["required"]] == [
-        "name", "email", "subject", "detail"
-    ]
-
-    auth = _sesion(client, limpiar, autenticado=True)
-    spec = _formulario(client, auth).json()["interaction"]
     assert [f["name"] for f in spec["fields"]] == ["subject", "detail"]
+
+    sin_correo = _sesion(client, limpiar, autenticado=True, email=None)
+    spec = _formulario(client, sin_correo).json()["interaction"]
+    assert [f["name"] for f in spec["fields"]] == ["email", "subject", "detail"]
 
 
 def test_la_tarjeta_es_409_cuando_no_se_puede_pedir_asesor(client, limpiar):
-    anon = _sesion(client, limpiar)
-    assert _handoff(client, anon, **CONTACTO).status_code == 201
+    """Desde un caso (ya esta con el equipo) no se pide otro asesor."""
+    sesion = _sesion(client, limpiar, autenticado=True)
+    caso_id = _handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
 
-    response = _formulario(client, anon)
+    response = _formulario(client, sesion, caso_id)
 
     assert response.status_code == 409, response.text
 

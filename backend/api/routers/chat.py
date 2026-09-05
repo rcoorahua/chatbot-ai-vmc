@@ -11,8 +11,8 @@ Contrato con el widget (widget/subastin.js):
   POST /chat/conversations/{id}/messages           → 202: persiste, encola el job IA (T8);
                                                      409 si la conversacion esta cerrada
   POST /chat/conversations/{id}/handoff            → 201: formulario de asesor (D-029): abre
-                                                     un caso (autenticado) o deriva en el sitio
-                                                     (anonimo, RF-003)
+                                                     un caso; 409 para el anonimo (D-031: solo
+                                                     FAQ, se le invita a crear cuenta)
 
 Toda ruta salvo la primera exige `Authorization: Bearer <token de sesion>`. Autorizacion: el
 autenticado ve todo lo suyo (hilo y casos, por `user_id`); el anonimo solo la conversacion
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from backend.agent import prompts, quota
 from backend.conversations import forms, repository, service
-from backend.conversations.models import Conversation, Message, MessageStatus, UserType
+from backend.conversations.models import Conversation, Message, MessageStatus
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
@@ -100,6 +100,14 @@ class SessionLimits(BaseModel):
     max_message_chars: int
 
 
+class SessionLinks(BaseModel):
+    """Enlaces de VMC que el widget muestra. Viajan en la sesion por la misma razon que los
+    limites: son configuracion (`VMC_SIGNUP_URL`, mock hasta que VMC confirme la real), no
+    constantes del widget."""
+
+    signup: str
+
+
 class SessionOut(BaseModel):
     token: str
     expires_at: int
@@ -107,6 +115,7 @@ class SessionOut(BaseModel):
     conversation: ConversationOut
     created: bool
     limits: SessionLimits
+    links: SessionLinks
 
 
 class InteractionIn(BaseModel):
@@ -162,13 +171,11 @@ class HandoffIn(BaseModel):
 
     subject: str = Field(min_length=1, max_length=1_000)
     detail: str = Field(min_length=1, max_length=20_000)
-    name: str | None = Field(default=None, max_length=1_000)
     email: str | None = Field(default=None, max_length=1_000)
-    phone: str | None = Field(default=None, max_length=200)
 
 
 class HandoffOut(BaseModel):
-    # La conversacion que espera al asesor: el caso nuevo (autenticado) o la misma (anonimo).
+    # El caso nuevo, que ya espera al asesor.
     conversation: ConversationOut
 
 
@@ -227,6 +234,7 @@ def create_session(body: SessionIn, request: Request) -> SessionOut:
         conversation=ConversationOut.from_model(conversation),
         created=created,
         limits=SessionLimits(max_message_chars=get_settings().max_message_chars),
+        links=SessionLinks(signup=get_settings().vmc_signup_url),
     )
 
 
@@ -290,13 +298,15 @@ class HandoffFormOut(BaseModel):
 def handoff_form(conversation_id: str, session: auth.CurrentSession) -> HandoffFormOut:
     """La tarjeta de formulario de asesor para abrirla desde el badge del widget (D-030), sin
     que el bot la ofrezca y sin pasar por ningun modelo. 409 si desde aqui no se puede pedir
-    asesor (caso, conversacion ya derivada o cerrada): la misma regla que POST /handoff."""
+    asesor (anonimo, caso, conversacion ya derivada o cerrada): la misma regla que
+    POST /handoff."""
     conversation = _owned_conversation(session, conversation_id)
     if not service.handoff_allowed(conversation):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Desde esta conversacion no se puede pedir un asesor"
-        )
+        raise HTTPException(status.HTTP_409_CONFLICT, _HANDOFF_NOT_ALLOWED)
     return HandoffFormOut(**service.handoff_form_for(conversation))
+
+
+_HANDOFF_NOT_ALLOWED = "Desde esta conversacion no se puede pedir un asesor"
 
 
 @router.post(
@@ -305,45 +315,17 @@ def handoff_form(conversation_id: str, session: auth.CurrentSession) -> HandoffF
     status_code=status.HTTP_201_CREATED,
 )
 def request_handoff(
-    conversation_id: str, body: HandoffIn, session: auth.CurrentSession, request: Request
+    conversation_id: str, body: HandoffIn, session: auth.CurrentSession
 ) -> HandoffOut:
-    """El usuario envio el formulario de asesor (D-029). Autenticado: 201 con el CASO nuevo;
-    anonimo: 201 con su misma conversacion ya derivada (RF-003). 409 si no se puede derivar
-    desde aqui (ya derivada, cerrada, o tope de casos); 422 con `field` si un dato no pasa;
-    429 si la IP anonima ya pidio demasiados asesores hoy."""
+    """El usuario autenticado envio el formulario de asesor (D-029): 201 con el CASO nuevo.
+    409 si no se puede derivar desde aqui (anonimo —D-031—, ya derivada, cerrada, o tope de
+    casos); 422 con `field` si un dato no pasa."""
     conversation = _owned_conversation(session, conversation_id)
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    form = forms.HandoffForm(
-        subject=body.subject, detail=body.detail, name=body.name, email=body.email,
-        phone=body.phone,
-    )
-    # DETAILS.md §4.5 / Paso 6: un formulario invalido no debe quemar el cupo diario de la IP
-    # anonima. Se valida ANTES del 429 — la limpieza real (y su reuso) sigue dentro de
-    # service.request_handoff, esto solo adelanta el 422 para que el rechazo no tenga costo.
+    form = forms.HandoffForm(subject=body.subject, detail=body.detail, email=body.email)
     try:
-        forms.validate_handoff_form(
-            form,
-            anonymous=anonymous,
-            needs_email=not anonymous and not conversation.user_email,
-            max_detail_chars=get_settings().max_message_chars,
+        waiting = service.request_handoff(
+            conversation, form, confirmation=prompts.HANDOFF_CASE_CONFIRMATION
         )
-    except forms.FormValidationError as exc:
-        raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
-    if anonymous:
-        _enforce_ip_daily_limit(
-            request,
-            key_prefix="HANDOFF",
-            limit=get_settings().anon_handoffs_per_ip_per_day,
-            message=(
-                "Ya recibimos varias solicitudes de asesor desde tu conexion hoy. "
-                "Crea tu cuenta en VMC para continuar."
-            ),
-        )
-    confirmation = (
-        prompts.HANDOFF_ANON_CONFIRMATION if anonymous else prompts.HANDOFF_CASE_CONFIRMATION
-    )
-    try:
-        waiting = service.request_handoff(conversation, form, confirmation=confirmation)
     except forms.FormValidationError as exc:
         raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
     except service.TooManyOpenCases as exc:
@@ -353,9 +335,7 @@ def request_handoff(
             "un asesor lo cierre.",
         ) from exc
     except service.HandoffNotAllowed as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Esta conversacion ya esta con el equipo o cerrada"
-        ) from exc
+        raise HTTPException(status.HTTP_409_CONFLICT, _HANDOFF_NOT_ALLOWED) from exc
     # RF-023: el trabajo humano se registra como ticket. Va DESPUES de derivar y fuera de la
     # transaccion a proposito: la conversacion ya es durable y el usuario ya vio su
     # confirmacion, asi que un fallo aqui no puede convertirse en un error para el. La red de
@@ -374,7 +354,6 @@ def request_handoff(
             "conversation_id": conversation.conversation_id,
             "case_id": waiting.conversation_id,
             "ticket_id": ticket_id,
-            "anonymous": anonymous,
         },
     )
     return HandoffOut(conversation=ConversationOut.from_model(waiting))
@@ -441,7 +420,7 @@ def _client_ip(request: Request) -> str | None:
 
 def _enforce_ip_daily_limit(request: Request, *, key_prefix: str, limit: int, message: str) -> None:
     """429 si la IP (hasheada) del anonimo ya agoto su cupo diario para `key_prefix`
-    (handoffs DETAILS.md §4.5, sesiones §4.9/Paso 11 — mismo mecanismo, un solo lugar).
+    (sesiones, DETAILS.md §4.9/Paso 11; el de handoffs se fue con D-031).
 
     El `Retry-After` NO es un valor fijo: la ventana de `take_daily_slot` es un dia CALENDARIO
     UTC (`quota.seconds_until_daily_reset`), no una hora rodante desde el bloqueo — un fijo

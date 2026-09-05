@@ -305,14 +305,13 @@ def close_conversation(
     closed_by: str,
     release_case_slot_for_user: str | None = None,
 ) -> bool:
-    """Cierre definitivo (D-029): un caso, o la conversacion anonima. Queda CLOSED, con el
-    bot apagado y de solo lectura; `assigned_advisor_id` se conserva como historial de quien
-    lo atendio. La nota SYSTEM `CONVERSATION_CLOSED` va en la misma transaccion. Solo el
-    asesor asignado cierra: devuelve False si no lo es.
+    """Cierre definitivo de un caso (D-029). Queda CLOSED, con el bot apagado y de solo
+    lectura; `assigned_advisor_id` se conserva como historial de quien lo atendio. La nota
+    SYSTEM `CONVERSATION_CLOSED` va en la misma transaccion. Solo el asesor asignado cierra:
+    devuelve False si no lo es.
 
-    `release_case_slot_for_user` (Paso 6): si esta conversacion es un CASO (contaba para
-    `OPEN_CASES#USER#<id>`, ver `create_conversation_with_messages`), libera el cupo en la
-    MISMA transaccion. La conversacion anonima nunca pasa este id: nunca conto para el limite."""
+    `release_case_slot_for_user` (Paso 6): el caso contaba para `OPEN_CASES#USER#<id>` (ver
+    `create_conversation_with_messages`); se libera el cupo en la MISMA transaccion."""
     update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
     update["UpdateExpression"] += (
         ", #status = :closed, bot_enabled = :off, wait_message_sent = :off, "
@@ -342,20 +341,11 @@ def close_conversation(
     return _transact_note(update, note, extra_items=extra_items)
 
 
-def start_handoff(
-    conversation_id: str,
-    *,
-    reason: str,
-    at: str,
-    note: Message,
-    title: str | None = None,
-    contact: dict[str, str] | None = None,
-) -> bool:
+def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
     """Handoff en el sitio (RF-022/RF-025): a PENDING_ADVISOR con el bot apagado, solo si el
     bot atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma
     transaccion. `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
-    `title` y `contact` (D-029: asunto y datos del anonimo, RF-003) se guardan en el mismo
-    update. Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
+    Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
     update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
     update["UpdateExpression"] += (
         ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
@@ -368,13 +358,6 @@ def start_handoff(
         ":requested_at": at,
         ":reason": reason,
     }
-    if title:
-        update["UpdateExpression"] += ", title = :title"
-        values[":title"] = title
-    for field, value in (contact or {}).items():
-        if value:
-            update["UpdateExpression"] += f", {field} = :{field}"
-            values[f":{field}"] = value
     update["ConditionExpression"] = (
         "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
         "AND #status = :bot_attending"

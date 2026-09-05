@@ -37,13 +37,14 @@ escribe el modelo (contrato en [MAPEO.md §3.1](../docs/MAPEO.md)):
 |---|---|---|
 | **Fuente** | `metadata.sources = [{title, url}]` | Línea discreta bajo la burbuja del bot: "Fuente:" a la izquierda y el **título del artículo subrayado** a la derecha (nunca la URL: por larga que sea, el texto es corto; se corta con puntos suspensivos y el `title` muestra el completo al pasar el mouse). Abre el Centro de Ayuda en otra pestaña. El texto de la respuesta ya no trae URLs |
 | **Preguntas hermanas** | `metadata.interaction.type = "RELATED_QUESTIONS"`, opciones con `kind: "question"` | Hasta tres botones de borde bajo la última respuesta con las otras preguntas del mismo artículo. El clic manda la pregunta como texto más `{action_id, value}` (sin `flow_version`: no hay estado); igual que los quick replies, desaparecen en cuanto el usuario responde |
-| **Badge "Asesor humano"** | `GET /chat/conversations/{id}/handoff/form` | Píldora pequeña junto al emoji del compositor, siempre presente (apagada en un caso con asesor o una conversación derivada). Pide la tarjeta al servidor y la muestra en el hilo **sin mensaje, sin bot y sin modelo**; el envío sigue siendo `POST /handoff`. No hay botón de asesor por contexto: se probó y salía donde no tocaba |
-| **Formulario de asesor** | `metadata.interaction.type = "HANDOFF_FORM"` (del bot) o el badge | A todo el ancho del hilo. Cabecera **Datos de contacto · 1/2** / **Motivo de la consulta** y una **x**; el botón final dice **Contactar**. Validación al intentar avanzar: los obligatorios vacíos ganan a la vez asterisco y "Falta llenar este campo", que se van al escribir (antes no hay asteriscos). Transición con movimiento (Web Animations sobre el DOM vivo, porque el render lo reemplaza): los botones de pregunta se desvanecen, el compositor **se pliega hacia abajo** (su altura baja a cero) y el formulario entra con fade desde arriba; al cerrarlo o contactar, el compositor **vuelve subiendo** y los botones reaparecen con fade. Lo escrito se conserva en `formDraft` |
+| **Badge "Asesor humano"** | `GET /chat/conversations/{id}/handoff/form` | Píldora pequeña junto al emoji del compositor, siempre presente (apagada en un caso con asesor o una conversación derivada). Autenticado: pide la tarjeta al servidor y la muestra en el hilo **sin mensaje, sin bot y sin modelo**; el envío sigue siendo `POST /handoff`. Visitante (D-031): manda "Quiero hablar con un asesor" al bot, que contesta con la invitación a crear cuenta. No hay botón de asesor por contexto: se probó y salía donde no tocaba |
+| **Formulario de asesor** | `metadata.interaction.type = "HANDOFF_FORM"` (del bot) o el badge | Solo autenticados. A todo el ancho del hilo, un solo paso: cabecera **Motivo de la consulta** con una **x**, asunto, detalle (y correo si el JWT no lo trajo), botón **Contactar**. Validación al intentar enviar: los campos vacíos ganan a la vez asterisco y "Falta llenar este campo", que se van al escribir (antes no hay asteriscos). Transición con movimiento (Web Animations sobre el DOM vivo, porque el render lo reemplaza): los botones de pregunta se desvanecen, el compositor **se pliega hacia abajo** (su altura baja a cero) y el formulario entra con fade desde arriba; al cerrarlo o contactar, el compositor **vuelve subiendo** y los botones reaparecen con fade. Lo escrito se conserva en `formDraft` |
+| **Enlaces** | `metadata.interaction.type = "LINKS"`, opciones `{label, url}` | Botones sólidos que abren la URL en otra pestaña (solo `http(s)`), bajo el último mensaje del bot. Hoy: **Crear cuenta gratis** cuando el visitante pide un asesor, se queda sin evidencia o agota su cuota (D-031). La URL la decide el servidor (`VMC_SIGNUP_URL`, mock) |
 | **Mensaje nuevo, leído desde arriba** | cada render con una fila nueva del bot o del asesor | La vista se desliza suave hasta alinear el **inicio** del mensaje con el borde superior del hilo (no salta al final). Lo propio y la primera apertura aterrizan abajo. Los eventos de scroll de ese deslizamiento no cuentan como "el usuario subió a leer" |
 | **Carga del hilo** | hilo vacío mientras el saludo "llega" (~420 ms) o el primer sondeo no volvió | Un **spinner** común de 26 px centrado, en **vault** del design system (vault-500 sobre vault al 22 %; el magenta *live* es acento del orbe, no de un control de carga); luego el saludo lo reemplaza. Se probaron un skeleton y el orbe líquido y se descartaron: el orbe es el estado "Subastín está pensando" y aquí solo se lee el estado |
 | **Orbe de "escribiendo" en paleta Concorde** | `ORB_SEED` (WebGPU) y el shader WebGL de respaldo | Base **vault-900**, banda ancha **vault-500**, acento **magenta** y rim **rosa** "live" (`#cc00ff` / `#ff0066`, los del alert card de VMC), halo vault. El orden importa: con el magenta en la banda ancha el vault desaparecía. Los tres puntos de respaldo van de vault-500 a live-500; tokens `--live-500/600` en el widget |
 | **Texto con ritmo** | el contenido del mensaje | `renderRichText`: cada línea es un bloque, los "1) …" llevan el número resaltado y sangría colgante, una línea en blanco separa párrafos, y `**negritas**` se dibujan como `<strong>` (único markdown permitido, D-025 revisada). Todo por `textContent`: nada se inyecta |
-| **Franja del visitante** | `isAnonymous()` | Aviso violeta bajo la cabecera del hilo ("Estás como visitante…") con **Entendido**; una vez por pestaña (`sessionStorage`, nada en `localStorage`). Es UI, no un mensaje: no ensucia el historial |
+| **Franja del visitante** | `isAnonymous()` + `links.signup` de la sesión | Aviso violeta bajo la cabecera del hilo ("Estás como visitante: tu conversación dura mientras esta pestaña esté abierta. Para hablar con un asesor necesitas una cuenta en VMC, es gratis.") con el enlace **Crear cuenta** y **Entendido**; una vez por pestaña (`sessionStorage`, nada en `localStorage`). Es UI, no un mensaje: no ensucia el historial |
 
 ## Probarlo en local
 
@@ -59,9 +60,11 @@ cd widget; python -m http.server 8080                  # y abrir http://localhos
 (firma el JWT en el navegador **solo para pruebas**, con el secreto de dev) y carga el widget.
 Qué verificar:
 
-- **Anónimo**: abre sin login (RF-001/RF-002), saluda como "Cazador de Ofertas", muestra el aviso
-  de que el historial no se conserva. Cerrar la pestaña y volver a abrir = conversación nueva
-  (RF-004).
+- **Anónimo**: abre sin login (RF-001/RF-002), saluda como "Cazador de Ofertas", muestra la
+  franja del visitante con el enlace a crear cuenta. Cerrar la pestaña y volver a abrir =
+  conversación nueva (RF-004). Solo FAQ (D-031): "quiero hablar con un asesor" (escrito o con
+  el badge) recibe el mensaje fijo de que necesita una cuenta gratis, con el botón **Crear
+  cuenta gratis**; sin evidencia, el mismo botón en vez de la pregunta sí/no.
 - **Autenticado**: saluda por nombre (RF-005/AC-008); recargar o cambiar de página mantiene la
   misma conversación (D-002/D-003); un `sub` distinto es otro usuario con su propio hilo.
 - **Envío**: el mensaje aparece como "Enviando…" y pasa a confirmado solo con el 202 del backend
@@ -69,16 +72,13 @@ Qué verificar:
   usa el mismo `client_message_id` y no duplica (RF-037/RF-038).
 - **Eventos del sistema**: un mensaje `sender_type=SYSTEM` (`TICKET_CLOSED`, `CASE_OPENED`,
   `CONVERSATION_CLOSED`…) se dibuja como nota de sistema en el hilo, estilo Intercom.
-- **Pedir asesor (D-029)**: "quiero hablar con un asesor" hace que Subastín ofrezca una
-  **tarjeta de formulario** centrada debajo de su mensaje. Al visitante se le pide en **dos
-  pasos**: primero nombre, correo y teléfono opcional con un botón "Siguiente" neutro, y luego
-  asunto y mensaje con el "Contactar" en color primario. El usuario autenticado cuyo JWT
-  ya trajo correo ve un **solo paso**. Si el bot se queda sin evidencia no muestra el formulario
-  de una: **pregunta** con botones sí/no y solo con el "sí" aparece. Al enviarla: el visitante ve su misma conversación en
-  "Esperando asesor" con la invitación a crear cuenta; el usuario autenticado entra a un **caso
-  nuevo** y su hilo con Subastín sigue respondiendo. La pestaña **Mensajes** del autenticado
-  lista el hilo y sus casos con estado; un caso cerrado por el asesor queda de solo lectura con
-  "Volver a Subastín" (el visitante ve "Nueva conversación", que abre otra sesión).
+- **Pedir asesor (D-029, autenticado)**: "quiero hablar con un asesor" hace que Subastín
+  ofrezca una **tarjeta de formulario** debajo de su mensaje: asunto y mensaje (y correo si el
+  JWT no lo trajo) con el "Contactar" en color primario. Si el bot se queda sin evidencia no
+  muestra el formulario de una: **pregunta** con botones sí/no y solo con el "sí" aparece. Al
+  enviarla entra a un **caso nuevo** y su hilo con Subastín sigue respondiendo. La pestaña
+  **Mensajes** lista el hilo y sus casos con estado; un caso cerrado por el asesor queda de
+  solo lectura con "Volver a Subastín".
 - **Historial largo**: el hilo abre en los últimos 50 mensajes y arriba aparece "Ver mensajes
   anteriores" mientras quede historia.
 - **El saludo abre el hilo, no se repite**: "¡Hola! 👋..." es la primera burbuja de la
@@ -193,8 +193,8 @@ avatar SVG estático.
 4. Cadencia del sondeo (TD-001): 2 s mientras se espera al bot (también con el panel
    cerrado, para que la respuesta llegue al contador del botón; vence sola a los 45 s), 5 s
    en un caso con asesor, 15 s con el hilo en reposo, 60 s con el panel cerrado y casos
-   abiertos (una llamada a la lista), 30 s para el visitante cerrado que espera asesor, y
-   nada en el resto. Ante un error de red o 5xx, backoff exponencial con jitter hasta 60 s.
+   abiertos (una llamada a la lista), y nada en el resto (el visitante cerrado no sondea:
+   solo tiene FAQ). Ante un error de red o 5xx, backoff exponencial con jitter hasta 60 s.
    Con la pestaña oculta no se sondea.
 5. Ante un 401 (sesión caducada) el widget abre otra sesión y reintenta una vez.
 

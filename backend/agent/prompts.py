@@ -302,8 +302,8 @@ CATALOG_FALLBACK_RESPONSE = (
 )
 
 # D-029 (2026-09-02): pedir asesor ya no deriva de inmediato — el bot OFRECE el formulario
-# (tarjeta con asunto y detalle; nombre, correo y telefono si es anonimo, RF-003) y la
-# derivacion ocurre cuando el usuario lo envia. Mientras tanto el bot sigue atendiendo.
+# (tarjeta con asunto y detalle; correo solo si el JWT no lo trajo) y la derivacion ocurre
+# cuando el usuario lo envia. Mientras tanto el bot sigue atendiendo. Solo autenticados.
 HANDOFF_OFFER_RESPONSE = (
     "Claro, te conecto con un asesor del equipo 🙌 "
     "Completa estos datos para que pueda revisar tu caso."
@@ -339,13 +339,23 @@ HANDOFF_CASE_CONFIRMATION = (
     "Mientras tanto puedes dejar más detalles en este hilo; el asesor los verá todos."
 )
 
-# Handoff del anonimo (en su unica conversacion): se le dice como lo van a contactar y se le
-# invita a crear cuenta, porque sin cuenta esta conversacion no se conserva (RF-004 / D-018).
-HANDOFF_ANON_CONFIRMATION = (
-    "Listo, un asesor se comunicará contigo por aquí o al correo que dejaste 🙌 "
-    "Si cierras esta pestaña la conversación no se conserva: crea tu cuenta en VMC Subastas "
-    "para guardar tus conversaciones y hablar con un asesor cuando quieras."
+# D-031 (2026-09-05, Aaron): el anonimo NO deriva. Pedir asesor o quedarse sin evidencia
+# terminan en la misma salida: crear cuenta (gratis) en VMC. El enlace no va en el texto
+# (D-025/D-030): viaja como boton en `metadata.interaction` (tipo LINKS, ai_worker).
+ANON_ADVISOR_RESPONSE = (
+    "Para hablar con un asesor necesitas una cuenta en VMC Subastas: es gratis y toma un "
+    "minuto 🙂 Crea la tuya y escríbeme desde ahí para conectarte con el equipo."
 )
+FAQ_NO_EVIDENCE_ANON_RESPONSE = (
+    "No tengo ese dato a la mano y prefiero no darte información incorrecta 🙏 "
+    "Con una cuenta en VMC Subastas (es gratis) puedes consultarlo con un asesor."
+)
+# El modelo no respondio y el usuario es anonimo: solo se le pide reintentar (no hay asesor
+# que ofrecerle).
+MODEL_UNAVAILABLE_ANON_RESPONSE = (
+    "Uy, justo ahora no estoy disponible 🙏 Puedes intentarlo de nuevo en unos minutos."
+)
+SIGNUP_LINK_LABEL = "Crear cuenta gratis"
 
 # RF-027 / AC-004: el usuario insiste mientras espera. Se envia UNA sola vez por periodo de
 # espera (flag `wait_message_sent`); los mensajes siguientes se guardan sin respuesta.

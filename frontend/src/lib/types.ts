@@ -50,11 +50,8 @@ export interface Conversation {
   user_name: string | null;
   user_email: string | null;
   user_company: string | null;
-  /** D-029: asunto del caso y contacto que dejo el anonimo en el formulario (RF-003). */
+  /** D-029: asunto del caso y de que hilo salio. */
   title?: string | null;
-  contact_name?: string | null;
-  contact_email?: string | null;
-  contact_phone?: string | null;
   source_conversation_id?: string | null;
   assigned_advisor_id: string | null;
   summary: string | null;
@@ -121,9 +118,6 @@ export interface Ticket {
   user_type: UserType;
   user_id: string | null;
   user_email: string | null;
-  contact_name: string | null;
-  contact_email: string | null;
-  contact_phone: string | null;
   problem_type: ProblemType;
   category: TicketCategory;
   priority: TicketPriority;

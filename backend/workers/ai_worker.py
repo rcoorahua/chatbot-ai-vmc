@@ -20,7 +20,8 @@ Flujo por job (cada paso con su decision al lado):
     un turno y lleva en metadata la fuente (chip) y las otras preguntas del mismo articulo
     como botones (D-030, `agent/related.py`); un clic en uno de esos botones vuelve a
     entrar aqui y va al RAG directo, sin clasificador. CATALOG → respuesta fija con enlace
-    mientras D-011 siga abierta. ADVISOR → formulario de asesor. OTHER → redireccion fija.
+    mientras D-011 siga abierta. ADVISOR → formulario de asesor (autenticado) o invitacion
+    a crear cuenta con boton (anonimo, D-031). OTHER → redireccion fija.
  7. registrar TODA decision en AIUsage (skill llm-cost-optimizer), tambien las gratuitas:
     la proporcion de trafico que no paga tokens es la metrica que justifica D-006 y las reglas.
  8. Slack (RF-028) queda pendiente de D-016; el ticket, del modulo tickets (F5).
@@ -289,8 +290,8 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         _reply_fixed(conversation, message, prompts.CATALOG_FALLBACK_RESPONSE, "fixed_catalog",
                      intent=classification.intent)
     elif classification.intent == Intent.ADVISOR:
-        # D-029: anonimo y autenticado derivan por formulario (RF-003 pide el correo al
-        # anonimo); el bot ofrece la tarjeta y sigue atendiendo hasta que la envien.
+        # D-029: el autenticado deriva por formulario (el bot ofrece la tarjeta y sigue
+        # atendiendo hasta que la envie); el anonimo recibe la invitacion a crear cuenta (D-031).
         _offer_handoff_form(conversation, message,
                             reason=classification.rule or "advisor_intent",
                             intent=classification.intent, response=prompts.HANDOFF_OFFER_RESPONSE)
@@ -452,20 +453,20 @@ def _offer_handoff_form(
     reason: str,
     intent: Intent,
     response: str,
-    record: bool = True,
 ) -> None:
     """D-029: pedir asesor ya no deriva de inmediato. El bot ofrece la TARJETA de formulario
-    (asunto y detalle; nombre, correo y telefono si es anonimo — RF-003) y la derivacion la
-    hace `POST /chat/.../handoff` cuando el usuario la envia. Hasta entonces el bot sigue
-    encendido: quien ignora la tarjeta puede seguir preguntando. Sin ticket (F5) ni Slack
-    (D-016) todavia."""
+    (asunto y detalle; correo si el JWT no lo trajo) y la derivacion la hace
+    `POST /chat/.../handoff` cuando el usuario la envia. Hasta entonces el bot sigue
+    encendido: quien ignora la tarjeta puede seguir preguntando. Al anonimo no se le ofrece
+    nada que llenar (D-031): se le dice que necesita una cuenta, con el boton para crearla."""
     # Con un humano en camino, ningun flujo guiado sigue esperando datos (MAPEO.md §4.2).
     _clear_flow_if_active(conversation)
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    spec = forms.handoff_form_spec(
-        anonymous=anonymous, needs_email=not anonymous and not conversation.user_email
-    )
-    _bot_says(conversation, response, metadata=spec)
+    if conversation.user_type == UserType.ANONYMOUS:
+        _reply_signup(conversation, message, prompts.ANON_ADVISOR_RESPONSE,
+                      source=f"signup:{reason}", intent=intent)
+        return
+    _bot_says(conversation, response,
+              metadata=forms.handoff_form_spec(needs_email=not conversation.user_email))
     logger.info(
         "ai.handoff.offer",
         extra={
@@ -473,12 +474,33 @@ def _offer_handoff_form(
             "message_id": message.message_id,
             "reason": reason,
             "intent": str(intent),
-            "anonymous": anonymous,
         },
     )
-    if record:
-        _record_free(conversation, message, source=f"handoff_offer:{reason}",
-                     intent=str(intent), handoff=True)
+    _record_free(conversation, message, source=f"handoff_offer:{reason}",
+                 intent=str(intent), handoff=True)
+
+
+def _reply_signup(
+    conversation: Conversation,
+    message: Message,
+    text: str,
+    *,
+    source: str,
+    intent: Intent | None,
+) -> None:
+    """D-031: la salida fija del anonimo hacia una cuenta de VMC (pedir asesor, sin
+    evidencia, cuota agotada). El enlace viaja como boton (`interaction.type = LINKS`, el
+    widget lo dibuja bajo la burbuja), nunca dentro del texto (D-025/D-030). Gratis."""
+    links = {
+        "interaction": {
+            "type": "LINKS",
+            "options": [
+                {"label": prompts.SIGNUP_LINK_LABEL, "url": get_settings().vmc_signup_url}
+            ],
+        }
+    }
+    _bot_says(conversation, text, metadata=links)
+    _record_free(conversation, message, source=source, intent=str(intent) if intent else None)
 
 
 def _offer_handoff_confirm(
@@ -495,7 +517,18 @@ def _offer_handoff_confirm(
     Ojo con lo que NO cambia: cuando el usuario PIDE un asesor (intent ADVISOR), el formulario
     sigue saliendo directo — volver a preguntarle "¿quieres un asesor?" a quien acaba de
     pedirlo es un turno de mas por nada.
+
+    Al anonimo no se le pregunta (D-031: no puede tener asesor): sin evidencia se le dice la
+    verdad y se le da la salida (crear cuenta); con el modelo caido, solo que reintente.
     """
+    if conversation.user_type == UserType.ANONYMOUS:
+        if text:
+            _reply_fixed(conversation, message, prompts.MODEL_UNAVAILABLE_ANON_RESPONSE,
+                         "fixed_model_unavailable", intent=Intent.FAQ)
+        else:
+            _reply_signup(conversation, message, prompts.FAQ_NO_EVIDENCE_ANON_RESPONSE,
+                          source="signup:faq_no_evidence", intent=Intent.FAQ)
+        return
     # Se RELEE la conversacion: si en este mismo job se limpio un flujo guiado (un paso que se
     # resolvio y no trajo evidencia), `conversation.flow_version` quedo viejo y la transicion
     # fallaria por condicion — dejando al usuario sin pregunta y sin respuesta. Lo encontro
@@ -785,17 +818,14 @@ def _spend_quota_or_reply(
 
 
 def _reply_quota(conversation: Conversation, message: Message) -> None:
-    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a crear cuenta (que
-    ademas duplica su cuota y habilita el asesor, D-002); al autenticado, a pedir un asesor —
-    ruta que sale por reglas y funciona sin modelo."""
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    _reply_fixed(
-        conversation,
-        message,
-        prompts.QUOTA_EXHAUSTED_ANON_RESPONSE if anonymous
-        else prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE,
-        "quota:exhausted",
-    )
+    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a crear cuenta, con el
+    boton (duplica su cuota y habilita el asesor, D-027/D-031); al autenticado, a pedir un
+    asesor — ruta que sale por reglas y funciona sin modelo."""
+    if conversation.user_type == UserType.ANONYMOUS:
+        _reply_signup(conversation, message, prompts.QUOTA_EXHAUSTED_ANON_RESPONSE,
+                      source="quota:exhausted", intent=None)
+        return
+    _reply_fixed(conversation, message, prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE, "quota:exhausted")
 
 
 # ──────────────────────────────────── Apoyos del flujo ────────────────────────────────────

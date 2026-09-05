@@ -23,6 +23,9 @@
  * - Sesion en sessionStorage: sobrevive a navegar entre paginas y se pierde al cerrar la
  *   pestaña. Para el anonimo eso ES la regla de negocio (RF-004: sin historial entre sesiones);
  *   para el autenticado es solo una cache, su conversacion vive en el servidor (D-003).
+ * - El visitante solo tiene FAQ (D-031): no hay formulario ni datos de contacto; pedir un
+ *   asesor le devuelve la invitacion a crear cuenta (gratis) con su boton, y el badge de
+ *   asesor simplemente manda esa pregunta al bot.
  * - Entrega en tiempo real por sondeo (TD-001): 2,5 s con el panel abierto, 15 s cerrado para
  *   la burbuja de no leidos, pausado con la pestaña oculta.
  * - Un mensaje se muestra como enviado SOLO cuando el backend confirma (RNF-003); si falla,
@@ -52,7 +55,6 @@
     pollAdvisorMs: 5000,
     pollOpenMs: 15000,
     pollClosedMs: 60000,
-    pollAnonPendingClosedMs: 30000,
     listEveryMs: 30000,
     // Backoff exponencial con jitter ante error de red o 5xx: una API caida no recibe un
     // martillo de 2,5 s por pestaña, y al volver no vuelven todas sincronizadas.
@@ -71,7 +73,6 @@
   // Textos de la interfaz (UI en español, datos en ingles — decision T7).
   const TEXT = {
     brand: "VMC Subastas",
-    brandSub: "powered by SUBASTOP Co.",
     agent: "Subastín",
     // Abre la conversacion UNA vez (ver renderMessages): es el inicio del hilo, no un mensaje
     // que llega. El salto de linea separa el "hola" de la pregunta, como dos frases reales.
@@ -97,13 +98,17 @@
     // pide esperar y el boton de reintentar sigue disponible por si el usuario insiste.
     tooFast: "Vas muy rapido. Espera un momento",
     retry: "Reintentar",
-    // D-030: franja del visitante DENTRO del hilo, una vez por sesion. Promete solo lo que
-    // hoy es verdad (conversacion guardada, asesor sin llenar datos); "atencion
-    // personalizada" llegara con la API de datos del usuario.
+    // D-030/D-031: franja del visitante DENTRO del hilo, una vez por pestaña. Dice la regla
+    // tal cual es: la conversacion vive lo que la pestaña y el asesor pide cuenta (gratis).
     anonBanner:
-      "Estás como visitante. Inicia sesión en VMC para guardar tu conversación y hablar " +
-      "con un asesor más rápido.",
+      "Estás como visitante: tu conversación dura mientras esta pestaña esté abierta. " +
+      "Para hablar con un asesor necesitas una cuenta en VMC, es gratis.",
+    anonSignup: "Crear cuenta",
     anonBannerDismiss: "Entendido",
+    // Lo que manda el badge "Asesor humano" cuando lo pulsa un visitante (D-031): el bot
+    // contesta con la invitacion a crear cuenta y su boton, por la misma ruta que si lo
+    // hubiera escrito. Sin formulario ni logica aparte.
+    askAdvisor: "Quiero hablar con un asesor",
     // Chip de fuente bajo la respuesta del bot (RF-019): el enlace ya no va en el texto.
     sourceLabel: "Fuente",
     loadingThread: "Cargando la conversación",
@@ -133,24 +138,18 @@
     statusAttending: "Un asesor te atiende",
     statusClosed: "Cerrada",
     closedCase: "Este caso está cerrado.",
-    closedAnon: "Esta conversación se cerró.",
-    newConversation: "Nueva conversación",
     backToBot: "Volver a Subastín",
     olderMessages: "Ver mensajes anteriores",
     formSending: "Enviando…",
     formFailed: "No se pudo enviar. Inténtalo de nuevo.",
     formRequired: "Falta llenar este campo",
     formSubmit: "Contactar",
-    formNext: "Siguiente",
-    formBack: "Atrás",
-    formStepOf: (actual, total) => `${actual}/${total}`,
     formClose: "Cerrar formulario",
     // D-030: badge permanente junto al compositor. Abre el formulario de asesor sin pasar
     // por el bot ni por ningun modelo (GET /handoff/form).
     advisorBadge: "Asesor humano",
-    // Titulo por paso. El servidor decide QUÉ campos van en cada uno (conversations/forms.py);
-    // el encabezado es copy de interfaz y vive aquí, como el resto de los textos.
-    formStepTitles: ["Datos de contacto", "Motivo de la consulta"],
+    // Encabezado del formulario: copy de interfaz, vive aqui como el resto de los textos.
+    formTitle: "Motivo de la consulta",
     noCases: "Cuando pidas un asesor, tu caso aparecerá aquí.",
     offlineStatus: "Sin conexión",
     caseOpenedFrom: (title) => (title ? `Abriste el caso «${title}»` : "Abriste un caso para un asesor"),
@@ -243,20 +242,17 @@
     // Ultimo `last_message_at` visto por conversacion: con el panel cerrado, un caso que
     // avanzo desde entonces suma al contador del boton flotante.
     seenAt: {},
-    // Formulario de asesor en curso: borrador (sobrevive al re-render), error, envio y el
-    // paso visible. El borrador guarda TODOS los campos, tambien los de pasos ya pasados:
-    // volver atras no puede perder lo escrito, y el envio manda el formulario completo.
+    // Formulario de asesor en curso: borrador (sobrevive al re-render), error y envio.
     formDraft: {},
     formError: null,
     formBusy: false,
-    formStep: 0,
     // D-030: formulario abierto desde el badge "Asesor humano" ({spec, conversationId}); no
     // es un mensaje del hilo. `dismissedForm` es el id del formulario del bot cerrado con la
     // x; `composerReturn` hace que el compositor vuelva subiendo cuando un formulario se va.
     localForm: null,
     dismissedForm: null,
     composerReturn: false,
-    // Obligatorios vacios marcados al intentar avanzar (asterisco + aviso); se limpian al
+    // Campos vacios marcados al intentar enviar (asterisco + aviso); se limpian al
     // escribir. `formEntering` pospone renders mientras el compositor se pliega;
     // `repliesReturn` hace que los botones de pregunta vuelvan con fade; `formOpenSeq` da
     // una clave nueva a cada apertura desde el badge para que anime su entrada.
@@ -952,6 +948,8 @@
       userName: data.user.name,
       userId: wantedUser,
       conversationId: data.conversation.conversation_id,
+      // D-031: a donde se manda al visitante a crear su cuenta (la URL la decide el servidor).
+      signupUrl: (data.links && data.links.signup) || null,
       identity,
     };
     state.session = session;
@@ -976,7 +974,6 @@
     state.seenAt = {};
     state.formDraft = {};
     state.formError = null;
-    state.formStep = 0;
     state.localForm = null;
     state.dismissedForm = null;
     state.formMissing = new Set();
@@ -1158,7 +1155,6 @@
     state.unseenBelow = 0;
     state.stickToBottom = true;
     state.formError = null;
-    state.formStep = 0;
     state.view = "messages";
     state.unread = 0;
     render();
@@ -1173,14 +1169,6 @@
   function openMessagesTab() {
     if (isAnonymous()) openThread();
     else setView("inbox");
-  }
-
-  /** Anonimo con la conversacion cerrada: otra sesion es otra conversacion (D-002/D-018). */
-  function startNewConversation() {
-    reset();
-    state.view = "messages";
-    render();
-    boot();
   }
 
   // ───────────────────────────────── Sondeo (TD-001) ─────────────────────────────────
@@ -1305,19 +1293,15 @@
       return jitter(Math.min(CONFIG.backoffMaxMs, CONFIG.backoffBaseMs * factor));
     }
     const conv = state.conversation;
-    if (conv && conv.status === "CLOSED") {
-      return state.open && !isAnonymous() ? jitter(CONFIG.listEveryMs) : 0;
-    }
+    // Solo un caso (autenticado) puede estar CLOSED: ahi lo unico que cambia es la lista.
+    if (conv && conv.status === "CLOSED") return state.open ? jitter(CONFIG.listEveryMs) : 0;
     // Esperando al bot se sondea rapido este el panel abierto o cerrado: cerrado, la
     // respuesta tiene que llegar al contador del boton. Antes el sondeo se detenia al
     // cerrar y el badge no se enteraba hasta reabrir (DETAILS.md §4.19).
     if (waitingForBot()) return jitter(CONFIG.pollWaitingMs);
-    if (state.open) {
-      if (waitingAdvisor(conv)) return jitter(CONFIG.pollAdvisorMs);
-      return jitter(CONFIG.pollOpenMs);
-    }
-    if (isAnonymous()) return waitingAdvisor(conv) ? jitter(CONFIG.pollAnonPendingClosedMs) : 0;
-    return hasOpenCase() ? jitter(CONFIG.pollClosedMs) : 0;
+    if (state.open) return jitter(waitingAdvisor(conv) ? CONFIG.pollAdvisorMs : CONFIG.pollOpenMs);
+    // Cerrado: solo los casos del autenticado pueden traer novedades (una llamada a la lista).
+    return !isAnonymous() && hasOpenCase() ? jitter(CONFIG.pollClosedMs) : 0;
   }
 
   function schedulePoll() {
@@ -1329,62 +1313,24 @@
     state.pollTimer = setTimeout(poll, delay);
   }
 
-  // ───────────────────────── Formulario de asesor (D-029) ─────────────────────────
+  // ───────────────────────── Formulario de asesor (D-029, solo autenticado) ─────────────────────────
 
-  /** Los pasos que declara el servidor, en orden. Un formulario sin `step` (o con todos los
-   *  campos en el mismo) es UN paso: ahi el boton es directamente el de enviar. */
-  function formSteps(spec) {
-    const vistos = [];
-    for (const field of spec.fields) {
-      const paso = field.step || 1;
-      if (!vistos.includes(paso)) vistos.push(paso);
-    }
-    return vistos.sort((a, b) => a - b);
-  }
-
-  function fieldsOfStep(spec, paso) {
-    return spec.fields.filter((field) => (field.step || 1) === paso);
-  }
-
-  /** Nombres de los obligatorios vacios de la lista (vacia si estan todos). */
-  function missingIn(fields) {
-    return fields
-      .filter((field) => field.required && !String(state.formDraft[field.name] || "").trim())
-      .map((field) => field.name);
-  }
-
-  /** Siguiente: si falta un obligatorio del paso, TODOS los que falten ganan asterisco y
-   *  aviso a la vez (marcar uno por click es hacer dar tres clicks por tres campos). */
-  function advanceHandoff(spec) {
-    const pasos = formSteps(spec);
-    const faltan = missingIn(fieldsOfStep(spec, pasos[state.formStep]));
-    if (faltan.length) {
-      state.formMissing = new Set(faltan);
-      state.formError = null;
-      render();
-      return;
-    }
-    state.formMissing = new Set();
-    state.formError = null;
-    state.formStep = Math.min(state.formStep + 1, pasos.length - 1);
-    render();
-  }
-
+  /** Contactar: todos los campos son obligatorios. Si falta alguno, TODOS los que falten
+   *  ganan asterisco y aviso a la vez (marcar uno por click es hacer dar tres clicks por
+   *  tres campos); si no, se envia y se entra al caso nuevo. */
   async function submitHandoff(spec) {
     if (state.formBusy) return;
     const values = {};
     for (const field of spec.fields) {
       const value = String(state.formDraft[field.name] || "").trim();
       if (value) values[field.name] = value;
-      else if (field.required) {
-        // Un obligatorio vacio puede estar en un paso anterior (el usuario volvio y lo borro):
-        // se salta a SU paso, porque marcar un campo que no se ve no le dice nada a nadie.
-        state.formMissing = new Set([field.name]);
-        state.formError = null;
-        state.formStep = formSteps(spec).indexOf(field.step || 1);
-        render();
-        return;
-      }
+    }
+    const faltan = spec.fields.filter((field) => !values[field.name]).map((field) => field.name);
+    if (faltan.length) {
+      state.formMissing = new Set(faltan);
+      state.formError = null;
+      render();
+      return;
     }
     state.formBusy = true;
     state.formError = null;
@@ -1396,44 +1342,24 @@
       );
       state.formBusy = false;
       state.formDraft = {};
-      state.formStep = 0; // si mas adelante se ofrece otro, empieza por el principio
       state.localForm = null;
       state.dismissedForm = null;
       markFormGone();
-      const conv = data.conversation;
-      if (conv.conversation_id === id) {
-        // Anonimo: su misma conversacion ya espera al asesor; el sondeo trae lo nuevo.
-        applyConversation(conv);
-        state.typingSince = null;
-        await pollActive();
-        render();
-      } else {
-        // Autenticado: se abrio un caso aparte; se entra a el y el hilo sigue con el bot.
-        applyConversation(conv);
-        await fetchConversations().catch(() => null);
-        switchConversation(conv.conversation_id);
-      }
+      // Se abrio un caso aparte: se entra a el y el hilo sigue con el bot.
+      applyConversation(data.conversation);
+      await fetchConversations().catch(() => null);
+      switchConversation(data.conversation.conversation_id);
     } catch (error) {
       if (isStale(error)) return; // cambio de usuario en medio del envio: ya no hay formulario
       state.formBusy = false;
       const detail = error.detail;
-      const campo = detail && typeof detail === "object" ? detail.field : null;
       state.formError = {
-        field: campo,
+        field: detail && typeof detail === "object" ? detail.field : null,
         message:
           (detail && typeof detail === "object" && detail.detail) ||
           (typeof detail === "string" ? detail : null) ||
           TEXT.formFailed,
       };
-      // El servidor valida el formulario ENTERO (formato del correo, largo del asunto): si lo
-      // que rechaza esta en un paso anterior, hay que llevar al usuario ahi o veria un error
-      // sobre un campo invisible.
-      if (campo) {
-        const conElError = spec.fields.find((field) => field.name === campo);
-        if (conElError) {
-          state.formStep = formSteps(spec).indexOf(conElError.step || 1);
-        }
-      }
       render();
     }
   }
@@ -1900,10 +1826,11 @@
       const cambioDeDia = lastDay !== diaAntes;
       items.push(renderBubble(message, cambioDeDia || !sameGroup(previo, message)));
       previo = message;
-      // Quick replies (D-028): SOLO bajo el ultimo mensaje del hilo y sin envios en vuelo —
-      // en cuanto el usuario responde (click o texto), los botones desaparecen del render.
+      // Quick replies (D-028), preguntas hermanas (D-030) y enlaces (D-031): SOLO bajo el
+      // ultimo mensaje del hilo y sin envios en vuelo — en cuanto el usuario responde (click
+      // o texto), los botones desaparecen del render.
       if (message === ultimo && state.pending.size === 0 && !form) {
-        const botones = renderQuickReplies(message) || renderRelatedQuestions(message);
+        const botones = renderQuickReplies(message) || renderRelatedQuestions(message) || renderLinks(message);
         if (botones) items.push(botones);
       }
     }
@@ -2005,20 +1932,13 @@
     );
   }
 
-  /** Conversacion cerrada (D-029): de solo lectura. El anonimo abre otra sesion; el
-   *  autenticado vuelve a su hilo con Subastín. */
+  /** Caso cerrado (D-029): de solo lectura; se vuelve al hilo con Subastín. */
   function renderClosedBar() {
-    const anon = isAnonymous();
     return h(
       "div",
       { class: "closed-bar" },
-      h("span", { text: anon ? TEXT.closedAnon : TEXT.closedCase }),
-      h("button", {
-        class: "qr",
-        type: "button",
-        text: anon ? TEXT.newConversation : TEXT.backToBot,
-        onclick: () => (anon ? startNewConversation() : openThread()),
-      })
+      h("span", { text: TEXT.closedCase }),
+      h("button", { class: "qr", type: "button", text: TEXT.backToBot, onclick: openThread })
     );
   }
 
@@ -2086,9 +2006,6 @@
     );
   }
 
-  /** Tarjeta de formulario de asesor (D-029) bajo el mensaje del bot que la trae en metadata.
-   *  Los campos vienen del servidor (nombre/correo/telefono para el anonimo, RF-003); aqui
-   *  solo se dibujan y se envian: la validacion real vive en conversations/forms.py. */
   /** El formulario de asesor que esta a la vista, o null: el abierto desde el badge
    *  (`state.localForm`) o el que el bot dejo como ULTIMO mensaje (D-029), salvo que se haya
    *  cerrado con la x. Solo con el bot atendiendo: derivada o cerrada, no hay nada que pedir. */
@@ -2106,26 +2023,21 @@
     return { spec: interaction, key: "form:" + ultimo.message_id, local: false };
   }
 
-  /** Tarjeta del formulario (D-029, rediseño D-030): a todo el ancho, "1/2" en vez de "Paso
-   *  1 de 2", una x que la cierra, y la validacion al INTENTAR avanzar: un obligatorio vacio
+  /** Tarjeta del formulario (D-029, rediseño D-030; un solo paso desde D-031): a todo el
+   *  ancho, con una x que la cierra, y la validacion al INTENTAR enviar: un campo vacio
    *  recien entonces gana su asterisco y su aviso ("Falta llenar este campo"), que se van al
-   *  escribir. Nada de asteriscos ni botones apagados de entrada. */
+   *  escribir. Los campos vienen del servidor (asunto, detalle y correo si hace falta); aqui
+   *  solo se dibujan y se envian: la validacion real vive en conversations/forms.py. */
   function renderHandoffForm(spec, key) {
     const error = state.formError;
-    const pasos = formSteps(spec);
-    // El paso pudo quedar fuera de rango si el formulario cambio de forma entre renders.
-    const indice = Math.min(state.formStep, pasos.length - 1);
-    const ultimo = indice === pasos.length - 1;
-    const stepFields = fieldsOfStep(spec, pasos[indice]);
-    const fields = stepFields.map((field) => {
+    const fields = spec.fields.map((field) => {
       const serverError = error && error.field === field.name ? error.message : null;
-      const missing = state.formMissing.has(field.name);
-      const flagged = missing || Boolean(serverError);
+      const flagged = state.formMissing.has(field.name) || Boolean(serverError);
       const attrs = {
         name: field.name,
         maxlength: String(field.max || state.maxChars),
         class: flagged ? "is-invalid" : null,
-        autocomplete: field.type === "email" ? "email" : field.type === "tel" ? "tel" : field.name === "name" ? "name" : "off",
+        autocomplete: field.type === "email" ? "email" : "off",
         oninput: (event) => {
           state.formDraft[field.name] = event.target.value;
           // Al escribir se retira la marca de ESE campo: dejarla en rojo mientras lo corrigen
@@ -2151,25 +2063,17 @@
         flagged ? h("small", { class: "field-hint", text: serverError || TEXT.formRequired }) : null
       );
     });
-    // "Siguiente" es neutro y "Contactar" es primario a proposito: solo el ultimo boton manda
-    // algo al equipo. Siempre activo (salvo enviando): la validacion es al pulsar.
+    // Siempre activo (salvo enviando): la validacion es al pulsar.
     const submitBtn = h("button", {
-      class: ultimo ? "qr qr-solid" : "qr btn-neutral",
+      class: "qr qr-solid",
       type: "submit",
       disabled: state.formBusy ? "" : null,
-      text: state.formBusy ? TEXT.formSending : ultimo ? spec.submit || TEXT.formSubmit : TEXT.formNext,
+      text: state.formBusy ? TEXT.formSending : spec.submit || TEXT.formSubmit,
     });
-    // Con un solo paso (el autenticado que ya tiene correo) no hay progreso que anunciar; la
-    // x y el titulo se quedan igual.
     const cabecera = h(
       "div",
       { class: "form-head" },
-      h(
-        "div",
-        { class: "form-head-text" },
-        h("strong", { text: TEXT.formStepTitles[pasos.length > 1 ? indice : 1] || "" }),
-        pasos.length > 1 ? h("small", { text: TEXT.formStepOf(indice + 1, pasos.length) }) : null
-      ),
+      h("strong", { text: TEXT.formTitle }),
       h("button", { class: "form-close", type: "button", "aria-label": TEXT.formClose, title: TEXT.formClose, onclick: () => closeForm() }, ICON.x())
     );
     return h(
@@ -2178,31 +2082,14 @@
         class: "form-card" + (firstRenderOf(key) ? " is-new" : ""),
         onsubmit: (event) => {
           event.preventDefault();
-          if (ultimo) submitHandoff(spec);
-          else advanceHandoff(spec);
+          submitHandoff(spec);
         },
       },
       cabecera,
       fields,
       // Un error sin campo (409, red) va aqui; el de un campo ya se ve debajo de ese campo.
       error && !error.field ? h("p", { class: "form-error", text: error.message }) : null,
-      h(
-        "div",
-        { class: "form-actions" },
-        indice > 0
-          ? h("button", {
-              class: "btn-plain",
-              type: "button",
-              text: TEXT.formBack,
-              onclick: () => {
-                state.formError = null;
-                state.formStep = indice - 1;
-                render();
-              },
-            })
-          : null,
-        submitBtn
-      )
+      h("div", { class: "form-actions" }, submitBtn)
     );
   }
 
@@ -2290,9 +2177,12 @@
 
   /** Badge "Asesor humano" (D-030): pide la tarjeta al servidor (sin bot ni modelo) y la
    *  muestra en el hilo. La transicion (botones que se van, compositor que se pliega) la
-   *  hace `render()` al ver que hay un formulario por mostrar. */
+   *  hace `render()` al ver que hay un formulario por mostrar. El visitante no tiene
+   *  tarjeta (D-031): el badge le pregunta al bot, que contesta con la invitacion a crear
+   *  cuenta y su boton. */
   async function openAdvisorForm() {
     if (visibleForm() || !canAskAdvisor()) return;
+    if (isAnonymous()) return sendMessage(TEXT.askAdvisor);
     const id = state.activeId;
     let spec;
     try {
@@ -2306,7 +2196,6 @@
     if (!spec || !Array.isArray(spec.fields)) return;
     state.formOpenSeq += 1;
     state.localForm = { spec, conversationId: id || state.activeId, seq: state.formOpenSeq };
-    state.formStep = 0;
     state.formError = null;
     state.formMissing = new Set();
     state.stickToBottom = true;
@@ -2558,10 +2447,23 @@
     return wrap.childNodes.length ? wrap : null;
   }
 
+  /** Enlaces (D-031): botones que abren una URL en otra pestaña, bajo el mensaje del bot que
+   *  los trae en metadata (hoy, "Crear cuenta gratis" para el visitante). Solo http(s). */
+  function renderLinks(message) {
+    const interaction = message.metadata && message.metadata.interaction;
+    if (!interaction || interaction.type !== "LINKS" || message.sender_type !== "BOT") return null;
+    const wrap = h("div", { class: "quick-replies" + (firstRenderOf("lk:" + message.message_id) ? " is-new" : "") });
+    for (const option of Array.isArray(interaction.options) ? interaction.options : []) {
+      if (!option || !option.label || !/^https?:\/\//.test(option.url || "")) continue;
+      wrap.appendChild(h("a", { class: "qr qr-solid", href: option.url, target: "_blank", rel: "noopener noreferrer", text: option.label }));
+    }
+    return wrap.childNodes.length ? wrap : null;
+  }
+
   const ANON_BANNER_KEY = CONFIG.storageKey + ":anon-banner";
 
-  /** Franja del visitante dentro del hilo (D-030): parte del widget, no un mensaje del bot
-   *  (no ensucia el historial ni cuesta una fila). Se cierra una vez por pestaña. */
+  /** Franja del visitante dentro del hilo (D-030/D-031): parte del widget, no un mensaje del
+   *  bot (no ensucia el historial ni cuesta una fila). Se cierra una vez por pestaña. */
   function renderAnonBanner() {
     if (!isAnonymous() || state.anonBannerDismissed) return null;
     try {
@@ -2569,10 +2471,16 @@
     } catch (_) {
       /* sin storage: se muestra igual y se cierra con el flag en memoria */
     }
+    const signup = state.session && state.session.signupUrl;
     return h(
       "div",
       { class: "banner banner-anon" },
-      h("span", { text: TEXT.anonBanner }),
+      h(
+        "span",
+        {},
+        TEXT.anonBanner + " ",
+        signup ? h("a", { class: "link", href: signup, target: "_blank", rel: "noopener noreferrer", text: TEXT.anonSignup }) : null
+      ),
       h("button", {
         class: "link",
         type: "button",
@@ -3094,20 +3002,12 @@
       width: 46px; height: 46px; border: 2px solid rgba(255, 255, 255, .55);
       animation: avatar-float 7s ease-in-out infinite;
     }
-    .avatar-sm { width: 26px; height: 26px; font-size: 12px; align-self: flex-end; box-shadow: none; }
     /* El SVG del bot ocupa una fraccion del circulo para que respire dentro del degradado. */
     .avatar > svg { width: 68%; height: 68%; }
     .avatar-lg > svg { width: 64%; height: 64%; }
     .bot-eye {
       transform-box: fill-box; transform-origin: center;
       animation: bot-blink 6.5s var(--ease) infinite;
-    }
-    /* Mientras Subastin piensa, un anillo sale del avatar: dice "esta trabajando" sin texto. */
-    .avatar.is-thinking { position: relative; }
-    .avatar.is-thinking::after {
-      content: ""; position: absolute; inset: -3px; border-radius: inherit;
-      border: 2px solid rgba(132, 96, 229, .45);
-      animation: ring-pulse 1.9s var(--ease) infinite;
     }
 
     /* ── Hilo ────────────────────────────────────────────────────────────────────────────*/
@@ -3150,6 +3050,8 @@
     .qr:active { transform: none; }
     .qr-solid { background: var(--vault-500); color: #fff; }
     .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
+    /* Un enlace con la misma pinta que un boton (D-031: "Crear cuenta gratis"). */
+    a.qr { display: inline-flex; align-items: center; text-decoration: none; }
     /* D-030: preguntas hermanas. Mismo boton que un quick reply pero alineado a la izquierda
        y con texto normal: son preguntas enteras, no opciones de un menu. */
     .quick-replies.related { max-width: 88%; }
@@ -3202,9 +3104,7 @@
     /* Los botones de pregunta vuelven con fade cuando el formulario se retira. */
     .quick-replies.is-returning { animation: fade-in .3s var(--ease) both; }
     .form-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 2px; }
-    .form-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .form-head strong { font-size: 15px; }
-    .form-head small { color: var(--ink-faint); font-size: 12px; font-weight: 600; }
     .form-close {
       flex: none; width: 28px; height: 28px; margin: -4px -6px 0 0; display: grid; place-items: center;
       border: 0; background: none; border-radius: var(--radius-pill); color: var(--ink-faint); cursor: pointer;
@@ -3212,20 +3112,8 @@
     }
     .form-close:hover { background: rgba(132, 96, 229, .1); color: var(--vault-600); }
     .form-card .req { color: #d64545; font-weight: 700; }
-    .form-card.is-leaving { animation: form-out .22s var(--ease) both; pointer-events: none; }
     @keyframes form-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
-    @keyframes form-out { to { opacity: 0; transform: translateY(-10px); } }
     .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-    /* Avanzar no es enviar: gris, sin peso. El primario se reserva para el envio real. */
-    .btn-neutral {
-      border-color: var(--line-strong); color: var(--ink-soft); background: var(--surface);
-    }
-    .btn-neutral:hover { background: var(--line); color: var(--ink); border-color: var(--line-strong); }
-    .btn-plain {
-      border: 0; background: none; color: var(--ink-faint); font: inherit; font-size: 13.5px;
-      padding: 8px 6px; cursor: pointer; margin-right: auto;
-    }
-    .btn-plain:hover { color: var(--vault-600); }
     .form-card.is-new { animation: form-in .32s var(--ease-soft) both; }
     .form-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
     .form-card input, .form-card textarea {
@@ -3382,11 +3270,6 @@
     }
     .tool-advisor:hover:not([disabled]) { background: var(--vault-500); color: #fff; }
     .tool-advisor[disabled] { border-color: var(--line-strong); }
-    /* El compositor se retira hacia abajo cuando entra un formulario y vuelve subiendo. */
-    .composer.is-leaving { animation: composer-out .26s var(--ease) both; pointer-events: none; }
-    .composer.is-returning { animation: composer-in .3s var(--ease-soft) both; }
-    @keyframes composer-out { to { opacity: 0; transform: translateY(100%); } }
-    @keyframes composer-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: none; } }
     /* El contador solo aparece cerca del tope (lo decide el JS) y se posa sobre el borde. */
     .counter {
       position: absolute; right: 12px; bottom: -7px; z-index: 1;
@@ -3500,7 +3383,6 @@
     @keyframes aurora { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(4%, 3%, 0) scale(1.09); } }
     @keyframes avatar-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
     @keyframes bot-blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
-    @keyframes ring-pulse { 0% { transform: scale(.9); opacity: .85; } 70% { transform: scale(1.3); opacity: 0; } 100% { opacity: 0; } }
     @keyframes badge-pop { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.18); opacity: 1; } 100% { transform: scale(1); } }
 
     /* ── Accesibilidad: menos MOVIMIENTO, no menos respuesta ──────────────────────────
@@ -3520,9 +3402,9 @@
       button.card:hover .cta-icon { transform: none !important; }
       /* El icono de accion conserva su giro base: no es movimiento, es su orientacion. */
       .cta-icon, button.card:hover .cta-icon { transform: rotate(90deg) !important; }
-      /* Animaciones decorativas en bucle: halos de la cabecera, flotacion, parpadeo, anillo.
+      /* Animaciones decorativas en bucle: halos de la cabecera, flotacion, parpadeo.
          Los puntos de "escribiendo" se quedan: son pequenos y comunican un estado. */
-      .home-header::before, .avatar-lg, .bot-eye, .avatar.is-thinking::after { animation: none !important; }
+      .home-header::before, .avatar-lg, .bot-eye { animation: none !important; }
       .row.is-new, .jump { animation-name: fade-in !important; animation-duration: .2s !important; }
       .status-dot { animation: none !important; }
       .jump:hover, .jump:active { transform: none !important; }
