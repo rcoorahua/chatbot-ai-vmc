@@ -501,8 +501,8 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   deja datos y ningún asesor la toma; pedir asesor o decir que sí a "¿deseas contactar a un
   asesor?" responde fijo con la invitación a iniciar sesión y el botón **Iniciar sesión**
   (URL mock `VMC_LOGIN_URL`, también en `links.login` de la sesión). Sin botón de asesor en
-  la UI: el último mensaje sugerido bajo cada respuesta es **Quiero hablar con un asesor**
-  y las reglas lo detectan. Se retiran el formulario de contacto, el handoff en el sitio, el
+  la UI: el último mensaje sugerido bajo cada respuesta es **Contactar asesor** y su clic
+  se reconoce por estructura, sin modelo. Se retiran el formulario de contacto, el handoff en el sitio, el
   `CLOSED` de la anónima, el tope de handoffs por IP y los campos `contact_*`; el formulario
   del autenticado queda en un solo paso. Detalle en [CLAUDE.md](../CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en

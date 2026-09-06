@@ -141,10 +141,11 @@ persona jurídica era el quinto hit y se perdía.
 un botón "Contactar con un asesor" cuando la respuesta o su evidencia decían "contáctanos", y
 salió en "¿cómo me registro?" porque lo decía un fragmento vecino del artículo. Después hubo
 un badge permanente en el compositor que abría el formulario sin pasar por el bot; D-031 lo
-retiró. Hoy la **última opción** de `RELATED_QUESTIONS` es siempre `{"label": "Quiero hablar
-con un asesor", "value": "ADVISOR", "kind": "handoff"}`, sin `query`: el clic manda ese texto
-como cualquier mensaje y lo detectan las reglas (`advisor_request`). Autenticado: formulario
-(`HANDOFF_FORM`); anónimo: invitación a iniciar sesión con botón (`LINKS`).
+retiró. Hoy la **última opción** de `RELATED_QUESTIONS` es siempre `{"label": "Contactar
+asesor", "value": "ADVISOR", "kind": "handoff"}`, sin `query`: el worker reconoce el clic por
+su `value` contra el último mensaje del bot (`related.is_advisor_click`), sin clasificador ni
+modelo. Autenticado: formulario (`HANDOFF_FORM`); anónimo: invitación a iniciar sesión con
+botón (`LINKS`). "Quiero un asesor" escrito de la nada sí pasa por el orquestador.
 
 ## 4. El mapeo completo del corpus
 

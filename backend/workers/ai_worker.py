@@ -230,9 +230,25 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # de `_handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no debe
     # abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
     anonymous = conversation.user_type == UserType.ANONYMOUS
-    related_query = related.resolve_click(
-        (message.metadata or {}).get("interaction"), _last_bot_metadata(window, block_keys)
-    )
+    interaction = (message.metadata or {}).get("interaction")
+    offered = _last_bot_metadata(window, block_keys)
+    # ── D-031: clic en "Contactar asesor" (el ultimo boton bajo la respuesta) ──
+    # Se reconoce por estructura, no por el texto: ni clasificador ni modelo. Autenticado:
+    # formulario (D-029); anonimo: invitacion a iniciar sesion. Un "quiero un asesor" escrito
+    # de la nada sigue el camino normal (reglas o modelo) y termina en el mismo sitio.
+    if related.is_advisor_click(interaction, offered):
+        logger.info(
+            "ai.advisor.click",
+            extra={
+                "conversation_id": conversation.conversation_id,
+                "message_id": message.message_id,
+                "anonymous": anonymous,
+            },
+        )
+        _offer_handoff_form(conversation, message, reason="advisor_button",
+                            intent=Intent.ADVISOR, response=prompts.HANDOFF_OFFER_RESPONSE)
+        return
+    related_query = related.resolve_click(interaction, offered)
     if related_query is not None:
         if not _spend_quota_or_reply(conversation, message, ip_hash):
             return
@@ -432,7 +448,7 @@ def _answer_faq(
                 # contra el texto crudo: en un paso de flujo o una continuacion el texto no
                 # describe el tema y la consulta si. `candidates` y no `all_fragments`: los
                 # hits mas alla de top_k tambien cuentan (persona juridica era el quinto).
-                # El ultimo boton es siempre "Quiero hablar con un asesor" (D-031).
+                # El ultimo boton es siempre "Contactar asesor" (D-031).
                 related.related_questions(consulta.text, fragments, retrieved.candidates),
             )
         )

@@ -192,10 +192,17 @@ def test_la_metadata_lleva_la_consulta_de_cada_boton_y_cierra_con_el_de_asesor()
     assert related.related_metadata([])["interaction"]["options"] == [ASESOR]
 
 
-def test_el_boton_de_asesor_no_tiene_consulta_y_su_clic_sigue_como_texto():
+def test_el_boton_de_asesor_se_reconoce_por_estructura_y_no_tiene_consulta():
     meta = related.related_metadata(["¿A?"])
     click = {"action_id": related.RELATED_ACTION_ID, "value": related.ADVISOR_OPTION_VALUE}
-    assert related.resolve_click(click, meta) is None
+    assert related.resolve_click(click, meta) is None, "no es una pregunta hermana"
+    assert related.is_advisor_click(click, meta) is True
+    # Una hermana no es el asesor; botones viejos (otra metadata) o un payload raro tampoco.
+    assert related.is_advisor_click({"action_id": related.RELATED_ACTION_ID, "value": "Q1"},
+                                    meta) is False
+    assert related.is_advisor_click(click, {"interaction": {"type": "QUICK_REPLIES"}}) is False
+    assert related.is_advisor_click(click, None) is False
+    assert related.is_advisor_click(None, meta) is False
 
 
 def test_el_clic_se_resuelve_contra_la_metadata_del_bot():

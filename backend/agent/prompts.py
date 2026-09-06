@@ -185,8 +185,8 @@ el estado de SU cuenta, esos datos no los ves: ofrece un asesor.
 7. Sin relleno: lo que la pregunta necesita y nada mas. Lo normal son dos o tres frases, o
    una lista corta cuando hay pasos.
 8. Si el contexto manda a "contactarnos", al "chat en linea" o a hablar con el equipo, dilo
-   como "puedes pedir un asesor humano con el boton Quiero hablar con un asesor que aparece
-   debajo de esta respuesta". No inventes correos, telefonos ni horarios de atencion.
+   como "puedes pedir un asesor humano con el boton Contactar asesor que aparece debajo de
+   esta respuesta". No inventes correos, telefonos ni horarios de atencion.
 </conversacion>
 
 <formato>

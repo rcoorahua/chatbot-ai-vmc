@@ -373,15 +373,17 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   real, y viaja también en `POST /chat/sessions` (`links.login`) para la franja del
   visitante. **Sin botón de asesor en la UI** (el badge "Asesor humano" de D-030 y
   `GET /handoff/form` desaparecen): el agente **solo sugiere** al asesor dentro de la
-  conversación, y lo detecta **por el mensaje**: (a) bajo toda respuesta con evidencia, el
-  **último mensaje sugerido** es siempre **"Quiero hablar con un asesor"**
-  (`related.ADVISOR_OPTION_LABEL`, `kind: handoff`, sin `query`): el clic manda ese texto
-  como cualquier mensaje y lo detectan las reglas (`advisor_request`), sin modelo — por eso
-  el texto tiene que caer en una regla ADVISOR de `heuristics.py`; (b) sin evidencia, el bot
-  pregunta "¿Deseas contactar a un asesor del equipo?" (flujo `HANDOFF_CONFIRM`, **igual**
-  para anónimo y autenticado, botones sí/no que son mensajes y se entienden también
-  escritos). Lo único que distingue al anónimo es la respuesta a ese sí o a "quiero un
-  asesor" (`_offer_handoff_form`): iniciar sesión en vez del formulario. **Formulario del
+  conversación: (a) bajo toda respuesta con evidencia, el **último mensaje sugerido** es
+  siempre **"Contactar asesor"** (`related.ADVISOR_OPTION_LABEL`, `kind: handoff`, sin
+  `query`): el clic se reconoce **por estructura** (`related.is_advisor_click`, el `value`
+  del evento contra el último mensaje del bot) y va directo a `_offer_handoff_form` **sin
+  clasificador ni modelo**; (b) sin evidencia, el bot pregunta "¿Deseas contactar a un
+  asesor del equipo?" (flujo `HANDOFF_CONFIRM`, **igual** para anónimo y autenticado; los
+  botones sí/no son la respuesta a ESA pregunta, no un botón de asesor, y se entienden
+  también escritos); (c) "quiero un asesor" escrito de la nada sí pasa por el orquestador
+  (reglas o modelo) y termina en el mismo sitio. Lo único que distingue al anónimo es la
+  respuesta final (`_offer_handoff_form`): iniciar sesión en vez del formulario. El lado
+  autenticado (formulario → caso → ticket) queda como está: Aaron lo revisará aparte. **Formulario del
   autenticado en un solo paso** (asunto, detalle y correo si el JWT no lo trajo; el "dos
   pasos" era por los cinco campos del anónimo) y **solo lo ofrece el bot**;
   `contact_name/email/phone` desaparecen de Conversations, Tickets, la API del asesor y el

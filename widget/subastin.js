@@ -24,10 +24,10 @@
  *   pestaña. Para el anonimo eso ES la regla de negocio (RF-004: sin historial entre sesiones);
  *   para el autenticado es solo una cache, su conversacion vive en el servidor (D-003).
  * - El asesor se llega SOLO por la conversacion (D-031): no hay boton de asesor en la UI. El
- *   bot cierra cada respuesta con el mensaje sugerido "Quiero hablar con un asesor" y, sin
- *   evidencia, pregunta "¿deseas contactar a un asesor?"; el clic manda ese texto como
- *   cualquier mensaje y lo detectan las reglas del servidor. El visitante solo tiene FAQ: en
- *   vez del formulario recibe la invitacion a iniciar sesion con su boton.
+ *   bot cierra cada respuesta con el mensaje sugerido "Contactar asesor" (el servidor
+ *   reconoce el clic por su `value`, sin modelo) y, sin evidencia, pregunta "¿deseas
+ *   contactar a un asesor?". El visitante solo tiene FAQ: en vez del formulario recibe la
+ *   invitacion a iniciar sesion con su boton.
  * - Entrega en tiempo real por sondeo (TD-001): 2,5 s con el panel abierto, 15 s cerrado para
  *   la burbuja de no leidos, pausado con la pestaña oculta.
  * - Un mensaje se muestra como enviado SOLO cuando el backend confirma (RNF-003); si falla,
@@ -2371,8 +2371,8 @@
     for (const option of interaction.options) {
       if (!option || !option.label || !option.value) continue;
       // El mensaje sugerido de asesor (kind = handoff, siempre el ultimo, D-031) va en color
-      // solido: no es "otra pregunta", es la salida a una persona. Se manda como texto y las
-      // reglas del servidor lo detectan; ningun boton abre nada por su cuenta.
+      // solido: no es "otra pregunta", es la salida a una persona. Viaja como cualquier clic
+      // (texto + evento) y el servidor lo reconoce por su `value`; aqui no se decide nada.
       const handoff = option.kind === "handoff";
       wrap.appendChild(
         h(

@@ -206,24 +206,34 @@ def _clic_de_asesor(conversation):
     })
 
 
-def test_el_clic_en_el_boton_de_asesor_ofrece_el_formulario_sin_modelo(limpiar, modelo, indice):
+def test_el_clic_en_el_boton_de_asesor_ofrece_el_formulario_sin_modelo(
+    limpiar, modelo, indice, tablas
+):
     conversation = _conversacion(limpiar)
     _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
     antes = len(modelo.classify_calls())
 
-    _atiende(_clic_de_asesor(conversation))
+    click = _clic_de_asesor(conversation)
+    _atiende(click)
 
     ultima = _bot(conversation.conversation_id)[-1]
     assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
     assert ultima.metadata["interaction"]["type"] == "HANDOFF_FORM"
-    assert len(modelo.classify_calls()) == antes, "lo detectan las reglas, no el modelo"
+    assert len(modelo.classify_calls()) == antes, "se reconoce por estructura, sin modelo"
+    assert [u["source"] for u in _usos(tablas, click.message_id)] == [
+        "handoff_offer:advisor_button"
+    ], "una sola fila, gratis, sin clasificacion"
 
 
-def test_el_visitante_que_pulsa_el_boton_de_asesor_recibe_el_login(limpiar, modelo, indice):
+def test_el_visitante_que_pulsa_el_boton_de_asesor_recibe_el_login(
+    limpiar, modelo, indice, tablas
+):
     conversation = _conversacion(limpiar, anonymous=True)
     _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    antes = len(modelo.classify_calls())
 
-    _atiende(_clic_de_asesor(conversation))
+    click = _clic_de_asesor(conversation)
+    _atiende(click)
 
     ultima = _bot(conversation.conversation_id)[-1]
     assert ultima.content == prompts.ANON_LOGIN_RESPONSE
@@ -231,6 +241,24 @@ def test_el_visitante_que_pulsa_el_boton_de_asesor_recibe_el_login(limpiar, mode
         "type": "LINKS",
         "options": [{"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}],
     }
+    assert len(modelo.classify_calls()) == antes, "el anonimo tampoco toca ningun modelo"
+    assert [u["source"] for u in _usos(tablas, click.message_id)] == ["login:advisor_button"]
+
+
+def test_un_clic_de_asesor_sobre_botones_viejos_sigue_como_texto(limpiar, modelo, indice):
+    """El usuario dejo los botones atras: el clic ya no corresponde al ultimo mensaje del
+    bot, asi que "Contactar asesor" se atiende como texto (orquestador), nunca como error."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    viejos = _bot(conversation.conversation_id)[-1].metadata["interaction"]
+    _atiende(_escribe(_fresca(conversation), "¿cuánto está el dólar?"))  # sin evidencia
+    llamadas = len(modelo.classify_calls())
+
+    _atiende(_escribe(_fresca(conversation), related.ADVISOR_OPTION_LABEL, interaction={
+        "action_id": viejos["action_id"], "value": related.ADVISOR_OPTION_VALUE,
+    }))
+
+    assert len(modelo.classify_calls()) == llamadas + 1, "sin boton vigente, el texto se clasifica"
 
 
 def test_sin_evidencia_no_hay_fuente_ni_botones_de_hermanas(limpiar, modelo, indice):
