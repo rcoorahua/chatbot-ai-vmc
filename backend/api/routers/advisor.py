@@ -8,7 +8,8 @@ Contrato con la app del asesor (frontend/):
                                                         atras (RF-012); `after=` solo lo nuevo.
                                                         Abrirlo consume los no leidos (RF-035)
   POST /advisor/conversations/{id}/take               → toma atomica (RF-029 / AC-005); 409 si
-                                                        otro la tiene, con el estado actual
+                                                        otro la tiene (con el estado actual) o si
+                                                        es de un visitante (D-031: solo el bot)
   POST /advisor/conversations/{id}/messages           → 201, idempotente por client_message_id
                                                         (RF-034 / RF-038 / AC-006); 409 si no es mia
   POST /advisor/conversations/{id}/close              → cierre (RF-031): un caso queda CLOSED
@@ -337,6 +338,14 @@ def take(conversation_id: str, advisor: CurrentAdvisor) -> ConversationDetail:
             {
                 "detail": "La conversacion ya esta tomada o no se puede tomar en su estado",
                 "conversation": ConversationDetail.from_model(exc.conversation).model_dump(),
+            },
+        ) from exc
+    except service.AnonymousConversation as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": "Las conversaciones de visitantes las atiende solo el bot (D-031)",
+                "conversation": ConversationDetail.from_model(conversation).model_dump(),
             },
         ) from exc
     # El ticket sigue a la conversacion: tomarla lo pasa a IN_PROGRESS (y lo crea si el caso

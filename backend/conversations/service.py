@@ -5,10 +5,10 @@ Reglas de negocio (CLAUDE.md; D-029 cerrada el 2026-09-02, revisada por D-031 el
   CASOS abiertos (kind=CASE) que nacen del formulario de handoff. Escalar no apaga el hilo:
   el caso espera al asesor aparte y el bot sigue respondiendo en el hilo.
 - Anonimo: UNA conversacion por sesion (D-002/D-018), sin cuenta no se recupera (RF-004) y
-  caduca por TTL. Solo FAQ: no deriva ni deja datos; para un asesor se le manda a crear
-  cuenta (D-031).
-- CLOSED es definitivo y de solo lectura y solo lo alcanza un CASO; un hilo (autenticado o
-  anonimo) nunca se cierra: si un asesor lo tomo y lo cierra, vuelve al bot (D-023).
+  caduca por TTL. Solo FAQ y solo el bot: no deriva, no deja datos y ningun asesor la toma;
+  para hablar con una persona se le manda a iniciar sesion (D-031).
+- CLOSED es definitivo y de solo lectura y solo lo alcanza un CASO; el hilo del autenticado
+  nunca se cierra: si un asesor lo tomo y lo cierra, vuelve al bot (D-023).
 - RF-014: el largo del mensaje se limita por configuracion (D-005).
 
 Lo que NO hace: encolar el job de IA. Eso lo compone la entrada (api/routers/chat.py) con
@@ -263,22 +263,14 @@ def latest_messages(
 
 def handoff_allowed(conversation: Conversation) -> bool:
     """Desde esta conversacion se puede pedir un asesor: es el hilo de un AUTENTICADO (D-031:
-    el anonimo no deriva), el bot esta atendiendo y nadie la tomo. La misma regla decide el
-    409 de POST /handoff y si el widget puede abrir el formulario desde su badge
-    (GET /handoff/form)."""
+    el anonimo no deriva), el bot esta atendiendo y nadie la tomo. Decide el 409 de
+    POST /handoff."""
     return (
         conversation.user_type == UserType.AUTHENTICATED
         and conversation.kind == ConversationKind.THREAD
         and conversation.status == ConversationStatus.BOT_ATTENDING
         and not conversation.assigned_advisor_id
     )
-
-
-def handoff_form_for(conversation: Conversation) -> dict:
-    """La tarjeta de formulario que le corresponde a esta conversacion (D-029): el correo
-    solo si el JWT de VMC no lo trajo. Es la misma spec que ofrece el bot; el badge del
-    widget la pide por aqui (D-030)."""
-    return forms.handoff_form_spec(needs_email=not conversation.user_email)
 
 
 def request_handoff(
@@ -442,6 +434,11 @@ class ConversationAlreadyTaken(RuntimeError):
         self.conversation = conversation
 
 
+class AnonymousConversation(RuntimeError):
+    """D-031: la conversacion de un visitante la atiende SOLO el bot; ningun asesor la toma
+    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion."""
+
+
 def list_inbox(
     status: ConversationStatus | None, *, advisor_id: str | None = None, limit: int | None = None
 ) -> list[Conversation]:
@@ -514,7 +511,10 @@ def take_conversation(
     conversation: Conversation, *, advisor_id: str, advisor_name: str | None
 ) -> Conversation:
     """Toma atomica (RF-029 / AC-005). Idempotente si ya es mia; si otro la tiene, error con
-    el estado actual para que la app se actualice sin duplicar atencion."""
+    el estado actual para que la app se actualice sin duplicar atencion. La conversacion de
+    un visitante no se toma (D-031)."""
+    if conversation.user_type == UserType.ANONYMOUS:
+        raise AnonymousConversation(conversation.conversation_id)
     if conversation.assigned_advisor_id == advisor_id:
         return conversation
     note = _system_note(
@@ -649,8 +649,8 @@ def send_wait_message_once(conversation: Conversation, text: str) -> bool:
 
 
 def returns_to_bot_on_close(conversation: Conversation) -> bool:
-    """Un hilo con el bot no se cierra (D-003; el anonimo tampoco, D-031: lo que lo termina
-    es cerrar la pestaña): cerrarlo lo devuelve al bot. Solo un caso termina CLOSED (D-029)."""
+    """El hilo del autenticado no se cierra (D-003): cerrarlo lo devuelve al bot. Solo un
+    caso termina CLOSED (D-029). El anonimo ni siquiera se toma (D-031)."""
     return conversation.kind == ConversationKind.THREAD
 
 
@@ -664,8 +664,7 @@ def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
         raise NotAssignedToAdvisor(conversation.conversation_id)
     if returns_to_bot_on_close(conversation):
         note = _system_note(
-            conversation.conversation_id, SystemEvent.TICKET_CLOSED, {"advisor_id": advisor_id},
-            expires_at=conversation.expires_at,
+            conversation.conversation_id, SystemEvent.TICKET_CLOSED, {"advisor_id": advisor_id}
         )
         done = repository.release_advisor(conversation.conversation_id, advisor_id, note=note)
     else:

@@ -17,8 +17,7 @@
   <p>Corre sola contra la API local (<code>:8000</code>) y escribe el resultado abajo. Sin
     dependencias: sirve para verificar a mano o desde Chrome headless
     (<code>chrome --headless=new --dump-dom http://localhost:8080/selftest.html</code>).
-    No gasta llamadas de IA: el unico mensaje que manda (el visitante pidiendo asesor, D-031)
-    se resuelve por reglas.</p>
+    No manda mensajes al bot: no gasta llamadas de IA.</p>
   <ul id="checks"></ul>
   <pre id="results">(corriendo…)</pre>
 
@@ -101,37 +100,10 @@
     const tokenA = sessA.token;
     const convA = sessA.conversationId;
 
-    // ── 1b. Badge "Asesor humano" (D-030) ──
-    // Regresion del 2026-09-03: la transicion del formulario se llamaba a si misma y con
-    // `prefers-reduced-motion` (lo que reporta Chrome headless, y Windows con los efectos de
-    // animacion apagados) reventaba la pila: el boton no abria NADA. Solo pide la tarjeta,
-    // no deriva: sin IA y sin caso.
-    const badge = () => shadow() && shadow().querySelector(".tool-advisor");
-    const formCard = () => shadow() && shadow().querySelector(".form-card");
-    const composer = () => shadow() && shadow().querySelector(".composer");
-    check("el badge de asesor esta en el compositor", await until(() => badge() && !badge().disabled));
-    badge().click();
-    check("el badge abre el formulario de asesor", await until(() => formCard(), 6000));
-    check("con el formulario abierto no hay compositor", !composer());
-    // Lo escrito en el formulario NO puede terminar en el cuadro de mensajes: el rescate del
-    // borrador tomaba el primer `textarea` de la pantalla, que con el formulario abierto es
-    // su campo de detalle (Aaron, 2026-09-03). No se envia nada: solo se avanza de paso.
-    const escribir = (el, v) => {
-      const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-    const detalle = formCard() && formCard().querySelector("textarea");
-    check("el formulario llega al campo de detalle", Boolean(detalle));
-    if (detalle) escribir(detalle, "TEXTO-DEL-FORMULARIO");
-    await sleep(3000); // un sondeo re-renderiza: es donde se rescataba el textarea equivocado
-    const cerrar = formCard() && formCard().querySelector(".form-close");
-    check("el formulario trae su boton de cerrar", Boolean(cerrar));
-    if (cerrar) cerrar.click();
-    check("cerrar el formulario devuelve el compositor", await until(() => composer() && !formCard()));
-    const caja = composer() && composer().querySelector("textarea");
-    check("lo escrito en el formulario no cae en el cuadro de mensajes",
-      caja && caja.value === "", caja && JSON.stringify(caja.value));
+    // ── 1b. Sin boton de asesor en la UI (D-031): el asesor se llega solo por la conversacion ──
+    // (El formulario de asesor solo lo ofrece el bot, asi que aqui, sin worker, no se abre;
+    // la regresion del borrador que caia en el cuadro de mensajes se prueba a mano: TEST.md C26b.)
+    check("no hay badge de asesor en el compositor", !shadow().querySelector(".tool-advisor"));
 
     // ── 2. A → B sin recargar y SIN avisar: la pagina solo reasigna el JWT ──
     const tSwitch = Date.now();
@@ -160,14 +132,9 @@
     window.Subastin.setIdentity(null);
     check("logout deja sesion anonima (panel abierto)", await until(() => session() && session().userType === "ANONYMOUS"));
     check("el anonimo no ve mensajes de B", !bubbles().some((t) => t.includes("Beto Selftest")));
-    // ── 3b. Visitante = solo FAQ (D-031): franja con enlace a crear cuenta y badge sin formulario ──
-    const signupLink = () => shadow() && shadow().querySelector(".banner-anon a.link");
-    check("la franja del visitante trae el enlace a crear cuenta", await until(() => signupLink() && signupLink().href === session().signupUrl), signupLink() && signupLink().href);
-    await until(() => badge() && !badge().disabled);
-    badge().click();
-    // Sin formulario: el badge manda "Quiero hablar con un asesor" al bot (se resuelve por
-    // reglas, sin IA; aqui el worker ni corre, el mensaje solo queda en la cola).
-    check("el badge del visitante no abre formulario", await until(() => bubbles().some((t) => t.includes("Quiero hablar con un asesor")), 4000) && !formCard());
+    // ── 3b. Visitante = solo FAQ (D-031): la franja lleva el enlace a iniciar sesion ──
+    const loginLink = () => shadow() && shadow().querySelector(".banner-anon a.link");
+    check("la franja del visitante trae el enlace a iniciar sesion", await until(() => loginLink() && loginLink().href === session().loginUrl), loginLink() && loginLink().href);
 
     // ── 4. JWT invalido: error de identidad, sin conservar lo anterior ──
     window.Subastin.setIdentity(jwtBad);

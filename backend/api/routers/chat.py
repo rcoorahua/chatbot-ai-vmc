@@ -12,7 +12,7 @@ Contrato con el widget (widget/subastin.js):
                                                      409 si la conversacion esta cerrada
   POST /chat/conversations/{id}/handoff            → 201: formulario de asesor (D-029): abre
                                                      un caso; 409 para el anonimo (D-031: solo
-                                                     FAQ, se le invita a crear cuenta)
+                                                     FAQ, se le invita a iniciar sesion)
 
 Toda ruta salvo la primera exige `Authorization: Bearer <token de sesion>`. Autorizacion: el
 autenticado ve todo lo suyo (hilo y casos, por `user_id`); el anonimo solo la conversacion
@@ -102,10 +102,10 @@ class SessionLimits(BaseModel):
 
 class SessionLinks(BaseModel):
     """Enlaces de VMC que el widget muestra. Viajan en la sesion por la misma razon que los
-    limites: son configuracion (`VMC_SIGNUP_URL`, mock hasta que VMC confirme la real), no
+    limites: son configuracion (`VMC_LOGIN_URL`, mock hasta que VMC confirme la real), no
     constantes del widget."""
 
-    signup: str
+    login: str
 
 
 class SessionOut(BaseModel):
@@ -234,7 +234,7 @@ def create_session(body: SessionIn, request: Request) -> SessionOut:
         conversation=ConversationOut.from_model(conversation),
         created=created,
         limits=SessionLimits(max_message_chars=get_settings().max_message_chars),
-        links=SessionLinks(signup=get_settings().vmc_signup_url),
+        links=SessionLinks(login=get_settings().vmc_login_url),
     )
 
 
@@ -289,26 +289,6 @@ def list_messages(
     )
 
 
-class HandoffFormOut(BaseModel):
-    # La misma spec que el bot deja en `metadata.interaction` cuando ofrece el formulario.
-    interaction: dict[str, Any]
-
-
-@router.get("/conversations/{conversation_id}/handoff/form", response_model=HandoffFormOut)
-def handoff_form(conversation_id: str, session: auth.CurrentSession) -> HandoffFormOut:
-    """La tarjeta de formulario de asesor para abrirla desde el badge del widget (D-030), sin
-    que el bot la ofrezca y sin pasar por ningun modelo. 409 si desde aqui no se puede pedir
-    asesor (anonimo, caso, conversacion ya derivada o cerrada): la misma regla que
-    POST /handoff."""
-    conversation = _owned_conversation(session, conversation_id)
-    if not service.handoff_allowed(conversation):
-        raise HTTPException(status.HTTP_409_CONFLICT, _HANDOFF_NOT_ALLOWED)
-    return HandoffFormOut(**service.handoff_form_for(conversation))
-
-
-_HANDOFF_NOT_ALLOWED = "Desde esta conversacion no se puede pedir un asesor"
-
-
 @router.post(
     "/conversations/{conversation_id}/handoff",
     response_model=HandoffOut,
@@ -335,7 +315,9 @@ def request_handoff(
             "un asesor lo cierre.",
         ) from exc
     except service.HandoffNotAllowed as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, _HANDOFF_NOT_ALLOWED) from exc
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Desde esta conversacion no se puede pedir un asesor"
+        ) from exc
     # RF-023: el trabajo humano se registra como ticket. Va DESPUES de derivar y fuera de la
     # transaccion a proposito: la conversacion ya es durable y el usuario ya vio su
     # confirmacion, asi que un fallo aqui no puede convertirse en un error para el. La red de

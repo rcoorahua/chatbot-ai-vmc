@@ -13,8 +13,8 @@ Criterios:
   AC-W4  pedir asesor ofrece el formulario (tarjeta HANDOFF_FORM) al autenticado: asunto y
          detalle (y correo si el JWT no lo trajo); la derivacion real la hace
          POST /chat/.../handoff, no el worker. El anonimo (D-031) recibe en su lugar la
-         invitacion fija a crear cuenta con el boton (interaction LINKS), sin modelo; sin
-         evidencia tampoco se le pregunta por el asesor: mismo boton
+         invitacion fija a iniciar sesion con el boton (interaction LINKS), sin modelo; sin
+         evidencia recibe la MISMA pregunta que el autenticado y su "si" lleva al login
   AC-W5  con el caso en espera, los mensajes se guardan, la IA no responde y el aviso de
          espera sale UNA sola vez (RF-026/RF-027 / AC-004)
   AC-W6  toda decision queda en AIUsage, tambien las gratuitas (llm-cost-optimizer)
@@ -335,13 +335,13 @@ def _confirmacion_ofrecida(conversation_id):
     return ultima, [o["value"] for o in interaction["options"]]
 
 
-def _enlace_de_cuenta(conversation_id):
-    """La ultima respuesta del bot trae el boton "Crear cuenta gratis" (D-031) y nada mas."""
+def _enlace_de_login(conversation_id):
+    """La ultima respuesta del bot trae el boton "Iniciar sesión" (D-031) y nada mas."""
     ultima = _respuestas_bot(conversation_id)[-1]
     interaction = (ultima.metadata or {}).get("interaction") or {}
     assert interaction.get("type") == "LINKS", ultima.metadata
     assert interaction["options"] == [
-        {"label": prompts.SIGNUP_LINK_LABEL, "url": get_settings().vmc_signup_url}
+        {"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}
     ]
     return ultima
 
@@ -434,23 +434,27 @@ def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
     assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
 
 
-def test_el_anonimo_sin_evidencia_recibe_el_boton_de_crear_cuenta(
+def test_el_anonimo_sin_evidencia_recibe_la_misma_pregunta_y_su_si_lleva_al_login(
     limpiar, tablas, fake_llm, sin_rag
 ):
-    """D-031: al visitante no se le pregunta "¿te conecto con un asesor?" (no puede tener
-    uno): se le dice que no hay dato y que con cuenta lo consulta con un asesor."""
+    """D-031: el sistema no distingue al visitante al preguntar "¿deseas contactar a un
+    asesor?"; lo distingue al responder que si: iniciar sesion en vez del formulario."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    ultima, valores = _confirmacion_ofrecida(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE and valores == ["YES", "NO"]
 
-    ultima = _enlace_de_cuenta(conversation.conversation_id)
-    assert ultima.content == prompts.FAQ_NO_EVIDENCE_ANON_RESPONSE
+    conversation = repository.get_conversation(conversation.conversation_id)
+    _atiende(_escribe(conversation, "si"))
+
+    ultima = _enlace_de_login(conversation.conversation_id)
+    assert ultima.content == prompts.ANON_LOGIN_RESPONSE
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.active_flow is None, "sin pregunta pendiente"
+    assert actual.active_flow is None, "la pregunta ya se contesto"
     assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)
-    # Dos filas RESPONSE: la del redactor que no tuvo evidencia (`fallback`) y la salida fija.
     fuentes = {u["source"]: u for u in _usos(tablas, conversation.conversation_id)}
-    assert fuentes["signup:faq_no_evidence"]["provider"] == "NONE"
+    assert fuentes["login:faq_no_evidence"]["provider"] == "NONE"
 
 
 # ───────────────────────────── AC-W4: pedir asesor ─────────────────────────────
@@ -476,15 +480,15 @@ def test_pedir_asesor_ofrece_el_formulario_por_regla_sin_modelo(
     assert clasificacion["provider"] == "NONE", "lo resolvio la regla, no el modelo"
 
 
-def test_el_anonimo_que_pide_asesor_recibe_el_boton_de_crear_cuenta(limpiar, sin_llm, sin_rag):
-    """D-031: sin formulario ni datos de contacto; la salida es crear cuenta (gratis)."""
+def test_el_anonimo_que_pide_asesor_recibe_el_boton_de_iniciar_sesion(limpiar, sin_llm, sin_rag):
+    """D-031: sin formulario ni datos de contacto; la salida es iniciar sesion en VMC."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "quiero hablar con un asesor"))
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
-    ultima = _enlace_de_cuenta(conversation.conversation_id)
-    assert ultima.content == prompts.ANON_ADVISOR_RESPONSE
+    ultima = _enlace_de_login(conversation.conversation_id)
+    assert ultima.content == prompts.ANON_LOGIN_RESPONSE
 
 
 def test_catalogo_responde_fijo_mientras_herald_no_exista(limpiar, sin_llm, sin_rag):

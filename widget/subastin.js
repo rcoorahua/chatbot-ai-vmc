@@ -23,9 +23,11 @@
  * - Sesion en sessionStorage: sobrevive a navegar entre paginas y se pierde al cerrar la
  *   pestaña. Para el anonimo eso ES la regla de negocio (RF-004: sin historial entre sesiones);
  *   para el autenticado es solo una cache, su conversacion vive en el servidor (D-003).
- * - El visitante solo tiene FAQ (D-031): no hay formulario ni datos de contacto; pedir un
- *   asesor le devuelve la invitacion a crear cuenta (gratis) con su boton, y el badge de
- *   asesor simplemente manda esa pregunta al bot.
+ * - El asesor se llega SOLO por la conversacion (D-031): no hay boton de asesor en la UI. El
+ *   bot cierra cada respuesta con el mensaje sugerido "Quiero hablar con un asesor" y, sin
+ *   evidencia, pregunta "¿deseas contactar a un asesor?"; el clic manda ese texto como
+ *   cualquier mensaje y lo detectan las reglas del servidor. El visitante solo tiene FAQ: en
+ *   vez del formulario recibe la invitacion a iniciar sesion con su boton.
  * - Entrega en tiempo real por sondeo (TD-001): 2,5 s con el panel abierto, 15 s cerrado para
  *   la burbuja de no leidos, pausado con la pestaña oculta.
  * - Un mensaje se muestra como enviado SOLO cuando el backend confirma (RNF-003); si falla,
@@ -99,16 +101,12 @@
     tooFast: "Vas muy rapido. Espera un momento",
     retry: "Reintentar",
     // D-030/D-031: franja del visitante DENTRO del hilo, una vez por pestaña. Dice la regla
-    // tal cual es: la conversacion vive lo que la pestaña y el asesor pide cuenta (gratis).
+    // tal cual es: la conversacion vive lo que la pestaña y el asesor pide iniciar sesion.
     anonBanner:
       "Estás como visitante: tu conversación dura mientras esta pestaña esté abierta. " +
-      "Para hablar con un asesor necesitas una cuenta en VMC, es gratis.",
-    anonSignup: "Crear cuenta",
+      "Para hablar con un asesor, inicia sesión en VMC.",
+    anonLogin: "Iniciar sesión",
     anonBannerDismiss: "Entendido",
-    // Lo que manda el badge "Asesor humano" cuando lo pulsa un visitante (D-031): el bot
-    // contesta con la invitacion a crear cuenta y su boton, por la misma ruta que si lo
-    // hubiera escrito. Sin formulario ni logica aparte.
-    askAdvisor: "Quiero hablar con un asesor",
     // Chip de fuente bajo la respuesta del bot (RF-019): el enlace ya no va en el texto.
     sourceLabel: "Fuente",
     loadingThread: "Cargando la conversación",
@@ -145,9 +143,6 @@
     formRequired: "Falta llenar este campo",
     formSubmit: "Contactar",
     formClose: "Cerrar formulario",
-    // D-030: badge permanente junto al compositor. Abre el formulario de asesor sin pasar
-    // por el bot ni por ningun modelo (GET /handoff/form).
-    advisorBadge: "Asesor humano",
     // Encabezado del formulario: copy de interfaz, vive aqui como el resto de los textos.
     formTitle: "Motivo de la consulta",
     noCases: "Cuando pidas un asesor, tu caso aparecerá aquí.",
@@ -246,20 +241,16 @@
     formDraft: {},
     formError: null,
     formBusy: false,
-    // D-030: formulario abierto desde el badge "Asesor humano" ({spec, conversationId}); no
-    // es un mensaje del hilo. `dismissedForm` es el id del formulario del bot cerrado con la
-    // x; `composerReturn` hace que el compositor vuelva subiendo cuando un formulario se va.
-    localForm: null,
+    // `dismissedForm` es el id del formulario del bot cerrado con la x; `composerReturn`
+    // hace que el compositor vuelva subiendo cuando un formulario se va.
     dismissedForm: null,
     composerReturn: false,
     // Campos vacios marcados al intentar enviar (asterisco + aviso); se limpian al
     // escribir. `formEntering` pospone renders mientras el compositor se pliega;
-    // `repliesReturn` hace que los botones de pregunta vuelvan con fade; `formOpenSeq` da
-    // una clave nueva a cada apertura desde el badge para que anime su entrada.
+    // `repliesReturn` hace que los botones de pregunta vuelvan con fade.
     formMissing: new Set(),
     formEntering: false,
     repliesReturn: false,
-    formOpenSeq: 0,
     // Hasta cuando ignorar los eventos de scroll del deslizamiento programado (alinear un
     // mensaje nuevo arriba), para no confundirlos con el usuario subiendo a leer.
     autoScrollUntil: 0,
@@ -328,8 +319,6 @@
     search: () => svg(["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M21 21l-4.3-4.3"], 18),
     // Chip de fuente (D-030): un enlace externo pequeño.
     link: () => svg(["M14 4h6v6", "M20 4l-9 9", "M18 13v6H5V6h6"], 13),
-    // Badge "Asesor humano" del compositor (D-030).
-    person: () => svg(["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M4.5 20a7.5 7.5 0 0 1 15 0"], 14),
     x: () => svg(["M6 6l12 12M18 6L6 18"], 16),
   };
 
@@ -948,8 +937,8 @@
       userName: data.user.name,
       userId: wantedUser,
       conversationId: data.conversation.conversation_id,
-      // D-031: a donde se manda al visitante a crear su cuenta (la URL la decide el servidor).
-      signupUrl: (data.links && data.links.signup) || null,
+      // D-031: a donde se manda al visitante a iniciar sesion (la URL la decide el servidor).
+      loginUrl: (data.links && data.links.login) || null,
       identity,
     };
     state.session = session;
@@ -974,7 +963,6 @@
     state.seenAt = {};
     state.formDraft = {};
     state.formError = null;
-    state.localForm = null;
     state.dismissedForm = null;
     state.formMissing = new Set();
     state.typingSince = null;
@@ -1342,7 +1330,6 @@
       );
       state.formBusy = false;
       state.formDraft = {};
-      state.localForm = null;
       state.dismissedForm = null;
       markFormGone();
       // Se abrio un caso aparte: se entra a el y el hilo sigue con el bot.
@@ -2006,21 +1993,17 @@
     );
   }
 
-  /** El formulario de asesor que esta a la vista, o null: el abierto desde el badge
-   *  (`state.localForm`) o el que el bot dejo como ULTIMO mensaje (D-029), salvo que se haya
-   *  cerrado con la x. Solo con el bot atendiendo: derivada o cerrada, no hay nada que pedir. */
+  /** El formulario de asesor que esta a la vista, o null: el que el bot dejo como ULTIMO
+   *  mensaje (D-029), salvo que se haya cerrado con la x. Solo con el bot atendiendo:
+   *  derivada o cerrada, no hay nada que pedir. */
   function visibleForm() {
     if (state.conversation && state.conversation.status !== "BOT_ATTENDING") return null;
-    const local = state.localForm;
-    if (local && local.conversationId === state.activeId) {
-      return { spec: local.spec, key: "local:" + (local.seq || 0), local: true };
-    }
     const ultimo = state.messages[state.messages.length - 1];
     if (!ultimo || state.pending.size || ultimo.sender_type !== "BOT") return null;
     const interaction = ultimo.metadata && ultimo.metadata.interaction;
     if (!interaction || interaction.type !== "HANDOFF_FORM" || !Array.isArray(interaction.fields)) return null;
     if (state.dismissedForm === ultimo.message_id) return null;
-    return { spec: interaction, key: "form:" + ultimo.message_id, local: false };
+    return { spec: interaction, key: "form:" + ultimo.message_id };
   }
 
   /** Tarjeta del formulario (D-029, rediseño D-030; un solo paso desde D-031): a todo el
@@ -2168,40 +2151,6 @@
     whenDone(anim, done, 320);
   }
 
-  /** ¿Se puede pedir asesor desde la conversacion abierta? La misma regla que el servidor
-   *  (`service.handoff_allowed`): el hilo con el bot atendiendo y sin asesor asignado. */
-  function canAskAdvisor() {
-    const conv = state.conversation;
-    return !conv || (conv.kind !== "CASE" && conv.status === "BOT_ATTENDING");
-  }
-
-  /** Badge "Asesor humano" (D-030): pide la tarjeta al servidor (sin bot ni modelo) y la
-   *  muestra en el hilo. La transicion (botones que se van, compositor que se pliega) la
-   *  hace `render()` al ver que hay un formulario por mostrar. El visitante no tiene
-   *  tarjeta (D-031): el badge le pregunta al bot, que contesta con la invitacion a crear
-   *  cuenta y su boton. */
-  async function openAdvisorForm() {
-    if (visibleForm() || !canAskAdvisor()) return;
-    if (isAnonymous()) return sendMessage(TEXT.askAdvisor);
-    const id = state.activeId;
-    let spec;
-    try {
-      const data = await withSession((session) =>
-        request("GET", `/chat/conversations/${id || session.conversationId}/handoff/form`, undefined, session.token)
-      );
-      spec = data.interaction;
-    } catch (_) {
-      return; // 409 (ya derivada o cerrada): el proximo sondeo trae el estado y apaga el badge
-    }
-    if (!spec || !Array.isArray(spec.fields)) return;
-    state.formOpenSeq += 1;
-    state.localForm = { spec, conversationId: id || state.activeId, seq: state.formOpenSeq };
-    state.formError = null;
-    state.formMissing = new Set();
-    state.stickToBottom = true;
-    render();
-  }
-
   /** Lo que pasa cuando un formulario deja de estar a la vista (x o envio): el compositor
    *  vuelve subiendo y los botones de pregunta reaparecen con fade. */
   function markFormGone() {
@@ -2212,14 +2161,11 @@
   }
 
   /** La x del formulario: se va con suavidad y el compositor vuelve subiendo. Lo escrito se
-   *  conserva en `formDraft` por si lo vuelve a abrir. */
+   *  conserva en `formDraft` por si el bot vuelve a ofrecerlo. */
   function closeForm() {
     fadeOutForm(() => {
-      if (state.localForm) state.localForm = null;
-      else {
-        const ultimo = state.messages[state.messages.length - 1];
-        if (ultimo) state.dismissedForm = ultimo.message_id;
-      }
+      const ultimo = state.messages[state.messages.length - 1];
+      if (ultimo) state.dismissedForm = ultimo.message_id;
       markFormGone();
       render();
     });
@@ -2424,8 +2370,9 @@
     );
     for (const option of interaction.options) {
       if (!option || !option.label || !option.value) continue;
-      // El boton de asesor (kind = handoff) va en color solido: no es "otra pregunta", es la
-      // salida a una persona, y el servidor abre el formulario sin pasar por ningun modelo.
+      // El mensaje sugerido de asesor (kind = handoff, siempre el ultimo, D-031) va en color
+      // solido: no es "otra pregunta", es la salida a una persona. Se manda como texto y las
+      // reglas del servidor lo detectan; ningun boton abre nada por su cuenta.
       const handoff = option.kind === "handoff";
       wrap.appendChild(
         h(
@@ -2448,7 +2395,7 @@
   }
 
   /** Enlaces (D-031): botones que abren una URL en otra pestaña, bajo el mensaje del bot que
-   *  los trae en metadata (hoy, "Crear cuenta gratis" para el visitante). Solo http(s). */
+   *  los trae en metadata (hoy, "Iniciar sesión" para el visitante). Solo http(s). */
   function renderLinks(message) {
     const interaction = message.metadata && message.metadata.interaction;
     if (!interaction || interaction.type !== "LINKS" || message.sender_type !== "BOT") return null;
@@ -2471,7 +2418,7 @@
     } catch (_) {
       /* sin storage: se muestra igual y se cierra con el flag en memoria */
     }
-    const signup = state.session && state.session.signupUrl;
+    const login = state.session && state.session.loginUrl;
     return h(
       "div",
       { class: "banner banner-anon" },
@@ -2479,7 +2426,7 @@
         "span",
         {},
         TEXT.anonBanner + " ",
-        signup ? h("a", { class: "link", href: signup, target: "_blank", rel: "noopener noreferrer", text: TEXT.anonSignup }) : null
+        login ? h("a", { class: "link", href: login, target: "_blank", rel: "noopener noreferrer", text: TEXT.anonLogin }) : null
       ),
       h("button", {
         class: "link",
@@ -2580,21 +2527,6 @@
           title: `${label} — ${TEXT.soon}` },
         icon
       );
-    // D-030: badge permanente "Asesor humano". Abre el formulario de asesor sin pasar por el
-    // bot ni por ningun modelo; apagado cuando desde aqui no se puede pedir (caso, derivada).
-    const advisor = h(
-      "button",
-      {
-        // Sin `title` ni `aria-label`: el texto visible "Asesor humano" ya es el nombre
-        // accesible del boton, y un tooltip que repite lo mismo solo ensucia (Aaron).
-        class: "tool tool-advisor",
-        type: "button",
-        disabled: canAskAdvisor() ? null : "",
-        onclick: openAdvisorForm,
-      },
-      ICON.person(),
-      h("span", { text: TEXT.advisorBadge })
-    );
     // Vuelve subiendo cuando un formulario acaba de retirarse (una sola vez): la animacion
     // corre sobre el elemento ya montado, en el frame siguiente al render.
     const returning = state.composerReturn;
@@ -2617,7 +2549,6 @@
           { class: "composer-actions" },
           tool(ICON.clip(), TEXT.attach),
           tool(ICON.smile(), TEXT.emoji),
-          advisor,
           sendBtn
         )
       )
@@ -3050,7 +2981,7 @@
     .qr:active { transform: none; }
     .qr-solid { background: var(--vault-500); color: #fff; }
     .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
-    /* Un enlace con la misma pinta que un boton (D-031: "Crear cuenta gratis"). */
+    /* Un enlace con la misma pinta que un boton (D-031: "Iniciar sesión"). */
     a.qr { display: inline-flex; align-items: center; text-decoration: none; }
     /* D-030: preguntas hermanas. Mismo boton que un quick reply pero alineado a la izquierda
        y con texto normal: son preguntas enteras, no opciones de un menu. */
@@ -3262,14 +3193,6 @@
     }
     .tool:hover:not([disabled]) { background: rgba(132, 96, 229, .1); color: var(--vault-600); }
     .tool[disabled] { color: var(--ink-faint); opacity: .55; cursor: default; }
-    /* Badge "Asesor humano" (D-030): chiquito, con borde vault, al lado del emoji. */
-    .tool-advisor {
-      width: auto; height: 30px; gap: 5px; padding: 0 10px 0 8px; margin-left: 4px;
-      display: inline-flex; align-items: center; border: 1.5px solid var(--vault-500);
-      color: var(--vault-600); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
-    }
-    .tool-advisor:hover:not([disabled]) { background: var(--vault-500); color: #fff; }
-    .tool-advisor[disabled] { border-color: var(--line-strong); }
     /* El contador solo aparece cerca del tope (lo decide el JS) y se posa sobre el borde. */
     .counter {
       position: absolute; right: 12px; bottom: -7px; z-index: 1;

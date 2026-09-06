@@ -21,7 +21,7 @@ Flujo por job (cada paso con su decision al lado):
     como botones (D-030, `agent/related.py`); un clic en uno de esos botones vuelve a
     entrar aqui y va al RAG directo, sin clasificador. CATALOG → respuesta fija con enlace
     mientras D-011 siga abierta. ADVISOR → formulario de asesor (autenticado) o invitacion
-    a crear cuenta con boton (anonimo, D-031). OTHER → redireccion fija.
+    a iniciar sesion con boton (anonimo, D-031). OTHER → redireccion fija.
  7. registrar TODA decision en AIUsage (skill llm-cost-optimizer), tambien las gratuitas:
     la proporcion de trafico que no paga tokens es la metrica que justifica D-006 y las reglas.
  8. Slack (RF-028) queda pendiente de D-016; el ticket, del modulo tickets (F5).
@@ -291,7 +291,7 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
                      intent=classification.intent)
     elif classification.intent == Intent.ADVISOR:
         # D-029: el autenticado deriva por formulario (el bot ofrece la tarjeta y sigue
-        # atendiendo hasta que la envie); el anonimo recibe la invitacion a crear cuenta (D-031).
+        # atendiendo hasta que la envie); el anonimo recibe la invitacion a iniciar sesion (D-031).
         _offer_handoff_form(conversation, message,
                             reason=classification.rule or "advisor_intent",
                             intent=classification.intent, response=prompts.HANDOFF_OFFER_RESPONSE)
@@ -432,8 +432,9 @@ def _answer_faq(
                 # contra el texto crudo: en un paso de flujo o una continuacion el texto no
                 # describe el tema y la consulta si. `candidates` y no `all_fragments`: los
                 # hits mas alla de top_k tambien cuentan (persona juridica era el quinto).
+                # El ultimo boton es siempre "Quiero hablar con un asesor" (D-031).
                 related.related_questions(consulta.text, fragments, retrieved.candidates),
-            ) or {}
+            )
         )
         _bot_says(conversation, result.text, metadata=metadata)
     elif result.error:
@@ -458,12 +459,12 @@ def _offer_handoff_form(
     (asunto y detalle; correo si el JWT no lo trajo) y la derivacion la hace
     `POST /chat/.../handoff` cuando el usuario la envia. Hasta entonces el bot sigue
     encendido: quien ignora la tarjeta puede seguir preguntando. Al anonimo no se le ofrece
-    nada que llenar (D-031): se le dice que necesita una cuenta, con el boton para crearla."""
+    nada que llenar (D-031): se le pide iniciar sesion, con el boton al login de VMC."""
     # Con un humano en camino, ningun flujo guiado sigue esperando datos (MAPEO.md §4.2).
     _clear_flow_if_active(conversation)
     if conversation.user_type == UserType.ANONYMOUS:
-        _reply_signup(conversation, message, prompts.ANON_ADVISOR_RESPONSE,
-                      source=f"signup:{reason}", intent=intent)
+        _reply_login(conversation, message, prompts.ANON_LOGIN_RESPONSE,
+                     source=f"login:{reason}", intent=intent)
         return
     _bot_says(conversation, response,
               metadata=forms.handoff_form_spec(needs_email=not conversation.user_email))
@@ -480,7 +481,7 @@ def _offer_handoff_form(
                  intent=str(intent), handoff=True)
 
 
-def _reply_signup(
+def _reply_login(
     conversation: Conversation,
     message: Message,
     text: str,
@@ -488,14 +489,15 @@ def _reply_signup(
     source: str,
     intent: Intent | None,
 ) -> None:
-    """D-031: la salida fija del anonimo hacia una cuenta de VMC (pedir asesor, sin
-    evidencia, cuota agotada). El enlace viaja como boton (`interaction.type = LINKS`, el
-    widget lo dibuja bajo la burbuja), nunca dentro del texto (D-025/D-030). Gratis."""
+    """D-031: la salida fija del anonimo hacia el login de VMC (pidio asesor, dijo que si a
+    la pregunta de asesor, o agoto su cuota). El enlace viaja como boton
+    (`interaction.type = LINKS`, el widget lo dibuja bajo la burbuja), nunca dentro del
+    texto (D-025/D-030). Gratis."""
     links = {
         "interaction": {
             "type": "LINKS",
             "options": [
-                {"label": prompts.SIGNUP_LINK_LABEL, "url": get_settings().vmc_signup_url}
+                {"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}
             ],
         }
     }
@@ -518,17 +520,10 @@ def _offer_handoff_confirm(
     sigue saliendo directo — volver a preguntarle "¿quieres un asesor?" a quien acaba de
     pedirlo es un turno de mas por nada.
 
-    Al anonimo no se le pregunta (D-031: no puede tener asesor): sin evidencia se le dice la
-    verdad y se le da la salida (crear cuenta); con el modelo caido, solo que reintente.
+    El anonimo recibe la MISMA pregunta (D-031: el sistema no lo distingue aqui); lo que
+    cambia es la respuesta a su "si": iniciar sesion en vez del formulario
+    (`_offer_handoff_form`).
     """
-    if conversation.user_type == UserType.ANONYMOUS:
-        if text:
-            _reply_fixed(conversation, message, prompts.MODEL_UNAVAILABLE_ANON_RESPONSE,
-                         "fixed_model_unavailable", intent=Intent.FAQ)
-        else:
-            _reply_signup(conversation, message, prompts.FAQ_NO_EVIDENCE_ANON_RESPONSE,
-                          source="signup:faq_no_evidence", intent=Intent.FAQ)
-        return
     # Se RELEE la conversacion: si en este mismo job se limpio un flujo guiado (un paso que se
     # resolvio y no trajo evidencia), `conversation.flow_version` quedo viejo y la transicion
     # fallaria por condicion — dejando al usuario sin pregunta y sin respuesta. Lo encontro
@@ -818,12 +813,12 @@ def _spend_quota_or_reply(
 
 
 def _reply_quota(conversation: Conversation, message: Message) -> None:
-    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a crear cuenta, con el
-    boton (duplica su cuota y habilita el asesor, D-027/D-031); al autenticado, a pedir un
+    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a iniciar sesion, con
+    el boton (duplica su cuota y habilita el asesor, D-027/D-031); al autenticado, a pedir un
     asesor — ruta que sale por reglas y funciona sin modelo."""
     if conversation.user_type == UserType.ANONYMOUS:
-        _reply_signup(conversation, message, prompts.QUOTA_EXHAUSTED_ANON_RESPONSE,
-                      source="quota:exhausted", intent=None)
+        _reply_login(conversation, message, prompts.QUOTA_EXHAUSTED_ANON_RESPONSE,
+                     source="quota:exhausted", intent=None)
         return
     _reply_fixed(conversation, message, prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE, "quota:exhausted")
 
@@ -881,20 +876,30 @@ def _last_bot_message(window: list[Message]) -> str | None:
 def _last_bot_open_question(window: list[Message]) -> str | None:
     """El último mensaje del bot, SOLO si era una pregunta abierta.
 
-    Un mensaje con `interaction` (los botones de un flujo, el sí/no del asesor, el formulario)
-    tambien termina en "?", pero es una pregunta ESTRUCTURADA: sus respuestas validas las
-    resuelve la maquinaria de flujos, y cualquier otra cosa que escriba el usuario es un tema
-    nuevo, no la continuacion del anterior. Devolverla aqui hacia que "mejor dime cuanto es la
-    comision", escrito despues de "¿quieres un asesor?", heredara el tema viejo y se buscara
-    la pregunta equivocada.
+    Un mensaje con botones que ESPERAN respuesta (los de un flujo, el sí/no del asesor, el
+    formulario) tambien termina en "?", pero es una pregunta ESTRUCTURADA: sus respuestas
+    validas las resuelve la maquinaria de flujos, y cualquier otra cosa que escriba el usuario
+    es un tema nuevo, no la continuacion del anterior. Devolverla aqui hacia que "mejor dime
+    cuanto es la comision", escrito despues de "¿quieres un asesor?", heredara el tema viejo
+    y se buscara la pregunta equivocada.
+
+    Las preguntas hermanas y el mensaje sugerido de asesor (RELATED_QUESTIONS, D-030/D-031)
+    o un enlace (LINKS) NO cuentan: son sugerencias sin estado, y desde D-031 van bajo toda
+    respuesta con evidencia — si cerraran la pregunta, un "listo" o "y luego?" nunca seria
+    continuacion.
     """
     for item in reversed(window):
         if item.sender_type != SenderType.BOT or not item.content:
             continue
-        if (item.metadata or {}).get("interaction"):
+        interaction = (item.metadata or {}).get("interaction") or {}
+        if interaction.get("type") in _AWAITING_ANSWER:
             return None
         return item.content
     return None
+
+
+# Interacciones que dejan al bot ESPERANDO una respuesta estructurada (ver arriba).
+_AWAITING_ANSWER = frozenset({flows.QUICK_REPLIES, forms.HANDOFF_FORM})
 
 
 def _last_bot_metadata(window: list[Message], block_keys: list[str]) -> dict | None:

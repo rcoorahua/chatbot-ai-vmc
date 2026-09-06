@@ -2,8 +2,8 @@
 RF-024, RF-025, RF-031, RF-035, RNF-005.
 
 Criterios:
-  AC-H1  anonimo: solo FAQ (D-031). POST /handoff y GET /handoff/form son 409, nada cambia
-         en su conversacion, y la sesion trae el enlace para crear cuenta
+  AC-H1  anonimo: solo FAQ (D-031). POST /handoff es 409, nada cambia en su conversacion, y
+         la sesion trae el enlace para iniciar sesion
   AC-H2  la conversacion anonima nace con TTL y sus mensajes lo heredan (sin chats muertos)
   AC-H3  autenticado: el formulario abre un CASO (PENDING_ADVISOR, bot apagado, asunto,
          transcripcion del hilo) y el hilo sigue BOT_ATTENDING con el bot encendido y la nota
@@ -171,12 +171,11 @@ def _tomar_y_cerrar(client, headers, conversation_id) -> dict:
 
 def test_el_anonimo_no_puede_pedir_asesor(client, limpiar):
     """D-031: al visitante no se le pide contacto ni se le abre nada; el widget lo manda a
-    crear cuenta con el enlace que viaja en la sesion."""
+    iniciar sesion con el enlace que viaja en la sesion."""
     sesion = _sesion(client, limpiar)
-    assert sesion["links"]["signup"] == get_settings().vmc_signup_url
+    assert sesion["links"]["login"] == get_settings().vmc_login_url
 
     assert _handoff(client, sesion, email="ana@example.test").status_code == 409
-    assert _formulario(client, sesion).status_code == 409
 
     actual = client.get(
         f"/chat/conversations/{sesion['conversation']['conversation_id']}", headers=_auth(sesion)
@@ -390,12 +389,11 @@ def test_cerrar_un_caso_lo_deja_cerrado_y_de_solo_lectura(client, limpiar):
     assert _handoff(client, sesion, limpiar, subject="Otro caso").status_code == 201
 
 
-@pytest.mark.parametrize("autenticado", [True, False], ids=["autenticado", "anonimo"])
-def test_cerrar_un_hilo_lo_devuelve_al_bot(client, limpiar, autenticado):
-    """AC-A7 vale para todo hilo con el bot: un asesor que lo tomo (D-022, intervencion
-    proactiva) y lo cierra lo devuelve al bot; no queda CLOSED. Al anonimo lo termina cerrar
-    la pestaña (D-031), no el asesor."""
-    sesion = _sesion(client, limpiar, autenticado=autenticado)
+def test_cerrar_el_hilo_del_autenticado_lo_devuelve_al_bot(client, limpiar):
+    """AC-A7 sigue valiendo para el hilo permanente: un asesor que lo tomo (D-022) y lo
+    cierra lo devuelve al bot; no queda CLOSED. (El anonimo ni se toma: D-031,
+    tests/test_advisor_api.py.)"""
+    sesion = _sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
     _, headers = _asesor_nuevo(client, limpiar)
 
@@ -469,37 +467,16 @@ def test_el_tope_de_sesiones_no_aplica_al_autenticado(client, limpiar, monkeypat
     assert autenticada
 
 
-# ───────────── AC-H9: la tarjeta de formulario para el badge "Asesor humano" (D-030) ─────────────
+# ───────────── AC-H9: desde un caso (ya con el equipo) no se pide otro asesor ─────────────
 
 
-def _formulario(client, sesion, conversation_id=None):
-    conversation_id = conversation_id or sesion["conversation"]["conversation_id"]
-    return client.get(
-        f"/chat/conversations/{conversation_id}/handoff/form", headers=_auth(sesion)
-    )
-
-
-def test_el_badge_recibe_la_misma_tarjeta_que_ofrece_el_bot(client, limpiar):
-    """Con correo en el JWT: solo asunto y detalle; sin correo, se pide primero. Un solo
-    paso. Sin pasar por el bot ni por ningun modelo."""
-    con_correo = _sesion(client, limpiar, autenticado=True)
-    response = _formulario(client, con_correo)
-    assert response.status_code == 200, response.text
-    spec = response.json()["interaction"]
-    assert spec["type"] == "HANDOFF_FORM"
-    assert [f["name"] for f in spec["fields"]] == ["subject", "detail"]
-
-    sin_correo = _sesion(client, limpiar, autenticado=True, email=None)
-    spec = _formulario(client, sin_correo).json()["interaction"]
-    assert [f["name"] for f in spec["fields"]] == ["email", "subject", "detail"]
-
-
-def test_la_tarjeta_es_409_cuando_no_se_puede_pedir_asesor(client, limpiar):
-    """Desde un caso (ya esta con el equipo) no se pide otro asesor."""
+def test_pedir_asesor_desde_un_caso_es_409(client, limpiar):
     sesion = _sesion(client, limpiar, autenticado=True)
     caso_id = _handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
 
-    response = _formulario(client, sesion, caso_id)
+    response = client.post(
+        f"/chat/conversations/{caso_id}/handoff", json=FORMULARIO, headers=_auth(sesion)
+    )
 
     assert response.status_code == 409, response.text
 
@@ -508,6 +485,10 @@ def test_la_tarjeta_de_otro_usuario_es_403(client, limpiar):
     uno = _sesion(client, limpiar, autenticado=True)
     otro = _sesion(client, limpiar, autenticado=True)
 
-    response = _formulario(client, otro, uno["conversation"]["conversation_id"])
+    response = client.post(
+        f"/chat/conversations/{uno['conversation']['conversation_id']}/handoff",
+        json=FORMULARIO,
+        headers=_auth(otro),
+    )
 
     assert response.status_code == 403

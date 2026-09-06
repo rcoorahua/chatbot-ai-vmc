@@ -7,7 +7,7 @@ widget la dibuja con campos y un boton. Lo que el usuario envia llega a
 security-guidance) y queda en el caso como un mensaje `FORM_RESPONSE` legible por el asesor.
 
 Solo lo ve el usuario AUTENTICADO (D-031, 2026-09-05: el anonimo no deriva, se le invita a
-crear cuenta). Campos: asunto y detalle; el correo unicamente si el JWT de VMC no lo trajo.
+iniciar sesion). Campos: asunto y detalle; el correo unicamente si el JWT de VMC no lo trajo.
 Un solo paso: los "dos pasos" de D-029 eran por los cinco campos del anonimo.
 
 Modulo puro: sin DynamoDB ni FastAPI, para que el worker (que ofrece el formulario) y la API

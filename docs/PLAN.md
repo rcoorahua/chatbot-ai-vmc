@@ -18,8 +18,8 @@ Subastín reemplaza a Intercom como plataforma propia de atención de **VMC**:
 
 - **Canal único del MVP:** chat web embebido en VMC (WhatsApp/Kapso queda fuera; sin timeline
   omnicanal).
-- **Usuarios:** anónimos (sin datos, sin historial persistente — RF-002/004; solo FAQ, sin
-  handoff: para un asesor se les manda a crear cuenta — D-002/D-031) y autenticados (identidad validada por VMC — RF-005; **D-001 cerrada**: JWT
+- **Usuarios:** anónimos (sin datos, sin historial persistente — RF-002/004; solo FAQ y solo
+  el bot, para un asesor se les manda a iniciar sesión — D-002/D-031) y autenticados (identidad validada por VMC — RF-005; **D-001 cerrada**: JWT
   firmado por el servidor de VMC, ver el flujo de sesión en §2).
 - **Automatización:** clasificación de intención (RF-015; **Gemini flash-lite** por TD-008, Haiku
   como plan B), FAQ con **RAG sobre
@@ -108,8 +108,8 @@ DynamoDB**, definida con **CDK v2 en Python**, escala a cero y con dev 100% loca
    (D-020), clasifica (`agent.classifier`, `FAQ`/`CATALOG`/`ADVISOR`/`OTHER` — RF-016), según
    intención consulta Pinecone o HERALD, redacta (`agent.writer`, o inicia handoff si no hay
    evidencia — RF-018), persiste la respuesta, registra `AIUsage`, y si hay handoff encola
-   notificación Slack. Anónimo + `ADVISOR` (o sin evidencia) = texto fijo con el botón de
-   crear cuenta (`interaction.type = LINKS`, D-031).
+   notificación Slack. Anónimo + `ADVISOR` (o "sí" a la pregunta de asesor) = texto fijo
+   con el botón de iniciar sesión (`interaction.type = LINKS`, D-031).
 4. El widget sondea mensajes nuevos (`GET …/messages?after=<message_key>`) y muestra la
    respuesta. **Implementado.**
 
@@ -495,13 +495,16 @@ Frontend en paralelo: widget (F1+), app asesor (F5), dashboard (F7).
   `POST /chat/conversations/{id}/handoff`. Un caso o la anónima cerrados quedan `CLOSED` y de
   solo lectura; el hilo del autenticado vuelve al bot (D-023). Sin GSI nuevos. Detalle y
   código en [CLAUDE.md](../CLAUDE.md).
-- **De negocio cerrada (2026-09-05, Aaron): D-031 — anónimo solo FAQ; asesor = crear
-  cuenta.** Revisa la parte anónima de D-029: el visitante tiene una conversación por pestaña
-  y no deriva ni deja datos; pedir asesor, sin evidencia o cuota agotada responden fijo con el
-  botón **Crear cuenta gratis** (URL mock `VMC_SIGNUP_URL`, también en `links.signup` de la
-  sesión). Se retiran el formulario de contacto, el handoff en el sitio, el `CLOSED` de la
-  anónima, el tope de handoffs por IP y los campos `contact_*`; el formulario del autenticado
-  queda en un solo paso. Detalle en [CLAUDE.md](../CLAUDE.md).
+- **De negocio cerrada (2026-09-05, ajustada el 06, Aaron): D-031 — anónimo solo FAQ y
+  solo el bot; el asesor se llega solo por la conversación.** Revisa la parte anónima de
+  D-029 y el badge de D-030: el visitante tiene una conversación por pestaña, no deriva ni
+  deja datos y ningún asesor la toma; pedir asesor o decir que sí a "¿deseas contactar a un
+  asesor?" responde fijo con la invitación a iniciar sesión y el botón **Iniciar sesión**
+  (URL mock `VMC_LOGIN_URL`, también en `links.login` de la sesión). Sin botón de asesor en
+  la UI: el último mensaje sugerido bajo cada respuesta es **Quiero hablar con un asesor**
+  y las reglas lo detectan. Se retiran el formulario de contacto, el handoff en el sitio, el
+  `CLOSED` de la anónima, el tope de handoffs por IP y los campos `contact_*`; el formulario
+  del autenticado queda en un solo paso. Detalle en [CLAUDE.md](../CLAUDE.md).
 - **De negocio abiertas:** D-006…D-016 y D-020 — responsables **Silvana + Julio**; detalle en
   [REQUERIMENTS.md](REQUERIMENTS.md) §6. Prioridad Alta que bloquea:
   **D-008** (taxonomía tickets), **D-010** (campos de usuario),

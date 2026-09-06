@@ -170,7 +170,12 @@ def test_sin_evidencia_no_hay_hermanas():
 # ───────────────────────── AC-RL5: metadata y clic ─────────────────────────
 
 
-def test_la_metadata_lleva_la_consulta_de_cada_boton():
+ASESOR = {
+    "label": related.ADVISOR_OPTION_LABEL, "value": related.ADVISOR_OPTION_VALUE, "kind": "handoff"
+}
+
+
+def test_la_metadata_lleva_la_consulta_de_cada_boton_y_cierra_con_el_de_asesor():
     meta = related.related_metadata(["¿A?", "¿B?"])
     assert meta == {
         "interaction": {
@@ -179,10 +184,18 @@ def test_la_metadata_lleva_la_consulta_de_cada_boton():
             "options": [
                 {"label": "¿A?", "value": "Q1", "query": "¿A?"},
                 {"label": "¿B?", "value": "Q2", "query": "¿B?"},
+                ASESOR,
             ],
         }
     }
-    assert related.related_metadata([]) is None
+    # D-031: sin hermanas, el mensaje sugerido de asesor igual va al final de la respuesta.
+    assert related.related_metadata([])["interaction"]["options"] == [ASESOR]
+
+
+def test_el_boton_de_asesor_no_tiene_consulta_y_su_clic_sigue_como_texto():
+    meta = related.related_metadata(["¿A?"])
+    click = {"action_id": related.RELATED_ACTION_ID, "value": related.ADVISOR_OPTION_VALUE}
+    assert related.resolve_click(click, meta) is None
 
 
 def test_el_clic_se_resuelve_contra_la_metadata_del_bot():

@@ -32,7 +32,8 @@ class ConversationKind(StrEnum):
             D-003) y unico por sesion para el anonimo (D-002/D-018).
     CASE    un caso para asesor, creado por el formulario de handoff de un usuario
             autenticado. Nace PENDING_ADVISOR con el bot apagado y termina CLOSED. El anonimo
-            no crea casos ni deriva (D-031): para un asesor se le manda a crear cuenta.
+            no crea casos, no deriva y ningun asesor lo toma (D-031): para hablar con una
+            persona se le manda a iniciar sesion.
     """
 
     THREAD = "THREAD"

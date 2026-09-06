@@ -17,8 +17,8 @@ Criterios:
   AC-F7  el vencimiento (24h) limpia el flujo y el mensaje sigue el pipeline normal
   AC-F8  handoff y guardrail limpian cualquier flujo activo (MAPEO.md §4.2)
   AC-F9  transiciones atomicas del repositorio: version equivocada pierde la carrera
-  AC-F10 el flujo funciona igual para anonimos; sin evidencia al resolver, invita a crear
-         cuenta con el boton (D-031), nunca deriva ni pregunta por el asesor
+  AC-F10 el flujo funciona igual para anonimos; sin evidencia al resolver, pregunta si
+         quiere un asesor igual que al autenticado (D-031), nunca deriva
 
 El modelo se sustituye por un doble programable, igual que tests/test_ai_worker.py: aqui se
 prueba la orquestacion del flujo, no Gemini.
@@ -370,8 +370,10 @@ def test_el_dato_ya_en_el_disparador_responde_directo_sin_persistir_flujo(
     respuestas = _respuestas_bot(conversation.conversation_id)
     assert len(respuestas) == 1
     assert respuestas[0].content == fake_llm.answer
-    # Sin botones (la metadata puede traer `rag_query`, la consulta que dio la evidencia).
-    assert not (respuestas[0].metadata or {}).get("interaction"), "sin botones: sin flujo"
+    # Sin botones DE FLUJO (la metadata trae `rag_query` y, como toda respuesta con evidencia,
+    # las hermanas con el mensaje sugerido de asesor al final, D-031 — eso no es un flujo).
+    interaction = (respuestas[0].metadata or {}).get("interaction") or {}
+    assert interaction.get("type") != flows.QUICK_REPLIES, "sin botones de flujo: sin flujo"
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.active_flow is None
@@ -601,13 +603,13 @@ def test_el_flujo_funciona_igual_para_el_anonimo(limpiar, tablas, sin_llm, sin_r
     assert actual.active_flow == "PARTICIPATION"
 
 
-def test_el_anonimo_sin_evidencia_al_resolver_recibe_el_boton_de_crear_cuenta(
+def test_el_anonimo_sin_evidencia_al_resolver_recibe_la_pregunta_de_asesor_no_deriva(
     limpiar, tablas, fake_llm, sin_rag
 ):
-    """D-031: si el paso se resuelve pero el RAG no trae evidencia (aqui via `sin_rag`), al
-    visitante no se le pregunta por el asesor (no puede tener uno): recibe el mensaje fijo
-    con el boton de crear cuenta, y el flujo igual se limpia (la limpieza ocurre ANTES de
-    saber si hay evidencia)."""
+    """D-031: si el paso se resuelve pero el RAG no trae evidencia (aqui via `sin_rag`), el
+    visitante recibe la misma pregunta de asesor que el autenticado (su "si" lleva a iniciar
+    sesion) y el flujo del corpus igual se limpia (la limpieza ocurre ANTES de saber si hay
+    evidencia): lo que queda pendiente es la pregunta, no el paso guiado."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "quiero participar"))
 
@@ -615,10 +617,10 @@ def test_el_anonimo_sin_evidencia_al_resolver_recibe_el_boton_de_crear_cuenta(
 
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True, "no deriva solo"
-    assert actual.active_flow is None, "ni el paso guiado ni una pregunta pendiente"
+    assert actual.active_flow == "HANDOFF_CONFIRM"
 
     respuestas = _respuestas_bot(conversation.conversation_id)
-    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_ANON_RESPONSE
+    assert respuestas[-1].content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
     interaction = (respuestas[-1].metadata or {}).get("interaction") or {}
-    assert interaction.get("type") == "LINKS" and interaction["options"][0]["url"]
+    assert interaction.get("action_id") == "CONFIRM_HANDOFF", "pregunta antes de derivar"
     assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)

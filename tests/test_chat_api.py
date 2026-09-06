@@ -121,15 +121,15 @@ def test_la_sesion_informa_el_limite_de_caracteres(client, limpiar, monkeypatch)
         reset_settings()
 
 
-def test_la_sesion_trae_el_enlace_para_crear_cuenta(client, limpiar, monkeypatch):
+def test_la_sesion_trae_el_enlace_para_iniciar_sesion(client, limpiar, monkeypatch):
     """D-031: la URL a la que el widget manda al visitante la decide el servidor
-    (`VMC_SIGNUP_URL`, mock hasta que VMC confirme la real), no una constante del widget."""
-    monkeypatch.setenv("VMC_SIGNUP_URL", "https://vmc.example.test/crear-cuenta")
+    (`VMC_LOGIN_URL`, mock hasta que VMC confirme la real), no una constante del widget."""
+    monkeypatch.setenv("VMC_LOGIN_URL", "https://vmc.example.test/login")
     reset_settings()
     try:
-        assert _sesion(client, limpiar)["links"]["signup"] == "https://vmc.example.test/crear-cuenta"
+        assert _sesion(client, limpiar)["links"]["login"] == "https://vmc.example.test/login"
     finally:
-        monkeypatch.delenv("VMC_SIGNUP_URL", raising=False)
+        monkeypatch.delenv("VMC_LOGIN_URL", raising=False)
         reset_settings()
 
 

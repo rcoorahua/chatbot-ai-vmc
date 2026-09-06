@@ -139,8 +139,10 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
 > **2026-09-02 — D-029 revisa D-002, D-003, D-017, D-019 y D-023** (ver la última viñeta de
 > esta sección). Sus textos originales se conservan abajo como historia; donde choquen, manda
 > D-029: el autenticado tiene hilo + casos y "cerrar" un caso lo deja `CLOSED`.
-> **2026-09-05 — D-031 revisa a su vez la parte anónima de D-029**: el anónimo **NO** pide
-> asesor ni deja datos; solo FAQ, y para un asesor se le manda a crear cuenta (gratis).
+> **2026-09-05 — D-031 revisa a su vez la parte anónima de D-029 y el badge de D-030**: el
+> anónimo **NO** pide asesor ni deja datos y **ningún asesor lo toma**; solo FAQ y solo el
+> bot, y para hablar con una persona se le manda a iniciar sesión. El asesor se sugiere
+> únicamente dentro de la conversación (último mensaje sugerido), sin botón en la UI.
 
 - **D-001 Identidad VMC ↔ Subastín**: JWT de identidad **firmado por el servidor de VMC** (HS256,
   secreto compartido `VMC_IDENTITY_SECRET`), dejado en la página como
@@ -328,8 +330,10 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   lista en el texto (ver D-025 revisada); (5) **el asesor NO se ofrece por contexto**: se
   probó un botón "Contactar con un asesor" cuando la respuesta o su evidencia decían
   "contáctanos", y salió en "¿cómo me registro?" porque lo decía un fragmento vecino del
-  artículo. En su lugar, un **badge permanente "Asesor humano"** junto al emoji del
-  compositor (decisión de Aaron): pide la tarjeta a `GET /chat/conversations/{id}/handoff/form`
+  artículo. En su lugar se puso un **badge permanente "Asesor humano"** junto al emoji del
+  compositor (decisión de Aaron; **retirado por D-031 el 2026-09-06**: hoy el asesor se
+  sugiere como último mensaje sugerido bajo cada respuesta, sin ningún botón en la UI). El
+  badge pedía la tarjeta a `GET /chat/conversations/{id}/handoff/form`
   (misma spec que ofrece el bot, `service.handoff_form_for`; 409 con la misma regla que
   POST /handoff, `service.handoff_allowed`) y la muestra en el hilo **sin mensaje, sin bot y
   sin modelo**; el envío sigue siendo POST /handoff. **Formulario rediseñado** (tercera
@@ -352,30 +356,44 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   final; lo propio y la primera apertura siguen aterrizando abajo, y los eventos de scroll de
   ese deslizamiento no cuentan como "el usuario subió a leer" (`autoScrollUntil`).
 
-- **D-031 Anónimo = solo FAQ; asesor = crear cuenta (2026-09-05, Aaron; revisa la parte
-  anónima de D-029 y vuelve a D-002)**. El visitante tiene **una conversación por pestaña**
-  (`sessionStorage`, D-018; la fila y sus mensajes siguen con TTL) y **solo FAQ**: no hay
-  formulario de contacto, ni handoff en el sitio, ni `CLOSED` para su conversación (un asesor
-  que la tomó por intervención proactiva y la cierra la devuelve al bot, como el hilo del
-  autenticado), ni tope de handoffs por IP (`ANON_HANDOFFS_PER_IP_PER_DAY` eliminado).
-  Pedir asesor (regla o modelo), quedarse **sin evidencia** o agotar la cuota (D-027) terminan
-  en la **misma salida fija y gratis**: "necesitas una cuenta en VMC, es gratis" con un botón
-  **"Crear cuenta gratis"** (`metadata.interaction.type = LINKS`, `{label, url}`; el widget
-  lo dibuja como enlace con pinta de botón, solo `http(s)`). La URL es un **mock**
-  (`VMC_SIGNUP_URL`, default `https://www.vmcsubastas.com/registro`) hasta que VMC confirme
-  la real, y viaja también en `POST /chat/sessions` (`links.signup`) para la franja del
-  visitante. Al anónimo **no** se le pregunta "¿te conecto con un asesor?" (no puede tener
-  uno); con el modelo caído solo se le pide reintentar. El badge "Asesor humano" del anónimo
-  manda "Quiero hablar con un asesor" al bot (misma ruta, sin lógica aparte). `POST /handoff`
-  y `GET /handoff/form` responden 409 al anónimo. **Formulario del autenticado en un solo
-  paso** (asunto, detalle y correo si el JWT no lo trajo; el "dos pasos" era por los cinco
-  campos del anónimo); `contact_name/email/phone` desaparecen de Conversations, Tickets, la
-  API del asesor y el frontend. RF-003 / AC-003 / RB-002 vuelven a quedar **sin efecto**.
-  Código: `conversations/forms.py`, `service.handoff_allowed`/`request_handoff`,
-  `workers/ai_worker._reply_signup`, `agent/prompts.ANON_ADVISOR_RESPONSE`/
-  `FAQ_NO_EVIDENCE_ANON_RESPONSE`, `api/routers/chat.py` (`SessionLinks`),
-  `widget/subastin.js` (`renderLinks`, `renderAnonBanner`). Tests: `tests/test_chat_cases.py`
-  (AC-H1), `tests/test_ai_worker.py`, `tests/test_forms.py`.
+- **D-031 Anónimo = solo FAQ y solo el bot; el asesor se llega SOLO por la conversación
+  (2026-09-05/06, Aaron; revisa la parte anónima de D-029 y el badge de D-030, y vuelve a
+  D-002)**. El sistema se plantea **sin pensar en el anónimo**: la única diferencia está en
+  el momento de derivar. **Visitante**: **una conversación por pestaña** (`sessionStorage`,
+  D-018; la fila y sus mensajes siguen con TTL) y **solo FAQ**: sin formulario de contacto,
+  sin handoff en el sitio, sin `CLOSED`, sin tope de handoffs por IP
+  (`ANON_HANDOFFS_PER_IP_PER_DAY` eliminado) y **ningún asesor la toma**: `POST
+  /advisor/…/take` responde 409 (`service.AnonymousConversation`), tampoco por intervención
+  proactiva (D-022); como nunca pasa a `PENDING_ADVISOR`, tampoco aparece en la bandeja.
+  Cuando pide asesor, o dice que sí a "¿deseas contactar a un asesor?", o agota la cuota
+  (D-027), recibe un mensaje amable que lo manda a **iniciar sesión** en VMC con el botón
+  **"Iniciar sesión"** (`metadata.interaction.type = LINKS`, `{label, url}`; el widget lo
+  dibuja como enlace con pinta de botón, solo `http(s)`). La URL es un **mock**
+  (`VMC_LOGIN_URL`, default `https://www.vmcsubastas.com/login`) hasta que VMC confirme la
+  real, y viaja también en `POST /chat/sessions` (`links.login`) para la franja del
+  visitante. **Sin botón de asesor en la UI** (el badge "Asesor humano" de D-030 y
+  `GET /handoff/form` desaparecen): el agente **solo sugiere** al asesor dentro de la
+  conversación, y lo detecta **por el mensaje**: (a) bajo toda respuesta con evidencia, el
+  **último mensaje sugerido** es siempre **"Quiero hablar con un asesor"**
+  (`related.ADVISOR_OPTION_LABEL`, `kind: handoff`, sin `query`): el clic manda ese texto
+  como cualquier mensaje y lo detectan las reglas (`advisor_request`), sin modelo — por eso
+  el texto tiene que caer en una regla ADVISOR de `heuristics.py`; (b) sin evidencia, el bot
+  pregunta "¿Deseas contactar a un asesor del equipo?" (flujo `HANDOFF_CONFIRM`, **igual**
+  para anónimo y autenticado, botones sí/no que son mensajes y se entienden también
+  escritos). Lo único que distingue al anónimo es la respuesta a ese sí o a "quiero un
+  asesor" (`_offer_handoff_form`): iniciar sesión en vez del formulario. **Formulario del
+  autenticado en un solo paso** (asunto, detalle y correo si el JWT no lo trajo; el "dos
+  pasos" era por los cinco campos del anónimo) y **solo lo ofrece el bot**;
+  `contact_name/email/phone` desaparecen de Conversations, Tickets, la API del asesor y el
+  frontend. RF-003 / AC-003 / RB-002 vuelven a quedar **sin efecto**. Código:
+  `agent/related.py` (`related_metadata` cierra con el asesor), `conversations/forms.py`,
+  `service.handoff_allowed`/`request_handoff`/`take_conversation`,
+  `workers/ai_worker._reply_login`, `agent/prompts.ANON_LOGIN_RESPONSE`,
+  `api/routers/chat.py` (`SessionLinks`), `widget/subastin.js` (`renderLinks`,
+  `renderAnonBanner`, `renderRelatedQuestions` con `kind: handoff`). Tests:
+  `tests/test_chat_cases.py` (AC-H1), `tests/test_ai_worker.py`,
+  `tests/test_ai_worker_related.py` (clic del asesor), `tests/test_advisor_api.py` (toma
+  del anónimo), `tests/test_forms.py`.
 
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
