@@ -171,6 +171,41 @@ def mark_queue_failed(message: Message) -> None:
     message.status = MessageStatus.QUEUE_FAILED  # la respuesta al widget refleja el estado real
 
 
+def get_message(conversation_id: str, message_key: str) -> Message | None:
+    return repository.get_message(conversation_id, message_key)
+
+
+def set_message_status(message: Message, status: MessageStatus) -> None:
+    """Estado tecnico del mensaje (RF-008): el worker lo lleva a PROCESSED o FAILED."""
+    repository.update_message_status(message.conversation_id, message.message_key, status)
+    message.status = status
+
+
+def start_flow(
+    conversation: Conversation, *, flow: str, step: str, expires_at: str
+) -> int | None:
+    """Abre (o mueve) el flujo guiado de la conversacion (D-028): transicion atomica sobre
+    `flow_version`. Devuelve la version nueva, o None si otro proceso movio el flujo antes
+    (rafaga D-020): ese publico los botones, este calla."""
+    return repository.set_flow_state(
+        conversation.conversation_id,
+        flow=flow,
+        step=step,
+        slots={},
+        expires_at=expires_at,
+        expected_version=conversation.flow_version,
+    )
+
+
+def clear_flow(conversation: Conversation) -> bool:
+    """Cierra el flujo guiado (paso resuelto, handoff, guardrail o vencimiento). Sube la
+    version: los botones emitidos para la version cerrada quedan invalidos. False si otro
+    proceso lo movio primero."""
+    return repository.clear_flow_state(
+        conversation.conversation_id, expected_version=conversation.flow_version
+    )
+
+
 def owns(session: ChatSession, conversation: Conversation) -> bool:
     """Autorizacion del chat publico (RNF-005). Autenticado: todo lo suyo (hilo y casos) por
     `user_id`; anonimo: solo la conversacion atada a su token."""

@@ -60,7 +60,7 @@ def consultas_rag(monkeypatch):
         vistas.append(text)
         return RagResult(relevant=[fragmento], discarded=[], threshold=0.84)
 
-    monkeypatch.setattr(ai_worker.rag, "retrieve", espia)
+    monkeypatch.setattr("backend.agent.rag.retrieve", espia)
     return vistas
 
 
@@ -337,7 +337,7 @@ def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
             return RagResult(relevant=[fragmento], discarded=[], threshold=0.84)
         return RagResult(relevant=[], discarded=[], threshold=0.84)
 
-    monkeypatch.setattr(ai_worker.rag, "retrieve", rag_selectivo)
+    monkeypatch.setattr("backend.agent.rag.retrieve", rag_selectivo)
     conversation = conversacion(limpiar)
     atiende(escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
     conversation = repository.get_conversation(conversation.conversation_id)

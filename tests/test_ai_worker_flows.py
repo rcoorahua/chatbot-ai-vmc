@@ -30,7 +30,6 @@ import pytest
 from backend.agent import flows, prompts
 from backend.conversations import repository
 from backend.core import llm
-from backend.workers import ai_worker
 from tests.helpers.scenario import (
     atiende,
     conversacion,
@@ -69,7 +68,7 @@ def _capturar_consultas(monkeypatch, *, score=0.9, topic="Participar"):
         )
         return RagResult(relevant=[fragmento], discarded=[], threshold=0.84)
 
-    monkeypatch.setattr(ai_worker.rag, "retrieve", _retrieve)
+    monkeypatch.setattr("backend.agent.rag.retrieve", _retrieve)
     return consultas
 
 

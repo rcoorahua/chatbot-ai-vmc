@@ -27,7 +27,6 @@ from backend.agent.rag import Fragment, RagResult
 from backend.conversations import repository
 from backend.core import llm
 from backend.core.clock import to_iso, utc_now
-from backend.workers import ai_worker
 from tests.helpers.fakes import FakeLLM, install_llm
 from tests.helpers.scenario import atiende, conversacion, escribe, fresca, respuestas_bot, usos_de
 
@@ -60,13 +59,13 @@ SIN = RagResult(relevant=[], discarded=[BAJO], threshold=0.84)
 
 @pytest.fixture
 def con_evidencia(monkeypatch):
-    monkeypatch.setattr(ai_worker.rag, "retrieve", lambda text, **kwargs: CON)
+    monkeypatch.setattr("backend.agent.rag.retrieve", lambda text, **kwargs: CON)
     return HIT
 
 
 @pytest.fixture
 def sin_evidencia(monkeypatch):
-    monkeypatch.setattr(ai_worker.rag, "retrieve", lambda text, **kwargs: SIN)
+    monkeypatch.setattr("backend.agent.rag.retrieve", lambda text, **kwargs: SIN)
     return BAJO
 
 
@@ -74,7 +73,7 @@ def sin_evidencia(monkeypatch):
 def indice_por_tema(monkeypatch):
     """Evidencia solo para el corpus: "placas en marte" no recupera nada; "comision" si."""
     monkeypatch.setattr(
-        ai_worker.rag, "retrieve",
+        "backend.agent.rag.retrieve",
         lambda text, **kwargs: CON if "comision" in text.lower() else SIN,
     )
 

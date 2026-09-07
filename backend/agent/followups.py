@@ -67,6 +67,12 @@ _ACKNOWLEDGEMENTS = phrases(
 )
 
 # Pedidos explícitos de seguir: el usuario pide el resto de algo que ya se estaba explicando.
+# Reglas de `is_continuation` que no dejan duda: un acuse ("si", "listo") o un pedido
+# explicito de seguir ("y luego?"). Con ellas el clasificador sobra y un texto repetido no es
+# "repetido". "responde_al_bot" (texto corto cualquiera tras una pregunta del bot) es mas debil
+# y sigue clasificandose con modelo.
+CERTAIN_CONTINUATIONS = frozenset({"acuse", "pide_seguir"})
+
 _CONTINUATIONS = phrases(
     "y luego", "y despues", "y ahora", "y entonces", "que sigue", "cual es el siguiente",
     "siguiente paso", "el siguiente", "continua", "continuemos", "sigue", "sigamos",
