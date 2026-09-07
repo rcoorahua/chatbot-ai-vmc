@@ -9,12 +9,25 @@ import uuid
 
 import boto3
 import pytest
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
+from fastapi.testclient import TestClient
 
 from backend.core.aws import reset_clients
 from backend.core.config import reset_settings
 from scripts.local_setup import cliente_dynamo, crear_tablas, nombres_de_tabla, recurso_dynamo
 from scripts.seed_data import TICKETS, cargar
+from tests.helpers.fakes import (
+    ExplodingLLM,
+    FakeLLM,
+    con_evidencia,
+    fragmento,
+    install_llm,
+    install_rag,
+    rag_prohibido,
+    sin_evidencia,
+)
+from tests.helpers.http import DEV_SECRET
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -141,3 +154,162 @@ def tablas(entorno_dynamo):
     """Objetos Table de boto3, listos para consultar, indexados por nombre logico."""
     dynamo = recurso_dynamo()
     return {logico: dynamo.Table(fisico) for logico, fisico in entorno_dynamo.items()}
+
+
+# ───────────────────────────── Limpieza de lo que crea cada prueba ─────────────────────────────
+
+
+class Registro:
+    """Lo que la prueba creo y hay que borrar al terminar. Llamarlo registra una conversacion
+    (el caso de siempre: `limpiar(conversation_id)`); `.asesor`, `.ticket` y `.limite` para el
+    resto. Una conversacion arrastra sus mensajes, sus filas de AIUsage y su ticket."""
+
+    def __init__(self) -> None:
+        self.conversaciones: list[str] = []
+        self.asesores: list[str] = []
+        self.tickets: list[str] = []
+        self.limites: list[str] = []
+
+    def __call__(self, conversation_id: str) -> None:
+        self.conversaciones.append(conversation_id)
+
+    conversacion = __call__
+
+    def asesor(self, advisor_id: str) -> None:
+        self.asesores.append(advisor_id)
+
+    def ticket(self, ticket_id: str) -> None:
+        self.tickets.append(ticket_id)
+
+    def limite(self, limit_key: str) -> None:
+        self.limites.append(limit_key)
+
+
+def _borrar_por_conversacion(tablas, conversation_id: str) -> None:
+    for tabla, sk in (("messages", "message_key"), ("ai_usage", "execution_key")):
+        for item in tablas[tabla].query(
+            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
+        )["Items"]:
+            tablas[tabla].delete_item(Key={"conversation_id": conversation_id, sk: item[sk]})
+    # Derivar abre un ticket (RF-023): sin borrarlo queda en el GSI de estado y rompe las
+    # pruebas de lectura que cuentan los pendientes del dataset base.
+    for item in tablas["tickets"].query(
+        IndexName="gsi1_conversation",
+        KeyConditionExpression=Key("conversation_id").eq(conversation_id),
+    )["Items"]:
+        tablas["tickets"].delete_item(Key={"ticket_id": item["ticket_id"]})
+    tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
+
+
+@pytest.fixture
+def limpiar(tablas):
+    """Registra lo creado por la prueba y lo borra al final (ver `Registro`). Las pruebas
+    que escriben NUNCA tocan el dataset de `seed_data`: crean lo suyo y lo registran aqui."""
+    registro = Registro()
+    yield registro
+    for conversation_id in registro.conversaciones:
+        _borrar_por_conversacion(tablas, conversation_id)
+    for ticket_id in registro.tickets:
+        tablas["tickets"].delete_item(Key={"ticket_id": ticket_id})
+    for advisor_id in registro.asesores:
+        tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
+    for limit_key in registro.limites:
+        for item in tablas["rate_limits"].query(
+            KeyConditionExpression=Key("limit_key").eq(limit_key)
+        )["Items"]:
+            tablas["rate_limits"].delete_item(
+                Key={"limit_key": limit_key, "window": item["window"]}
+            )
+
+
+# ───────────────────────────── Configuracion por prueba ─────────────────────────────
+
+
+@pytest.fixture
+def sin_rate_limit(monkeypatch):
+    """Apaga el tope por minuto (D-005) para las pruebas que mandan varios mensajes seguidos
+    y no prueban ESE limite (que tiene tests/test_guardrails.py)."""
+    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
+    reset_settings()
+    yield
+    reset_settings()
+
+
+@pytest.fixture
+def settings_limpios():
+    """Por si una prueba corta a medias tras tocar variables de entorno de Settings."""
+    yield
+    reset_settings()
+
+
+# ───────────────────────────── Dobles del modelo y del indice ─────────────────────────────
+
+
+@pytest.fixture
+def fake_llm(monkeypatch) -> FakeLLM:
+    """Clasificador que dice FAQ y redactor con una respuesta fija; registra las llamadas."""
+    return install_llm(monkeypatch, FakeLLM())
+
+
+@pytest.fixture
+def sin_llm(monkeypatch) -> ExplodingLLM:
+    """El camino bajo prueba NO debe tocar un modelo: si lo hace, el test falla solo."""
+    return install_llm(monkeypatch, ExplodingLLM())
+
+
+@pytest.fixture
+def sin_rag(monkeypatch):
+    """Hubo un hit, pero bajo el umbral: no es evidencia (RF-018) y aun asi queda registrado
+    para la consola de dev. Devuelve el fragmento descartado."""
+    descartado = fragmento("poco relacionado", topic="Retiro de saldo", score=0.79, source_url=None)
+    install_rag(monkeypatch, sin_evidencia(descartado))
+    return descartado
+
+
+@pytest.fixture
+def con_rag(monkeypatch):
+    """Un fragmento sobre el umbral: evidencia para el redactor. Devuelve el fragmento."""
+    frag = fragmento()
+    install_rag(monkeypatch, con_evidencia(frag))
+    return frag
+
+
+@pytest.fixture
+def sin_rag_llamada(monkeypatch):
+    """El camino bajo prueba NO debe tocar el indice (ofrecer botones, D-028)."""
+    rag_prohibido(monkeypatch)
+
+
+# ───────────────────────────── Clientes HTTP ─────────────────────────────
+
+
+@pytest.fixture
+def cola_falsa(monkeypatch):
+    """Registra los jobs que la API intenta encolar, sin SQS."""
+    enviados: list = []
+    monkeypatch.setattr("backend.api.routers.chat.jobs.enqueue_ai_job", enviados.append)
+    return enviados
+
+
+@pytest.fixture
+def client(cola_falsa):
+    """El chat publico (`/chat/*`), con el encolado sustituido por `cola_falsa`."""
+    from backend.api.main import app
+
+    return TestClient(app)
+
+
+@pytest.fixture
+def advisor_client(monkeypatch, cola_falsa):
+    """`/advisor/*` con el authorizer de dev (backend/api/dev_auth.py) en lugar de Cognito: el
+    codigo de las rutas no distingue entornos, solo lee claims. Tambien sirve el chat publico
+    (para crear la conversacion que el asesor atiende) y apaga el tope por minuto."""
+    from backend.api import dev_auth
+    from backend.api.main import app
+
+    monkeypatch.setenv("ADVISOR_DEV_AUTH", "1")
+    monkeypatch.setenv("ADVISOR_DEV_JWT_SECRET", DEV_SECRET)
+    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
+    reset_settings()
+    yield TestClient(dev_auth.DevCognitoAuthorizer(app))
+    reset_settings()

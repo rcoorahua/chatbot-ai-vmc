@@ -1,9 +1,15 @@
 """Stack unico de Subastin, parametrizado por stage.
 
-ESQUELETO — NO DESPLEGADO NUNCA. Expresa que recursos existen y como se conectan (PLAN.md §2-§3).
-Antes de el primer `cdk deploy` real: cerrar los ajustes 1-5 del modelo de datos (PLAN.md §4)
-porque los GSI no se pueden backfillear solos, y completar account/region en config.py.
+Aun NO desplegado (el CD esta apagado hasta cerrar PLAN.md §6). Expresa que recursos existen y
+como se conectan (PLAN.md §2-§3). Antes del primer `cdk deploy` real: confirmar los GSI (no se
+pueden backfillear solos) y completar account/region en config.py.
+
+Invariantes que cruzan archivos (CLAUDE.md): el esquema de las tablas y el TTL estan
+DUPLICADOS a proposito en scripts/local_setup.py, y los nombres de variable de entorno de
+`common_env`/`BUSINESS_ENV` son los mismos que lee backend/core/config.py.
 """
+
+import json
 
 import aws_cdk as cdk
 from aws_cdk import (
@@ -31,6 +37,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_lambda_event_sources as event_sources,
+)
+from aws_cdk import (
+    aws_logs as logs,
 )
 from aws_cdk import (
     aws_s3 as s3,
@@ -107,6 +116,36 @@ BUSINESS_ENV = {
     "MAX_IMAGES_PER_MESSAGE": "3",
     "MAX_IMAGES_PER_HOUR": "20",
     "ALLOWED_IMAGE_TYPES": "image/jpeg,image/png,image/webp",
+    # RAG (RF-017/018): valores CALIBRADOS contra el indice real (CLAUDE.md "RAG", BENCHMARK.md).
+    # Antes no se inyectaban y AWS usaba los defaults de core/config.py: coincidian hoy, pero
+    # una recalibracion en .env.example habria dejado a stage con el umbral viejo sin que nada
+    # avisara (auditoria 2026-09-06). infra/tests/test_business_env.py los compara con
+    # .env.example.
+    "PINECONE_INDEX_NAME": "subastin-rag",
+    "PINECONE_NAMESPACE": "helpcenter",
+    "RAG_TOP_K": "4",
+    "RAG_MIN_SCORE": "0.84",
+    "RAG_SIBLING_MARGIN": "0.04",
+    # Sesiones (D-001/D-018) y paginacion, mismos valores que core/config.py.
+    "SESSION_TTL_HOURS": "12",
+    "ANONYMOUS_SESSION_TTL_HOURS": "24",
+    "MESSAGES_PAGE_SIZE": "50",
+    "ADVISOR_THREAD_PAGE_SIZE": "20",
+    "INBOX_PAGE_SIZE": "50",
+}
+
+
+# `RetentionDays` en Python es un enum por NOMBRE (jsii), no por numero: `RetentionDays(14)`
+# revienta. `log_retention_days` (infra/config.py) se mantiene como entero legible y se mapea
+# aqui a los valores que CloudWatch acepta.
+_RETENTION = {
+    7: logs.RetentionDays.ONE_WEEK,
+    14: logs.RetentionDays.TWO_WEEKS,
+    30: logs.RetentionDays.ONE_MONTH,
+    60: logs.RetentionDays.TWO_MONTHS,
+    90: logs.RetentionDays.THREE_MONTHS,
+    180: logs.RetentionDays.SIX_MONTHS,
+    365: logs.RetentionDays.ONE_YEAR,
 }
 
 
@@ -117,7 +156,7 @@ class SubastinStack(Stack):
         removal = RemovalPolicy.RETAIN if cfg.retain_data else RemovalPolicy.DESTROY
         prefix = f"subastin-{cfg.stage}"
 
-        # ────────────────────────── DynamoDB — 5 tablas (PLAN.md §4) ──────────────────────────
+        # ───────────────── DynamoDB — 6 tablas (PLAN.md §4 + RateLimits, D-027) ─────────────────
         # Todas PAY_PER_REQUEST. Los GSI de abajo son los acordados; los ajustes 1-5 de la
         # revision (unread_count, wait_message_sent, expires_at en Messages, item marcador de
         # idempotencia, GSI2 sparse) son atributos/patrones de item — no cambian esta definicion,
@@ -280,7 +319,7 @@ class SubastinStack(Stack):
             # Regla cerrada: visibility >= 6x timeout del worker (si no, SQS re-entrega en proceso).
             visibility_timeout=Duration.seconds(6 * cfg.worker_ai_timeout_s),
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=ai_jobs_dlq),
-            # D-020: el debounce puede usar DelaySeconds por mensaje — decidir antes de F2.
+            # D-020 (cerrada): el debounce viaja como DelaySeconds por mensaje (core/jobs.py).
         )
         notifications_dlq = sqs.Queue(
             self, "NotificationsDlq", queue_name=f"{prefix}-notifications-dlq"
@@ -302,17 +341,32 @@ class SubastinStack(Stack):
         # GEMINI_API_KEY/PINECONE_API_KEY son credenciales de terceros. Ninguno de los dos se
         # puede autogenerar. Cada Lambda recibe el ARN de SOLO lo que consume (core/config.py
         # los resuelve en runtime): la api necesita identidad, el worker de IA necesita RAG/LLM.
+        # Cada secreto nace con la FORMA que core/config.py espera (un JSON con esas claves):
+        # antes CDK generaba un string suelto y, hasta cargar el valor real, cada cold start
+        # moria con un JSONDecodeError en vez de un "falta VMC_IDENTITY_SECRET" claro. Lo que
+        # es NUESTRO (SESSION_SIGNING_KEY) se genera aqui mismo; lo compartido o de terceros
+        # queda vacio hasta el put-secret-value (config.py ignora los valores vacios).
         identity_secret = secretsmanager.Secret(
             self,
             "IdentitySecret",
             secret_name=f"{prefix}-identity",
-            description="VMC_IDENTITY_SECRET + SESSION_SIGNING_KEY (D-001) - completar a mano",
+            description="VMC_IDENTITY_SECRET (completar a mano) + SESSION_SIGNING_KEY (D-001)",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template=json.dumps({"VMC_IDENTITY_SECRET": ""}),
+                generate_string_key="SESSION_SIGNING_KEY",
+                password_length=48,
+                exclude_punctuation=True,
+            ),
         )
         ai_secret = secretsmanager.Secret(
             self,
             "AiSecret",
             secret_name=f"{prefix}-ai",
             description="GEMINI_API_KEY + PINECONE_API_KEY (TD-008/RF-017) - completar a mano",
+            secret_object_value={
+                "GEMINI_API_KEY": cdk.SecretValue.unsafe_plain_text(""),
+                "PINECONE_API_KEY": cdk.SecretValue.unsafe_plain_text(""),
+            },
         )
 
         # ──────────────────────────────────── Lambdas (T2/T3) ───────────────────────────────────
@@ -336,6 +390,16 @@ class SubastinStack(Stack):
             **BUSINESS_ENV,
         }
 
+        # Retencion de logs por stage (infra/config.py): sin grupo propio, Lambda crea uno
+        # que nunca expira — `log_retention_days` existia y no se usaba (auditoria 2026-09-06).
+        def _log_group(name: str) -> logs.LogGroup:
+            return logs.LogGroup(
+                self,
+                f"{name}Logs",
+                retention=_RETENTION[cfg.log_retention_days],
+                removal_policy=removal,
+            )
+
         api_fn = lambda_.Function(
             self,
             "ApiFn",
@@ -344,9 +408,12 @@ class SubastinStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             memory_size=cfg.api_memory_mb,
             timeout=Duration.seconds(15),  # la API no llama a la IA (T8)
+            log_group=_log_group("Api"),
             environment={
                 **common_env,
                 "AI_JOBS_QUEUE_URL": ai_jobs.queue_url,
+                # Solo la mira /dev/queues (consola de stage); la API nunca encola ahi.
+                "NOTIFICATIONS_QUEUE_URL": notifications.queue_url,
                 "IDENTITY_SECRET_ARN": identity_secret.secret_arn,
             },
         )
@@ -357,8 +424,9 @@ class SubastinStack(Stack):
             code=_lambda_code("requirements-worker-ai.txt"),
             handler="backend.workers.ai_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
-            memory_size=1024,
+            memory_size=cfg.worker_ai_memory_mb,
             timeout=Duration.seconds(cfg.worker_ai_timeout_s),
+            log_group=_log_group("WorkerAi"),
             environment={
                 **common_env,
                 "NOTIFICATIONS_QUEUE_URL": notifications.queue_url,
@@ -376,6 +444,10 @@ class SubastinStack(Stack):
             handler="backend.workers.notify_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(30),
+            log_group=_log_group("WorkerNotify"),
+            # Sin `environment` arrancaba con STAGE=dev: en prod habria logueado en DEBUG y
+            # con contenido (auditoria 2026-09-06). Mismo entorno base que las otras dos.
+            environment=common_env,
         )
         worker_notify_fn.add_event_source(
             event_sources.SqsEventSource(

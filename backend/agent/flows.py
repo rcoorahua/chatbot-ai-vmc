@@ -19,14 +19,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from backend.agent.heuristics import normalize
+from backend.core.metadata import InteractionType, choice, with_interaction
+from backend.core.text import bare, lexicon, normalize
 
 # Vigencia del flujo (MAPEO.md §2): la conversacion es permanente (D-003), el flujo no.
 # Pasado esto, el estado se ignora y se limpia en la primera oportunidad.
 FLOW_TTL_HOURS = 24
 
 # Tipo de interaccion que el widget sabe dibujar (metadata del mensaje del bot).
-QUICK_REPLIES = "QUICK_REPLIES"
+QUICK_REPLIES = str(InteractionType.QUICK_REPLIES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,18 +182,12 @@ _SELECT_HAB_TOPIC = FlowStep(
 # el mismo: hay que recordar que se pregunto algo y validar la respuesta contra ese paso.
 HANDOFF_CONFIRM = "HANDOFF_CONFIRM"
 
-def _lexicon(*items: str) -> frozenset[str]:
-    """El lexico pasa por la MISMA normalizacion que el mensaje, asi "sí", "si" y "SI" caen en
-    la misma entrada sin duplicarlas a mano (heuristics.normalize)."""
-    return frozenset(normalize(item) for item in items)
-
-
-_CONFIRM_YES = _lexicon(
+_CONFIRM_YES = lexicon(
     "si", "sip", "claro", "dale", "ya", "por favor", "si por favor", "sí porfa", "porfa",
     "bueno", "ok", "okey", "vale", "de acuerdo", "quiero", "si quiero", "asesor",
     "si asesor", "conectame", "conectame con un asesor",
 )
-_CONFIRM_NO = _lexicon(
+_CONFIRM_NO = lexicon(
     "no", "nop", "no gracias", "no por ahora", "ahora no", "todavia no", "mejor no",
     "no hace falta", "no es necesario", "asi esta bien", "gracias", "no gracias por ahora",
 )
@@ -378,7 +373,7 @@ def _extract_confirm(text: str) -> str | None:
     Solo acepta la respuesta SUELTA: "si, y ademas queria preguntarte otra cosa" no es un si
     limpio y es mejor dejarlo pasar como mensaje normal que derivar por error.
     """
-    t = normalize(text or "").strip(" .!¡?¿,")
+    t = bare(text)
     if t in _CONFIRM_YES:
         return "YES"
     if t in _CONFIRM_NO:
@@ -426,14 +421,10 @@ def validate_interaction(
 
 def quick_replies_metadata(flow: FlowDefinition, step: FlowStep, version: int) -> dict:
     """La metadata del mensaje del bot que el widget dibuja como botones (MAPEO.md §3)."""
-    return {
-        "interaction": {
-            "type": QUICK_REPLIES,
-            "flow": flow.name,
-            "action_id": step.action_id,
-            "flow_version": version,
-            "options": [
-                {"label": option.label, "value": option.value} for option in step.options
-            ],
-        }
-    }
+    return with_interaction(
+        QUICK_REPLIES,
+        flow=flow.name,
+        action_id=step.action_id,
+        flow_version=version,
+        options=[choice(option.label, option.value) for option in step.options],
+    )

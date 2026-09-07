@@ -40,13 +40,13 @@ viejos se degrada a texto normal, nunca a un error.
 from __future__ import annotations
 
 import re
-import unicodedata
 
-from backend.agent.heuristics import normalize
 from backend.agent.rag import Fragment
+from backend.core.metadata import InteractionType, choice, interaction_of, with_interaction
+from backend.core.text import normalize, strip_trailing_decoration
 
 # Tipo de interaccion que el widget sabe dibujar (metadata del mensaje del bot).
-RELATED_QUESTIONS = "RELATED_QUESTIONS"
+RELATED_QUESTIONS = str(InteractionType.RELATED_QUESTIONS)
 # `action_id` del evento del clic (el API lo exige en mayusculas, `InteractionIn`).
 RELATED_ACTION_ID = "RELATED_QUESTION"
 # Cuantas preguntas hermanas como maximo: mas de tres ya no es una sugerencia, es un menu.
@@ -56,8 +56,6 @@ MAX_RELATED = 3
 # toca ningun modelo aunque la etiqueta no caiga en una regla.
 ADVISOR_OPTION_LABEL = "Contactar asesor"
 ADVISOR_OPTION_VALUE = "ADVISOR"
-
-_TRAILING_DECORATION = frozenset({"So", "Sk", "Sm", "Mn", "Cf", "Zs", "Po"})
 
 # Palabras que no distinguen una pregunta de otra dentro del mismo articulo. Cortas y
 # deliberadamente pocas: solo las que aparecen en casi cualquier pregunta del corpus.
@@ -81,9 +79,7 @@ def question_of(fragment: Fragment) -> str | None:
     if len(lines) < 2 or not lines[1]:
         return None
     candidate = lines[1]
-    core = candidate
-    while core and unicodedata.category(core[-1]) in _TRAILING_DECORATION and core[-1] != "?":
-        core = core[:-1].rstrip()
+    core = strip_trailing_decoration(candidate, extra=("Po",), keep="?")
     if candidate.startswith("¿") or core.endswith("?"):
         return candidate
     return None
@@ -193,19 +189,11 @@ def related_metadata(questions: list[str]) -> dict:
     el mensaje sugerido de asesor (D-031), sin `query`: su clic sigue el pipeline como texto.
     """
     options = [
-        {"label": question, "value": f"Q{index}", "query": question}
+        choice(question, f"Q{index}", query=question)
         for index, question in enumerate(questions, start=1)
     ]
-    options.append(
-        {"label": ADVISOR_OPTION_LABEL, "value": ADVISOR_OPTION_VALUE, "kind": "handoff"}
-    )
-    return {
-        "interaction": {
-            "type": RELATED_QUESTIONS,
-            "action_id": RELATED_ACTION_ID,
-            "options": options,
-        }
-    }
+    options.append(choice(ADVISOR_OPTION_LABEL, ADVISOR_OPTION_VALUE, kind="handoff"))
+    return with_interaction(RELATED_QUESTIONS, action_id=RELATED_ACTION_ID, options=options)
 
 
 def _clicked_option(interaction: dict | None, last_bot_metadata: dict | None) -> dict | None:
@@ -214,7 +202,7 @@ def _clicked_option(interaction: dict | None, last_bot_metadata: dict | None) ->
     malformado)."""
     if not isinstance(interaction, dict) or interaction.get("action_id") != RELATED_ACTION_ID:
         return None
-    offered = (last_bot_metadata or {}).get("interaction")
+    offered = interaction_of(last_bot_metadata)
     if not isinstance(offered, dict) or offered.get("type") != RELATED_QUESTIONS:
         return None
     value = interaction.get("value")

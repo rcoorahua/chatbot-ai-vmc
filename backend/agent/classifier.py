@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 
 from backend.agent import guardrails, prompts
-from backend.agent.heuristics import classify_by_rules
+from backend.agent.heuristics import HeuristicResult, classify_by_rules
 from backend.agent.intents import Intent
 from backend.core.llm import LLMError, ModelTier, empty_usage, get_client
 
@@ -55,18 +55,26 @@ class ClassificationResult:
     error: str | None = None
 
 
-def classify(message: str, last_assistant_message: str | None = None) -> ClassificationResult:
+def classify(
+    message: str,
+    last_assistant_message: str | None = None,
+    *,
+    heuristic: HeuristicResult | None = None,
+) -> ClassificationResult:
     """Devuelve la intencion del mensaje. Nunca lanza: sin decision segura, FAQ.
 
     FAQ es el fallback porque es la ruta que sigue conversando. Caer en ADVISOR ante cualquier
     fallo llenaria la bandeja de los asesores con incidencias tecnicas, y caer en OTHER cortaria
     la conversacion de un usuario legitimo.
+
+    `heuristic`: el veredicto de las reglas si quien llama ya lo calculo (el worker lo
+    necesita antes, para decidir si el mensaje gasta cuota); asi no se evaluan dos veces.
     """
     text = (message or "").strip()
     if not text:
         return ClassificationResult(intent=Intent.FAQ, source="fallback")
 
-    heuristic = classify_by_rules(text)
+    heuristic = heuristic or classify_by_rules(text)
     if heuristic.intent is not None:
         return ClassificationResult(
             intent=heuristic.intent,

@@ -26,144 +26,29 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from boto3.dynamodb.conditions import Key
-from fastapi.testclient import TestClient
 
 from backend.agent import prompts, quota
-from backend.api import dev_auth
-from backend.api.main import app
 from backend.api.routers import chat as chat_router
-from backend.core import auth
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings, reset_settings
+from tests.helpers.http import (
+    FORMULARIO,
+    abrir_sesion,
+    asesor_nuevo,
+    auth_headers,
+    get_mensajes,
+    pedir_handoff,
+    post_mensaje,
+    tomar_y_cerrar,
+)
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
 
-DEV_SECRET = "test-advisor-dev-secret"
-
-
-@pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("ADVISOR_DEV_AUTH", "1")
-    monkeypatch.setenv("ADVISOR_DEV_JWT_SECRET", DEV_SECRET)
-    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
-    reset_settings()
-    monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", lambda job: None)
-    yield TestClient(dev_auth.DevCognitoAuthorizer(app))
-    reset_settings()
-
-
-@pytest.fixture
-def limpiar(tablas):
-    conversaciones: list[str] = []
-    asesores: list[str] = []
-    limites: list[str] = []
-
-    class Registro:
-        conversacion = staticmethod(conversaciones.append)
-        asesor = staticmethod(asesores.append)
-        limite = staticmethod(limites.append)
-
-    yield Registro
-    for conversation_id in conversaciones:
-        for item in tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        # Derivar abre un ticket (RF-023): sin borrarlo aqui queda en el GSI de estado y
-        # rompe las pruebas de lectura que cuentan los pendientes del dataset base.
-        for item in tablas["tickets"].query(
-            IndexName="gsi1_conversation",
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id),
-        )["Items"]:
-            tablas["tickets"].delete_item(Key={"ticket_id": item["ticket_id"]})
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-    for advisor_id in asesores:
-        tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
-    for limit_key in limites:
-        for item in tablas["rate_limits"].query(
-            KeyConditionExpression=Key("limit_key").eq(limit_key)
-        )["Items"]:
-            tablas["rate_limits"].delete_item(
-                Key={"limit_key": limit_key, "window": item["window"]}
-            )
 
 
 # ───────────────────────────────────── Helpers ─────────────────────────────────────
 
 
-def _jwt_vmc(user_id: str, **claims) -> str:
-    payload = {"sub": user_id, "exp": epoch_seconds() + 600, **claims}
-    return auth.sign_jwt(payload, get_settings().vmc_identity_secret)
-
-
-def _sesion(client, limpiar, *, autenticado=False, email="jorge@example.test") -> dict:
-    body = {}
-    if autenticado:
-        claims = {"name": "Jorge"}
-        if email:
-            claims["email"] = email
-        body["user_jwt"] = _jwt_vmc("vmc_" + uuid.uuid4().hex[:8], **claims)
-    response = client.post("/chat/sessions", json=body)
-    assert response.status_code == 201, response.text
-    sesion = response.json()
-    limpiar.conversacion(sesion["conversation"]["conversation_id"])
-    return sesion
-
-
-def _auth(sesion: dict) -> dict:
-    return {"Authorization": f"Bearer {sesion['token']}"}
-
-
-def _escribe(client, sesion, texto="hola", conversation_id=None):
-    conversation_id = conversation_id or sesion["conversation"]["conversation_id"]
-    return client.post(
-        f"/chat/conversations/{conversation_id}/messages",
-        json={"client_message_id": "cli-" + uuid.uuid4().hex, "content": texto},
-        headers=_auth(sesion),
-    )
-
-
-FORMULARIO = {"subject": "Problema con mi puja", "detail": "No me deja ofertar en la subasta."}
-
-
-def _handoff(client, sesion, limpiar=None, **campos):
-    response = client.post(
-        f"/chat/conversations/{sesion['conversation']['conversation_id']}/handoff",
-        json={**FORMULARIO, **campos},
-        headers=_auth(sesion),
-    )
-    if response.status_code == 201 and limpiar is not None:
-        limpiar.conversacion(response.json()["conversation"]["conversation_id"])
-    return response
-
-
-def _mensajes(client, sesion, conversation_id=None, **params) -> dict:
-    conversation_id = conversation_id or sesion["conversation"]["conversation_id"]
-    response = client.get(
-        f"/chat/conversations/{conversation_id}/messages", params=params, headers=_auth(sesion)
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def _asesor_nuevo(client, limpiar) -> tuple[str, dict]:
-    sub = "sub-test-" + uuid.uuid4().hex[:8]
-    payload = {"sub": sub, "token_use": "id", "exp": epoch_seconds() + 600, "name": "Ana P."}
-    headers = {"Authorization": f"Bearer {auth.sign_jwt(payload, DEV_SECRET)}"}
-    me = client.get("/advisor/me", headers=headers)
-    assert me.status_code == 200, me.text
-    limpiar.asesor(me.json()["advisor_id"])
-    return me.json()["advisor_id"], headers
-
-
-def _tomar_y_cerrar(client, headers, conversation_id) -> dict:
-    tomada = client.post(f"/advisor/conversations/{conversation_id}/take", headers=headers)
-    assert tomada.status_code == 200, tomada.text
-    response = client.post(f"/advisor/conversations/{conversation_id}/close", headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 # ───────────────────────────── AC-H1: el anonimo no deriva (D-031) ─────────────────────────────
@@ -172,25 +57,26 @@ def _tomar_y_cerrar(client, headers, conversation_id) -> dict:
 def test_el_anonimo_no_puede_pedir_asesor(client, limpiar):
     """D-031: al visitante no se le pide contacto ni se le abre nada; el widget lo manda a
     iniciar sesion con el enlace que viaja en la sesion."""
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     assert sesion["links"]["login"] == get_settings().vmc_login_url
 
-    assert _handoff(client, sesion, email="ana@example.test").status_code == 409
+    assert pedir_handoff(client, sesion, email="ana@example.test").status_code == 409
 
     actual = client.get(
-        f"/chat/conversations/{sesion['conversation']['conversation_id']}", headers=_auth(sesion)
+        f"/chat/conversations/{sesion['conversation']['conversation_id']}",
+        headers=auth_headers(sesion),
     ).json()
     assert actual["status"] == "BOT_ATTENDING" and actual["bot_enabled"] is True
-    assert _mensajes(client, sesion)["messages"] == [], "no quedo ninguna nota ni formulario"
+    assert get_mensajes(client, sesion)["messages"] == [], "no quedo ninguna nota ni formulario"
 
 
 # ───────────────────────────── AC-H2: TTL de la conversacion anonima ─────────────────────────────
 
 
 def test_la_conversacion_anonima_nace_con_ttl_y_sus_mensajes_lo_heredan(client, limpiar, tablas):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     conversation_id = sesion["conversation"]["conversation_id"]
-    assert _escribe(client, sesion, "hola").status_code == 202
+    assert post_mensaje(client, sesion, "hola").status_code == 202
 
     fila = tablas["conversations"].get_item(Key={"conversation_id": conversation_id})["Item"]
     dias = get_settings().anonymous_conversation_ttl_days
@@ -207,7 +93,7 @@ def test_la_conversacion_anonima_nace_con_ttl_y_sus_mensajes_lo_heredan(client, 
 
 
 def test_el_hilo_del_autenticado_no_tiene_ttl(client, limpiar, tablas):
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     fila = tablas["conversations"].get_item(
         Key={"conversation_id": sesion["conversation"]["conversation_id"]}
     )["Item"]
@@ -218,18 +104,18 @@ def test_el_hilo_del_autenticado_no_tiene_ttl(client, limpiar, tablas):
 
 
 def test_el_autenticado_abre_un_caso_y_el_hilo_sigue_con_el_bot(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
-    assert _escribe(client, sesion, "no puedo ofertar").status_code == 202
+    assert post_mensaje(client, sesion, "no puedo ofertar").status_code == 202
 
-    respuesta = _handoff(client, sesion, limpiar)
+    respuesta = pedir_handoff(client, sesion, limpiar)
     assert respuesta.status_code == 201, respuesta.text
     caso = respuesta.json()["conversation"]
     assert caso["conversation_id"] != hilo_id
     assert caso["kind"] == "CASE" and caso["status"] == "PENDING_ADVISOR"
     assert caso["bot_enabled"] is False and caso["title"] == FORMULARIO["subject"]
 
-    del_caso = _mensajes(client, sesion, caso["conversation_id"])["messages"]
+    del_caso = get_mensajes(client, sesion, caso["conversation_id"])["messages"]
     assert [m["content"] for m in del_caso][0] == "CASE_OPENED"
     assert del_caso[1]["message_type"] == "FORM_RESPONSE"
     assert "Correo:" not in del_caso[1]["content"], "el correo vino en el JWT, no se pide"
@@ -237,13 +123,13 @@ def test_el_autenticado_abre_un_caso_y_el_hilo_sigue_con_el_bot(client, limpiar)
     assert any(t["content"] == "no puedo ofertar" for t in transcripcion)
     assert del_caso[2]["content"] == prompts.HANDOFF_CASE_CONFIRMATION
 
-    hilo = _mensajes(client, sesion)
+    hilo = get_mensajes(client, sesion)
     assert hilo["conversation"]["status"] == "BOT_ATTENDING"
     assert hilo["conversation"]["bot_enabled"] is True, "escalar no apaga el hilo del bot"
     assert hilo["messages"][-1]["content"] == "CASE_OPENED"
     assert hilo["messages"][-1]["metadata"]["case_id"] == caso["conversation_id"]
 
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
     detalle = client.get(
         f"/advisor/conversations/{caso['conversation_id']}", headers=headers
     ).json()
@@ -253,14 +139,14 @@ def test_el_autenticado_abre_un_caso_y_el_hilo_sigue_con_el_bot(client, limpiar)
 
 
 def test_el_autenticado_sin_correo_en_el_jwt_debe_darlo(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=True, email=None)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email=None)
 
-    sin_correo = _handoff(client, sesion, limpiar)
+    sin_correo = pedir_handoff(client, sesion, limpiar)
     assert sin_correo.status_code == 422 and sin_correo.json()["detail"]["field"] == "email"
 
-    con_correo = _handoff(client, sesion, limpiar, email="jorge@otro.test")
+    con_correo = pedir_handoff(client, sesion, limpiar, email="jorge@otro.test")
     assert con_correo.status_code == 201, con_correo.text
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
     caso_id = con_correo.json()["conversation"]["conversation_id"]
     detalle = client.get(f"/advisor/conversations/{caso_id}", headers=headers).json()
     assert detalle["user_email"] == "jorge@otro.test", "el correo del formulario es el del caso"
@@ -272,10 +158,10 @@ def test_el_autenticado_sin_correo_en_el_jwt_debe_darlo(client, limpiar):
 def test_el_tope_de_casos_abiertos_es_409(client, limpiar, monkeypatch):
     monkeypatch.setenv("MAX_OPEN_CASES_PER_USER", "1")
     reset_settings()
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
 
-    assert _handoff(client, sesion, limpiar).status_code == 201
-    segundo = _handoff(client, sesion, limpiar, subject="Otro asunto distinto")
+    assert pedir_handoff(client, sesion, limpiar).status_code == 201
+    segundo = pedir_handoff(client, sesion, limpiar, subject="Otro asunto distinto")
     assert segundo.status_code == 409
     assert "1 casos abiertos" in segundo.json()["detail"]
 
@@ -288,7 +174,7 @@ def test_seis_handoffs_concurrentes_con_limite_cinco_dejan_como_maximo_cinco(
     check-then-act y deja pasar mas de N bajo carrera real."""
     monkeypatch.setenv("MAX_OPEN_CASES_PER_USER", "5")
     reset_settings()
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
     user_id = tablas["conversations"].get_item(Key={"conversation_id": hilo_id})["Item"][
         "user_id"
@@ -300,7 +186,7 @@ def test_seis_handoffs_concurrentes_con_limite_cinco_dejan_como_maximo_cinco(
 
     def intentar(i):
         barrera.wait(timeout=10)
-        return _handoff(client, sesion, subject=f"Caso concurrente {i}")
+        return pedir_handoff(client, sesion, subject=f"Caso concurrente {i}")
 
     with ThreadPoolExecutor(max_workers=n) as pool:
         resultados = [f.result() for f in [pool.submit(intentar, i) for i in range(n)]]
@@ -323,12 +209,13 @@ def test_seis_handoffs_concurrentes_con_limite_cinco_dejan_como_maximo_cinco(
 
 
 def test_el_listado_trae_el_hilo_primero_y_los_casos_por_recencia(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
-    primero = _handoff(client, sesion, limpiar, subject="Primer caso").json()["conversation"]
-    segundo = _handoff(client, sesion, limpiar, subject="Segundo caso").json()["conversation"]
+    primero = pedir_handoff(client, sesion, limpiar, subject="Primer caso").json()["conversation"]
+    segundo = pedir_handoff(client, sesion, limpiar, subject="Segundo caso").json()["conversation"]
 
-    listado = client.get("/chat/conversations", headers=_auth(sesion)).json()["conversations"]
+    listado = client.get("/chat/conversations", headers=auth_headers(sesion)).json()
+    listado = listado["conversations"]
 
     assert [c["conversation_id"] for c in listado] == [
         hilo_id, segundo["conversation_id"], primero["conversation_id"]
@@ -338,45 +225,49 @@ def test_el_listado_trae_el_hilo_primero_y_los_casos_por_recencia(client, limpia
 
 
 def test_el_anonimo_solo_lista_su_conversacion(client, limpiar):
-    sesion = _sesion(client, limpiar)
-    listado = client.get("/chat/conversations", headers=_auth(sesion)).json()["conversations"]
+    sesion = abrir_sesion(client, limpiar)
+    listado = client.get("/chat/conversations", headers=auth_headers(sesion)).json()
+    listado = listado["conversations"]
     assert [c["conversation_id"] for c in listado] == [sesion["conversation"]["conversation_id"]]
 
 
 def test_el_caso_de_otro_usuario_es_403(client, limpiar):
-    ana = _sesion(client, limpiar, autenticado=True)
-    caso_id = _handoff(client, ana, limpiar).json()["conversation"]["conversation_id"]
-    otro = _sesion(client, limpiar, autenticado=True)
-    anonimo = _sesion(client, limpiar)
+    ana = abrir_sesion(client, limpiar, autenticado=True)
+    caso_id = pedir_handoff(client, ana, limpiar).json()["conversation"]["conversation_id"]
+    otro = abrir_sesion(client, limpiar, autenticado=True)
+    anonimo = abrir_sesion(client, limpiar)
 
     for ajeno in (otro, anonimo):
-        assert client.get(f"/chat/conversations/{caso_id}", headers=_auth(ajeno)).status_code == 403
+        detalle = client.get(f"/chat/conversations/{caso_id}", headers=auth_headers(ajeno))
+        assert detalle.status_code == 403
         assert (
-            client.get(f"/chat/conversations/{caso_id}/messages", headers=_auth(ajeno)).status_code
+            client.get(
+                f"/chat/conversations/{caso_id}/messages", headers=auth_headers(ajeno)
+            ).status_code
             == 403
         )
-        assert _escribe(client, ajeno, "hola", conversation_id=caso_id).status_code == 403
+        assert post_mensaje(client, ajeno, "hola", conversation_id=caso_id).status_code == 403
 
-    assert _escribe(client, ana, "un detalle mas", conversation_id=caso_id).status_code == 202
+    assert post_mensaje(client, ana, "un detalle mas", conversation_id=caso_id).status_code == 202
 
 
 # ───────────────────────────── AC-H5: cerrar = CLOSED y solo lectura ─────────────────────────────
 
 
 def test_cerrar_un_caso_lo_deja_cerrado_y_de_solo_lectura(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=True)
-    caso_id = _handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
+    caso_id = pedir_handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
+    advisor_id, headers = asesor_nuevo(client, limpiar)
 
-    cerrado = _tomar_y_cerrar(client, headers, caso_id)
+    cerrado = tomar_y_cerrar(client, headers, caso_id)
     assert cerrado["status"] == "CLOSED" and cerrado["bot_enabled"] is False
     assert cerrado["closed_at"] and cerrado["closed_by"] == "ADVISOR"
     assert cerrado["assigned_advisor_id"] == advisor_id, "queda como historial"
 
-    del_usuario = _mensajes(client, sesion, caso_id)
+    del_usuario = get_mensajes(client, sesion, caso_id)
     assert del_usuario["conversation"]["status"] == "CLOSED"
     assert del_usuario["messages"][-1]["content"] == "CONVERSATION_CLOSED"
-    assert _escribe(client, sesion, "hola?", conversation_id=caso_id).status_code == 409
+    assert post_mensaje(client, sesion, "hola?", conversation_id=caso_id).status_code == 409
 
     mios = client.get(
         "/advisor/conversations", params={"mine": "true"}, headers=headers
@@ -384,50 +275,101 @@ def test_cerrar_un_caso_lo_deja_cerrado_y_de_solo_lectura(client, limpiar):
     assert caso_id not in [c["conversation_id"] for c in mios]
 
     # El hilo del bot sigue vivo y puede abrir otro caso.
-    hilo = _mensajes(client, sesion)
+    hilo = get_mensajes(client, sesion)
     assert hilo["conversation"]["status"] == "BOT_ATTENDING"
-    assert _handoff(client, sesion, limpiar, subject="Otro caso").status_code == 201
+    assert pedir_handoff(client, sesion, limpiar, subject="Otro caso").status_code == 201
+
+
+def test_la_guarda_de_cerrado_es_atomica_y_no_de_memoria(client, limpiar):
+    """Auditoria 2026-09-06: el chequeo de CLOSED se hacia solo sobre la copia leida, asi que
+    un mensaje que llegaba con el caso recien cerrado desde OTRO request entraba igual.
+    Ahora la condicion viaja en la transaccion: la copia vieja pierde."""
+    from backend.conversations import repository, service
+
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
+    caso_id = pedir_handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    copia_vieja = repository.get_conversation(caso_id)  # leida ANTES del cierre
+    tomar_y_cerrar(client, headers, caso_id)
+
+    with pytest.raises(service.ConversationClosed):
+        service.post_user_message(
+            copia_vieja, client_message_id="cli-" + uuid.uuid4().hex, content="hola?"
+        )
+    # El asesor tampoco: su copia dice "asignada a mi y en atencion", la fila dice CLOSED.
+    copia_tomada = copia_vieja.model_copy(
+        update={"assigned_advisor_id": advisor_id, "status": "IN_ATTENTION"}
+    )
+    with pytest.raises(service.ConversationClosed):
+        service.post_advisor_message(
+            copia_tomada, advisor_id=advisor_id, advisor_name="Ana",
+            client_message_id="cli-" + uuid.uuid4().hex, content="hola",
+        )
+    # Y cerrar por segunda vez dice que YA estaba cerrado, no "no eres el asesor asignado".
+    segunda = client.post(f"/advisor/conversations/{caso_id}/close", headers=headers)
+    assert segunda.status_code == 409 and "cerrad" in segunda.json()["detail"]
+
+
+def test_la_bandeja_del_asesor_no_se_acorta_por_los_cerrados_recientes(client, limpiar):
+    """Auditoria 2026-09-06: el filtro de CLOSED se aplicaba DESPUES del Limit del GSI, asi
+    que un caso cerrado hace un momento (el mas reciente del indice) tapaba a uno abierto
+    mas viejo y la pagina volvia corta o vacia."""
+    from backend.conversations import service
+
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
+    abierto = pedir_handoff(client, sesion, limpiar, subject="Abierto").json()["conversation"]
+    cerrado = pedir_handoff(client, sesion, limpiar, subject="Cerrado").json()["conversation"]
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    tomada = client.post(
+        f"/advisor/conversations/{abierto['conversation_id']}/take", headers=headers
+    )
+    assert tomada.status_code == 200, tomada.text
+    tomar_y_cerrar(client, headers, cerrado["conversation_id"])
+
+    mios = service.list_inbox(None, advisor_id=advisor_id, limit=1)
+
+    assert [c.conversation_id for c in mios] == [abierto["conversation_id"]]
 
 
 def test_cerrar_el_hilo_del_autenticado_lo_devuelve_al_bot(client, limpiar):
     """AC-A7 sigue valiendo para el hilo permanente: un asesor que lo tomo (D-022) y lo
     cierra lo devuelve al bot; no queda CLOSED. (El anonimo ni se toma: D-031,
     tests/test_advisor_api.py.)"""
-    sesion = _sesion(client, limpiar, autenticado=True)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
 
-    cerrado = _tomar_y_cerrar(client, headers, hilo_id)
+    cerrado = tomar_y_cerrar(client, headers, hilo_id)
     assert cerrado["status"] == "BOT_ATTENDING" and cerrado["bot_enabled"] is True
     assert cerrado["closed_at"] is None
-    assert _mensajes(client, sesion)["messages"][-1]["content"] == "TICKET_CLOSED"
-    assert _escribe(client, sesion, "sigo aqui").status_code == 202
+    assert get_mensajes(client, sesion)["messages"][-1]["content"] == "TICKET_CLOSED"
+    assert post_mensaje(client, sesion, "sigo aqui").status_code == 202
 
 
 # ───────────────────────── AC-H6: ultimos N y paginacion hacia atras ─────────────────────────
 
 
 def test_sin_cursor_llegan_los_ultimos_y_before_pagina_hacia_atras(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     for texto in ("uno", "dos", "tres"):
-        assert _escribe(client, sesion, texto).status_code == 202
+        assert post_mensaje(client, sesion, texto).status_code == 202
 
-    ultimos = _mensajes(client, sesion, limit=2)
+    ultimos = get_mensajes(client, sesion, limit=2)
     assert [m["content"] for m in ultimos["messages"]] == ["dos", "tres"]
     assert ultimos["has_more"] is True
     assert ultimos["conversation"]["conversation_id"] == sesion["conversation"]["conversation_id"]
 
-    anteriores = _mensajes(client, sesion, limit=2, before=ultimos["next_before"])
+    anteriores = get_mensajes(client, sesion, limit=2, before=ultimos["next_before"])
     assert [m["content"] for m in anteriores["messages"]] == ["uno"]
     assert anteriores["has_more"] is False
 
-    nuevos = _mensajes(client, sesion, after=ultimos["next_after"])
+    nuevos = get_mensajes(client, sesion, after=ultimos["next_after"])
     assert nuevos["messages"] == [] and nuevos["next_after"] == ultimos["next_after"]
 
     ambos = client.get(
         f"/chat/conversations/{sesion['conversation']['conversation_id']}/messages",
         params={"after": "x", "before": "y"},
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
     assert ambos.status_code == 422
 
@@ -463,7 +405,7 @@ def test_el_tope_de_sesiones_no_aplica_al_autenticado(client, limpiar, monkeypat
     assert anonima.status_code == 201
     limpiar.conversacion(anonima.json()["conversation"]["conversation_id"])
 
-    autenticada = _sesion(client, limpiar, autenticado=True)
+    autenticada = abrir_sesion(client, limpiar, autenticado=True)
     assert autenticada
 
 
@@ -471,24 +413,29 @@ def test_el_tope_de_sesiones_no_aplica_al_autenticado(client, limpiar, monkeypat
 
 
 def test_pedir_asesor_desde_un_caso_es_409(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=True)
-    caso_id = _handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
+    caso_id = pedir_handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
 
     response = client.post(
-        f"/chat/conversations/{caso_id}/handoff", json=FORMULARIO, headers=_auth(sesion)
+        f"/chat/conversations/{caso_id}/handoff", json=FORMULARIO, headers=auth_headers(sesion)
     )
 
     assert response.status_code == 409, response.text
 
 
 def test_la_tarjeta_de_otro_usuario_es_403(client, limpiar):
-    uno = _sesion(client, limpiar, autenticado=True)
-    otro = _sesion(client, limpiar, autenticado=True)
+    uno = abrir_sesion(client, limpiar, autenticado=True)
+    otro = abrir_sesion(client, limpiar, autenticado=True)
 
     response = client.post(
         f"/chat/conversations/{uno['conversation']['conversation_id']}/handoff",
         json=FORMULARIO,
-        headers=_auth(otro),
+        headers=auth_headers(otro),
     )
 
     assert response.status_code == 403
+
+
+@pytest.fixture
+def client(advisor_client):
+    return advisor_client

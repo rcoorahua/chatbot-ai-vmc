@@ -1,7 +1,8 @@
-"""Capa determinista del clasificador de intencion (RF-015/016): reglas antes que Haiku.
+"""Capa determinista del clasificador de intencion (RF-015/016): reglas antes que el modelo
+(Gemini en tier FAST desde TD-008; Haiku sigue siendo el plan B).
 
 Resuelve sin llamada IA los mensajes inequivocos (pedir un asesor, amenazar con Indecopi,
-buscar vehiculos por marca) y produce una señal de tono para los ambiguos, que decide Haiku.
+buscar vehiculos por marca) y produce una señal de tono para los ambiguos, que decide el modelo.
 Criterio para que una regla decida: equivocarse debe costar mas que la llamada que evita. Un
 falso positivo aqui manda al usuario a un asesor o al catalogo por error; un falso negativo
 solo cuesta una llamada barata. Por eso ante la duda la regla NO decide y devuelve `None`.
@@ -18,44 +19,25 @@ Fuera de este modulo, a proposito:
 """
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 from backend.agent.intents import Intent
+from backend.core.text import normalize, phrases
 
 
 @dataclass(frozen=True, slots=True)
 class HeuristicResult:
     """Salida de `classify_by_rules`.
 
-    `intent` en `None` significa "las reglas no deciden" y el mensaje sigue a Haiku. `rule`
+    `intent` en `None` significa "las reglas no deciden" y el mensaje sigue al modelo. `rule`
     nombra la regla que disparo para que AIUsage registre la decision con costo cero y se
     pueda medir cuanto trafico evita la llamada IA. `frustration_hint` no cambia la ruta: se
-    inyecta al prompt de Haiku para que pese el tono en vez de solo el contenido literal.
+    inyecta al prompt del modelo para que pese el tono en vez de solo el contenido literal.
     """
 
     intent: Intent | None
     rule: str | None
     frustration_hint: bool
-
-
-_WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(text: str) -> str:
-    """Minusculas, sin tildes ni diereses, espacios comprimidos.
-
-    NFKD separa cada letra acentuada en letra base mas marca combinante; descartar las marcas
-    deja el texto sin acentos. La eñe tambien pierde su marca ("piña" -> "pina"): es
-    aceptable porque el lexico pasa por la misma funcion y ninguna entrada colisiona.
-    """
-    decomposed = unicodedata.normalize("NFKD", text.lower().strip())
-    without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return _WHITESPACE.sub(" ", without_marks)
-
-
-def _phrases(*items: str) -> tuple[str, ...]:
-    return tuple(normalize(item) for item in items)
 
 
 # ----------------------------------------------------------------------------------------
@@ -67,7 +49,7 @@ def _phrases(*items: str) -> tuple[str, ...]:
 _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "advisor_request",
-        _phrases(
+        phrases(
             "hablar con alguien", "hablar con una persona", "hablar con un humano",
             "hablar con un asesor", "hablar con el asesor", "hablar con un agente",
             "persona real", "persona de verdad", "alguien de verdad", "alguien real",
@@ -77,7 +59,7 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "bot_rejection",
-        _phrases(
+        phrases(
             "no quiero hablar con una máquina", "no quiero hablar con el bot",
             "no quiero un bot", "deja de responder", "este bot no sirve", "el bot no sirve",
             "no me sirve este bot", "bot inútil", "el bot no me entiende",
@@ -86,14 +68,14 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "voice_channel",
-        _phrases(
+        phrases(
             "a qué número llamo", "dame un teléfono", "dame el número", "número para llamar",
             "quiero llamar", "puedo llamar a alguien",
         ),
     ),
     (
         "legal_threat",
-        _phrases(
+        phrases(
             "indecopi", "libro de reclamaciones", "libro de reclamos", "voy a denunciar",
             "denuncia formal", "quejarme formalmente", "quiero hacer un reclamo",
             "quiero reclamar", "voy a reclamar",
@@ -103,7 +85,7 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # de confianza que el bot debe responder con empatia, no derivar.
     (
         "fraud_accusation",
-        _phrases(
+        phrases(
             "son una estafa", "son estafadores", "unos estafadores", "puros estafadores",
             "me estafaron", "están robando", "me robaron", "es un fraude",
             "publicidad engañosa",
@@ -111,7 +93,7 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "hostility",
-        _phrases(
+        phrases(
             "me tienen harto", "me tienen harta", "estoy harto", "estoy harta", "estoy asado",
             "estoy asada", "pésimo servicio", "mal servicio", "horrible servicio",
             "porquería de servicio", "servicio inservible",
@@ -120,11 +102,11 @@ _ADVISOR_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Peruanismos que acusan evasion: quien los usa ya no espera respuesta del bot.
     (
         "peruvian_complaint",
-        _phrases("puro floro", "me estás floreando", "me floreas", "tas floreando"),
+        phrases("puro floro", "me estás floreando", "me floreas", "tas floreando"),
     ),
     (
         "funds_claim",
-        _phrases(
+        phrases(
             "perdí mi consignación", "perdí mi garantía", "no aparece mi garantía",
             "no aparece mi consignación", "devuelvan mi dinero", "quiero mi dinero",
             "devuélveme mi plata", "devuélvanme mi plata", "quiero mi plata de vuelta",
@@ -148,11 +130,11 @@ _ADVISOR_REQUEST_PATTERN = re.compile(
 # ----------------------------------------------------------------------------------------
 # CATALOG — alta confianza solo cuando el mensaje habla exclusivamente de encontrar
 # vehiculos. Si ademas menciona un proceso de la plataforma (participar, consignar,
-# registrarse, pagar...) la pregunta es sobre el proceso y la decide Haiku: el original
+# registrarse, pagar...) la pregunta es sobre el proceso y la decide el modelo: el original
 # clasificaba "quiero participar en un Kia Picanto que vi en su web" como busqueda de stock.
 # Son raices, no palabras: "particip" cubre participar/participando/participación.
 # ----------------------------------------------------------------------------------------
-_PROCESS_STEMS = _phrases(
+_PROCESS_STEMS = phrases(
     "particip", "puj", "ofert", "consign", "registr", "comisi", "subascoin", "billetera",
     "saldo", "visita", "inspecc", "cuenta", "gané", "adjudic", "ganador", "pag", "deuda",
     "sanci", "devoluci", "vi en", "lo vi", "la vi", "ese carro", "ese auto", "esa camioneta",
@@ -186,13 +168,13 @@ _MAKE_OR_MODEL_PATTERN = re.compile(
 
 # ----------------------------------------------------------------------------------------
 # Señales de media confianza. No deciden ruta: "necesito ayuda para registrarme" no es un
-# handoff, pero "ya van 3 veces que sale error" merece que Haiku mire el tono. Incluye el
+# handoff, pero "ya van 3 veces que sale error" merece que el modelo mire el tono. Incluye el
 # abandono transaccional ("da igual", "ya fue"): el original lo tenia como alta confianza en
 # codigo muerto, asi que no hay evidencia de su precision; se promueve cuando el golden set
 # lo respalde. Quedan fuera "ya", "ok", "dale": dispararian en casi toda respuesta corta y
 # esas ya se resuelven con el ultimo mensaje del asistente como contexto.
 # ----------------------------------------------------------------------------------------
-_FRUSTRATION_PHRASES = _phrases(
+_FRUSTRATION_PHRASES = phrases(
     "no funciona", "no carga", "error", "falla", "fallo", "no puedo", "no me deja",
     "no me sale", "al toque", "urgente", "urgentemente", "rápido", "ya van", "cuántas veces",
     "otra vez", "de nuevo", "sigo sin", "todavía no", "no aparece", "no veo", "no encuentro",
@@ -234,8 +216,8 @@ def classify_by_rules(message: str) -> HeuristicResult:
 
 
 def _match_advisor(text: str) -> str | None:
-    for rule, phrases in _ADVISOR_RULES:
-        if any(phrase in text for phrase in phrases):
+    for rule, lexico in _ADVISOR_RULES:
+        if any(phrase in text for phrase in lexico):
             return rule
     if _ADVISOR_REQUEST_PATTERN.search(text):
         return "advisor_request"

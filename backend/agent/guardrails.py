@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from backend.agent.heuristics import normalize
+from backend.core.text import normalize
 
 # Tipos de veredicto de entrada. Los valores viajan a AIUsage como `guardrail:<kind>`.
 PROMPT_INJECTION = "prompt_injection"
@@ -326,9 +326,10 @@ _URL = re.compile(r"https?://[^\s<>\"')\]]+")
 def check_output(answer: str, evidence: list[str], user_message: str = "") -> OutputVerdict:
     """Primera violacion encontrada, o un veredicto limpio.
 
-    `evidence` son los fragmentos tal como viajaron al redactor (con su "(Fuente: url)"), de
-    modo que todo enlace legitimo esta ahi. `user_message` entra como fuente valida de cifras:
-    si el usuario pregunto por "un Hilux 2019", repetir "2019" no es inventar.
+    `evidence` son los fragmentos tal como viajaron al redactor: todo enlace legitimo esta ahi
+    (desde D-030 la URL de la fuente no va en el texto sino en `metadata.sources`).
+    `user_message` entra como fuente valida de cifras: si el usuario pregunto por "un Hilux
+    2019", repetir "2019" no es inventar.
     """
     text = normalize(answer or "")
     if not text:
@@ -382,7 +383,9 @@ _MARKDOWN_EMPHASIS = re.compile(
 # Solo espacios horizontales antes de la almohadilla: con `\s` el patron se comeria los saltos
 # de linea previos y dejaria parrafos pegados.
 _MARKDOWN_HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+", re.MULTILINE)
-_DASH_SEPARATOR = re.compile(r"\s*[—–]\s*")
+# Un guion largo entre DIGITOS es un rango ("10–15 dias"), no un separador de maquina:
+# convertirlo en coma cambiaba el sentido ("10, 15 dias"; auditoria 2026-09-06).
+_DASH_SEPARATOR = re.compile(r"\s*(?<!\d)[—–](?!\d)\s*")
 _BLANK_LINES = re.compile(r"\n{3,}")
 
 

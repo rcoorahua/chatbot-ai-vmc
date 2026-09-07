@@ -38,13 +38,19 @@ from pydantic import BaseModel, Field
 
 from backend.advisors import service as advisors
 from backend.advisors.models import Advisor
-from backend.api.routers.chat import MessageOut
-from backend.conversations import repository, service
+from backend.api.schemas import (
+    AdvisorOut,
+    ConversationDetail,
+    MessageAccepted,
+    MessageOut,
+    TicketOut,
+    page_cursors,
+)
+from backend.conversations import service
 from backend.conversations.models import Conversation, ConversationStatus
 from backend.core import auth
 from backend.tickets import service as tickets
 from backend.tickets import taxonomy
-from backend.tickets.models import Ticket
 
 router = APIRouter(prefix="/advisor", tags=["advisor"])
 
@@ -53,109 +59,24 @@ router = APIRouter(prefix="/advisor", tags=["advisor"])
 
 
 def get_current_advisor(claims: auth.CurrentClaims) -> Advisor:
-    try:
-        return advisors.resolve_advisor(claims)
-    except advisors.AdvisorDisabled as exc:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Asesor deshabilitado") from exc
+    return advisors.resolve_advisor(claims)  # DISABLED → 403 en api/errors.py
 
 
 CurrentAdvisor = Annotated[Advisor, Depends(get_current_advisor)]
 
 
 def _load(conversation_id: str) -> Conversation:
-    conversation = repository.get_conversation(conversation_id)
+    conversation = service.get_conversation(conversation_id)
     if conversation is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada")
+        raise service.ConversationNotFound(conversation_id)  # 404 en api/errors.py
     return conversation
 
 
 # ───────────────────────────────── Modelos de entrada/salida ─────────────────────────────────
 
 
-class AdvisorOut(BaseModel):
-    advisor_id: str
-    name: str | None = None
-    email: str | None = None
-    role: str
-    status: str
-    last_login_at: str | None = None
-
-    @classmethod
-    def from_model(cls, advisor: Advisor) -> "AdvisorOut":
-        return cls(**advisor.model_dump(include=set(cls.model_fields)))
-
-
-class ConversationDetail(BaseModel):
-    """Espejo de `Conversation` (frontend/src/lib/types.ts): la bandeja y la vista usan lo mismo."""
-
-    conversation_id: str
-    user_type: str
-    kind: str
-    status: str
-    channel: str
-    bot_enabled: bool
-    user_id: str | None = None
-    user_name: str | None = None
-    user_email: str | None = None
-    user_company: str | None = None
-    # D-029: asunto del caso y de que hilo salio.
-    title: str | None = None
-    source_conversation_id: str | None = None
-    assigned_advisor_id: str | None = None
-    summary: str | None = None
-    message_count: int
-    unread_count: int
-    last_message_preview: str | None = None
-    last_message_at: str
-    handoff_requested_at: str | None = None
-    handoff_reason: str | None = None
-    created_at: str
-    updated_at: str
-    closed_at: str | None = None
-    closed_by: str | None = None
-
-    @classmethod
-    def from_model(cls, conversation: Conversation) -> "ConversationDetail":
-        return cls(**conversation.model_dump(include=set(cls.model_fields)))
-
-
 class InboxOut(BaseModel):
     conversations: list[ConversationDetail]
-
-
-class TicketOut(BaseModel):
-    """El ticket como lo ve la app del asesor. `classification_source` distingue lo que
-    sugirio la regla de lo que confirmo una persona: es el dato con el que se evalua la
-    propuesta de taxonomia antes de cerrar D-008."""
-
-    ticket_id: str
-    conversation_id: str
-    status: str
-    user_type: str
-    user_id: str | None = None
-    user_email: str | None = None
-    problem_type: str
-    category: str
-    priority: str
-    tags: list[str]
-    classification_source: str
-    classification_rule: str | None = None
-    title: str | None = None
-    description: str | None = None
-    collected_data: dict[str, Any]
-    missing_data: list[str]
-    handoff_reason: str | None = None
-    assigned_advisor_id: str | None = None
-    assigned_at: str | None = None
-    resolution: str | None = None
-    closed_by: str | None = None
-    created_at: str
-    updated_at: str
-    closed_at: str | None = None
-
-    @classmethod
-    def from_model(cls, ticket: Ticket) -> "TicketOut":
-        return cls(**ticket.model_dump(include=set(cls.model_fields)))
 
 
 class TicketsOut(BaseModel):
@@ -195,11 +116,6 @@ class ThreadOut(BaseModel):
 class AdvisorMessageIn(BaseModel):
     client_message_id: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     content: str = Field(min_length=1, max_length=20_000)
-
-
-class MessageCreated(BaseModel):
-    message: MessageOut
-    duplicate: bool
 
 
 class ConflictDetail(BaseModel):
@@ -257,23 +173,18 @@ def get_ticket(conversation_id: str, advisor: CurrentAdvisor) -> TicketOut:
 def patch_ticket(ticket_id: str, body: TicketPatch, advisor: CurrentAdvisor) -> TicketOut:
     """Confirmar o corregir la clasificacion propuesta y registrar los datos minimos que el
     asesor ya obtuvo (RF-024). Un ticket cerrado no se edita (409)."""
-    ticket = tickets.repository.get_ticket(ticket_id)
+    ticket = tickets.get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket no encontrado")
-    try:
-        updated = tickets.reclassify(
-            ticket,
-            advisor_id=advisor.advisor_id,
-            problem_type=body.problem_type,
-            category=body.category,
-            priority=body.priority,
-            tags=[str(t) for t in body.tags] if body.tags is not None else None,
-            collected_data=body.collected_data,
-        )
-    except tickets.TicketAlreadyClosed as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "El ticket esta cerrado y ya no se puede editar"
-        ) from exc
+    updated = tickets.reclassify(  # cerrado → 409 en api/errors.py
+        ticket,
+        advisor_id=advisor.advisor_id,
+        problem_type=body.problem_type,
+        category=body.category,
+        priority=body.priority,
+        tags=[str(t) for t in body.tags] if body.tags is not None else None,
+        collected_data=body.collected_data,
+    )
     return TicketOut.from_model(updated)
 
 
@@ -305,18 +216,16 @@ def thread(
 ) -> ThreadOut:
     if before and after:
         raise HTTPException(422, "before y after son excluyentes")
-    conversation = _load(conversation_id)
-    messages, has_more = service.open_thread(
-        conversation, before=before, after=after, limit=limit
+    conversation, messages, has_more = service.open_thread(
+        _load(conversation_id), before=before, after=after, limit=limit
     )
-    if conversation.unread_count:
-        conversation = conversation.model_copy(update={"unread_count": 0})
+    next_before, next_after = page_cursors(messages, before=before, after=after)
     return ThreadOut(
         conversation=ConversationDetail.from_model(conversation),
         messages=[MessageOut.from_model(m) for m in messages],
-        next_before=messages[0].message_key if messages else before,
+        next_before=next_before,
         has_more=has_more,
-        next_after=messages[-1].message_key if messages else after,
+        next_after=next_after,
     )
 
 
@@ -326,28 +235,11 @@ def thread(
     responses={409: {"model": ConflictDetail}},
 )
 def take(conversation_id: str, advisor: CurrentAdvisor) -> ConversationDetail:
-    conversation = _load(conversation_id)
-    try:
-        taken = service.take_conversation(
-            conversation, advisor_id=advisor.advisor_id, advisor_name=advisor.name
-        )
-    except service.ConversationAlreadyTaken as exc:
-        # AC-005: el que pierde recibe el estado actual, sin duplicar atencion.
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "detail": "La conversacion ya esta tomada o no se puede tomar en su estado",
-                "conversation": ConversationDetail.from_model(exc.conversation).model_dump(),
-            },
-        ) from exc
-    except service.AnonymousConversation as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {
-                "detail": "Las conversaciones de visitantes las atiende solo el bot (D-031)",
-                "conversation": ConversationDetail.from_model(conversation).model_dump(),
-            },
-        ) from exc
+    # 409 con el estado actual si otro la tiene o si es de un visitante (api/errors.py,
+    # AC-005: el que pierde se actualiza sin duplicar atencion).
+    taken = service.take_conversation(
+        _load(conversation_id), advisor_id=advisor.advisor_id, advisor_name=advisor.name
+    )
     # El ticket sigue a la conversacion: tomarla lo pasa a IN_PROGRESS (y lo crea si el caso
     # venia sin uno). Nunca al reves: la toma atomica se decide sobre la conversacion.
     tickets.assign(taken, advisor_id=advisor.advisor_id)
@@ -356,41 +248,29 @@ def take(conversation_id: str, advisor: CurrentAdvisor) -> ConversationDetail:
 
 @router.post(
     "/conversations/{conversation_id}/messages",
-    response_model=MessageCreated,
+    response_model=MessageAccepted,
     status_code=status.HTTP_201_CREATED,
 )
 def post_message(
     conversation_id: str, body: AdvisorMessageIn, advisor: CurrentAdvisor
-) -> MessageCreated:
-    conversation = _load(conversation_id)
-    try:
-        message, created = service.post_advisor_message(
-            conversation,
-            advisor_id=advisor.advisor_id,
-            advisor_name=advisor.name,
-            client_message_id=body.client_message_id,
-            content=body.content,
-        )
-    except service.NotAssignedToAdvisor as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Primero toma la conversacion para responder"
-        ) from exc
-    except (service.MessageTooLong, service.EmptyMessage) as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return MessageCreated(message=MessageOut.from_model(message), duplicate=not created)
+) -> MessageAccepted:
+    # 409 si no es mia o esta cerrada, 422 si esta vacio o es muy largo (api/errors.py).
+    message, created = service.post_advisor_message(
+        _load(conversation_id),
+        advisor_id=advisor.advisor_id,
+        advisor_name=advisor.name,
+        client_message_id=body.client_message_id,
+        content=body.content,
+    )
+    return MessageAccepted(message=MessageOut.from_model(message), duplicate=not created)
 
 
 @router.post("/conversations/{conversation_id}/close", response_model=ConversationDetail)
 def close(
     conversation_id: str, advisor: CurrentAdvisor, body: CloseIn | None = None
 ) -> ConversationDetail:
-    conversation = _load(conversation_id)
-    try:
-        closed = service.close_case(conversation, advisor_id=advisor.advisor_id)
-    except service.NotAssignedToAdvisor as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Solo el asesor asignado puede cerrar el caso"
-        ) from exc
+    # 409 si no es el asesor asignado o si ya estaba cerrado (api/errors.py).
+    closed = service.close_case(_load(conversation_id), advisor_id=advisor.advisor_id)
     # El ticket se cierra con el caso (RF-031). Si ya estaba cerrado no es un error: la
     # conversacion es la fuente de verdad del cierre y este endpoint es idempotente para ella.
     ticket = tickets.for_conversation(conversation_id)

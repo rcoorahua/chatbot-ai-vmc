@@ -35,6 +35,8 @@ from backend.conversations.models import (
 from backend.core.auth import ChatSession, VmcIdentity
 from backend.core.clock import epoch_seconds, minutes_ago_iso, to_iso, utc_now, utc_now_iso
 from backend.core.config import get_settings
+from backend.core.ids import deterministic_id
+from backend.core.metadata import FORM_RESPONSE, SENDER_NAME, TRANSCRIPT
 
 # Namespace fijo para derivar el id de la conversacion del usuario autenticado. Cambiarlo
 # "perderia" todas las conversaciones existentes (seguirian en la tabla, pero nadie las
@@ -62,7 +64,8 @@ class RateLimited(RuntimeError):
 
 
 class ConversationClosed(RuntimeError):
-    """La conversacion esta CLOSED: es de solo lectura (D-029). Se responde 409."""
+    """La conversacion esta CLOSED: es de solo lectura (D-029). Se responde 409. Tambien la
+    levanta `close_case` cuando el caso ya se habia cerrado (o el hilo ya volvio al bot)."""
 
 
 class HandoffNotAllowed(RuntimeError):
@@ -85,7 +88,7 @@ def conversation_id_for_user(user_id: str) -> str:
     deja pasar solo a una. Si D-002 cambiara a N conversaciones, esto vuelve a ser aleatorio y
     la busqueda pasa a GSI1.
     """
-    return str(uuid.uuid5(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}"))
+    return deterministic_id(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}")
 
 
 def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]:
@@ -150,6 +153,59 @@ def _anonymous_ttl() -> int | None:
     return epoch_seconds() + days * 86400 if days > 0 else None
 
 
+# La entrada la traduce a 404 sin importar el repository (regla: los routers hablan con el
+# service; el repository es detalle de esta capa).
+ConversationNotFound = repository.ConversationNotFound
+
+
+def get_conversation(conversation_id: str) -> Conversation | None:
+    return repository.get_conversation(conversation_id)
+
+
+def mark_queue_failed(message: Message) -> None:
+    """RNF-003: el mensaje ya es durable; si la cola de IA fallo se marca QUEUE_FAILED para
+    que un barrido lo re-encole (alarma pendiente en RNF-006), nunca un 500 al usuario."""
+    repository.update_message_status(
+        message.conversation_id, message.message_key, MessageStatus.QUEUE_FAILED
+    )
+    message.status = MessageStatus.QUEUE_FAILED  # la respuesta al widget refleja el estado real
+
+
+def get_message(conversation_id: str, message_key: str) -> Message | None:
+    return repository.get_message(conversation_id, message_key)
+
+
+def set_message_status(message: Message, status: MessageStatus) -> None:
+    """Estado tecnico del mensaje (RF-008): el worker lo lleva a PROCESSED o FAILED."""
+    repository.update_message_status(message.conversation_id, message.message_key, status)
+    message.status = status
+
+
+def start_flow(
+    conversation: Conversation, *, flow: str, step: str, expires_at: str
+) -> int | None:
+    """Abre (o mueve) el flujo guiado de la conversacion (D-028): transicion atomica sobre
+    `flow_version`. Devuelve la version nueva, o None si otro proceso movio el flujo antes
+    (rafaga D-020): ese publico los botones, este calla."""
+    return repository.set_flow_state(
+        conversation.conversation_id,
+        flow=flow,
+        step=step,
+        slots={},
+        expires_at=expires_at,
+        expected_version=conversation.flow_version,
+    )
+
+
+def clear_flow(conversation: Conversation) -> bool:
+    """Cierra el flujo guiado (paso resuelto, handoff, guardrail o vencimiento). Sube la
+    version: los botones emitidos para la version cerrada quedan invalidos. False si otro
+    proceso lo movio primero."""
+    return repository.clear_flow_state(
+        conversation.conversation_id, expected_version=conversation.flow_version
+    )
+
+
 def owns(session: ChatSession, conversation: Conversation) -> bool:
     """Autorizacion del chat publico (RNF-005). Autenticado: todo lo suyo (hilo y casos) por
     `user_id`; anonimo: solo la conversacion atada a su token."""
@@ -180,6 +236,53 @@ def list_conversations(session: ChatSession) -> list[Conversation]:
     return threads + cases
 
 
+def _new_message(
+    conversation_id: str,
+    *,
+    sender_type: SenderType,
+    content: str | None,
+    message_type: MessageType = MessageType.TEXT,
+    status: MessageStatus = MessageStatus.DELIVERED,
+    sender_id: str | None = None,
+    client_message_id: str | None = None,
+    metadata: dict | None = None,
+    created_at: str | None = None,
+    expires_at: int | None = None,
+) -> Message:
+    """La UNICA forma de construir un `Message` nuevo en el dominio: id, SK
+    (`created_at#message_id`, PLAN.md §4) y timestamp salen de aqui. Antes cinco funciones
+    repetian estas mismas lineas (usuario, formulario, nota SYSTEM, asesor y bot; auditoria
+    2026-09-06) y un cambio en la SK habia que hacerlo cinco veces."""
+    now = created_at or utc_now_iso()
+    message_id = str(uuid.uuid4())
+    return Message(
+        conversation_id=conversation_id,
+        message_key=message_key_for(now, message_id),
+        message_id=message_id,
+        sender_type=sender_type,
+        sender_id=sender_id,
+        message_type=message_type,
+        status=status,
+        content=content,
+        client_message_id=client_message_id,
+        metadata=metadata,
+        created_at=now,
+        expires_at=expires_at,
+    )
+
+
+def _clean_text(content: str) -> str:
+    """El texto de un mensaje de persona (usuario o asesor): sin bordes, no vacio y dentro
+    del tope de RF-014 / D-005."""
+    text = content.strip()
+    if not text:
+        raise EmptyMessage("el mensaje esta vacio")
+    limit = get_settings().max_message_chars
+    if len(text) > limit:
+        raise MessageTooLong(limit)
+    return text
+
+
 def post_user_message(
     conversation: Conversation,
     *,
@@ -190,39 +293,32 @@ def post_user_message(
 ) -> tuple[Message, bool]:
     """Persiste el mensaje del usuario. `(mensaje, True)` si es nuevo; `(original, False)` si
     es un reintento con el mismo `client_message_id` (RF-038)."""
-    settings = get_settings()
     if conversation.status == ConversationStatus.CLOSED:
         raise ConversationClosed(conversation.conversation_id)
-    text = content.strip()
-    if not text:
-        raise EmptyMessage("el mensaje esta vacio")
-    if len(text) > settings.max_message_chars:
-        raise MessageTooLong(settings.max_message_chars)
+    text = _clean_text(content)
     _check_rate_limit(conversation.conversation_id)
 
-    now = utc_now_iso()
-    message_id = str(uuid.uuid4())
-    message = Message(
-        conversation_id=conversation.conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    message = _new_message(
+        conversation.conversation_id,
         sender_type=SenderType.USER,
         sender_id=sender_id,
-        message_type=MessageType.TEXT,
         status=MessageStatus.RECEIVED,
         content=text,
         client_message_id=client_message_id,
         # El evento estructurado de un quick reply (D-028) viaja aqui; el worker lo valida
         # contra el paso vigente del flujo — nunca se confia en el cliente (security-guidance).
         metadata=metadata,
-        created_at=now,
         expires_at=conversation.expires_at,
     )
     # Solo cuenta como "no leido" para el asesor si el bot ya no atiende (RF-035): mientras la
-    # IA responde sola, no hay nadie que deba leerlo.
-    return repository.save_message_idempotent(
-        message, count_as_unread=not conversation.bot_enabled
-    )
+    # IA responde sola, no hay nadie que deba leerlo. `require_open` hace atomico el chequeo
+    # de CLOSED de arriba: la copia leida puede ser vieja (el caso se cerro desde otro request).
+    try:
+        return repository.save_message_idempotent(
+            message, count_as_unread=not conversation.bot_enabled, require_open=True
+        )
+    except repository.ConversationStateChanged as exc:
+        raise ConversationClosed(conversation.conversation_id) from exc
 
 
 def _check_rate_limit(conversation_id: str) -> None:
@@ -300,7 +396,7 @@ def request_handoff(
                           {"source_conversation_id": thread.conversation_id}, created_at=t0)
     response = _form_response_message(case_id, clean, created_at=t1,
                                       transcript=_transcript(thread))
-    confirm = _bot_message(case_id, confirmation, created_at=t2)
+    confirm = _new_message(case_id, sender_type=SenderType.BOT, content=confirmation, created_at=t2)
     case = Conversation(
         conversation_id=case_id,
         user_type=UserType.AUTHENTICATED,
@@ -354,25 +450,22 @@ def _transcript(thread: Conversation) -> list[dict]:
 def _form_response_message(
     conversation_id: str, clean: forms.HandoffForm, *, created_at: str, transcript: list[dict]
 ) -> Message:
-    message_id = str(uuid.uuid4())
     values = {
         k: v
         for k, v in (("subject", clean.subject), ("detail", clean.detail), ("email", clean.email))
         if v
     }
     metadata: dict = {
-        "form_response": {
+        FORM_RESPONSE: {
             "form": forms.HANDOFF_FORM,
             "version": forms.HANDOFF_FORM_VERSION,
             "values": values,
         }
     }
     if transcript:
-        metadata["transcript"] = transcript
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(created_at, message_id),
-        message_id=message_id,
+        metadata[TRANSCRIPT] = transcript
+    return _new_message(
+        conversation_id,
         sender_type=SenderType.USER,
         message_type=MessageType.FORM_RESPONSE,
         # No pasa por el worker (no hay nada que la IA deba hacer): nace atendido.
@@ -436,7 +529,12 @@ class ConversationAlreadyTaken(RuntimeError):
 
 class AnonymousConversation(RuntimeError):
     """D-031: la conversacion de un visitante la atiende SOLO el bot; ningun asesor la toma
-    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion."""
+    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion.
+    Trae la conversacion para que el 409 lleve su estado (como `ConversationAlreadyTaken`)."""
+
+    def __init__(self, conversation: Conversation) -> None:
+        super().__init__("la conversacion de un visitante la atiende solo el bot")
+        self.conversation = conversation
 
 
 def list_inbox(
@@ -447,8 +545,9 @@ def list_inbox(
     page = limit or get_settings().inbox_page_size
     if advisor_id:
         # Los cerrados conservan `assigned_advisor_id` como historial: fuera de la bandeja.
-        mine = repository.find_conversations_by_advisor(advisor_id, limit=page)
-        return [c for c in mine if c.status != ConversationStatus.CLOSED]
+        return repository.find_conversations_by_advisor(
+            advisor_id, limit=page, exclude_closed=True
+        )
     if status is not None:
         return repository.list_inbox(
             str(status), limit=page, oldest_first=status == ConversationStatus.PENDING_ADVISOR
@@ -466,10 +565,11 @@ def open_thread(
     before: str | None = None,
     after: str | None = None,
     limit: int | None = None,
-) -> tuple[list[Message], bool]:
+) -> tuple[Conversation, list[Message], bool]:
     """El hilo como lo ve el asesor: los ultimos N (RF-033), paginas anteriores con `before`
-    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(mensajes, hay_mas_atras)`.
-    Abrirlo consume los no leidos (RF-035)."""
+    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(conversacion, mensajes,
+    hay_mas_atras)`; abrirlo consume los no leidos (RF-035) y la conversacion devuelta ya lo
+    refleja, para que el router no tenga que rederivarlo."""
     page = limit or get_settings().advisor_thread_page_size
     if after:
         messages = repository.list_messages(conversation.conversation_id, after=after, limit=page)
@@ -480,7 +580,8 @@ def open_thread(
         )
     if conversation.unread_count > 0:
         repository.reset_unread(conversation.conversation_id)
-    return messages, has_more
+        conversation = conversation.model_copy(update={"unread_count": 0})
+    return conversation, messages, has_more
 
 
 def _system_note(
@@ -491,18 +592,13 @@ def _system_note(
     created_at: str | None = None,
     expires_at: int | None = None,
 ) -> Message:
-    now = created_at or utc_now_iso()
-    message_id = str(uuid.uuid4())
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    return _new_message(
+        conversation_id,
         sender_type=SenderType.SYSTEM,
         message_type=MessageType.SYSTEM,
-        status=MessageStatus.DELIVERED,
         content=str(event),
         metadata=metadata,
-        created_at=now,
+        created_at=created_at,
         expires_at=expires_at,
     )
 
@@ -514,7 +610,7 @@ def take_conversation(
     el estado actual para que la app se actualice sin duplicar atencion. La conversacion de
     un visitante no se toma (D-031)."""
     if conversation.user_type == UserType.ANONYMOUS:
-        raise AnonymousConversation(conversation.conversation_id)
+        raise AnonymousConversation(conversation)
     if conversation.assigned_advisor_id == advisor_id:
         return conversation
     note = _system_note(
@@ -548,57 +644,29 @@ def post_advisor_message(
     Nace DELIVERED: persistir es entregar; el widget la recoge en el siguiente sondeo."""
     if conversation.assigned_advisor_id != advisor_id:
         raise NotAssignedToAdvisor(conversation.conversation_id)
-    text = content.strip()
-    if not text:
-        raise EmptyMessage("el mensaje esta vacio")
-    limit = get_settings().max_message_chars
-    if len(text) > limit:
-        raise MessageTooLong(limit)
-
-    now = utc_now_iso()
-    message_id = str(uuid.uuid4())
-    message = Message(
-        conversation_id=conversation.conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    text = _clean_text(content)
+    message = _new_message(
+        conversation.conversation_id,
         sender_type=SenderType.ADVISOR,
         sender_id=advisor_id,
-        message_type=MessageType.TEXT,
-        status=MessageStatus.DELIVERED,
         content=text,
         client_message_id=client_message_id,
         # El widget muestra el nombre del asesor (como Intercom firma cada respuesta).
-        metadata={"sender_name": advisor_name} if advisor_name else None,
-        created_at=now,
+        metadata={SENDER_NAME: advisor_name} if advisor_name else None,
     )
-    return repository.save_message_idempotent(message, count_as_unread=False)
+    # Guardas atomicas: sigue asignada a ESTE asesor y no esta cerrada. El chequeo en memoria
+    # de arriba es solo el camino rapido (otra pestaña pudo cerrarla o soltarla entre medio).
+    try:
+        return repository.save_message_idempotent(
+            message, count_as_unread=False, require_open=True, require_advisor=advisor_id
+        )
+    except repository.ConversationStateChanged as exc:
+        if exc.conversation.status == ConversationStatus.CLOSED:
+            raise ConversationClosed(conversation.conversation_id) from exc
+        raise NotAssignedToAdvisor(conversation.conversation_id) from exc
 
 
 # ───────────────────────────── Lado del bot (RF-020..027, worker IA) ─────────────────────────────
-
-
-def _bot_message(
-    conversation_id: str,
-    text: str,
-    *,
-    metadata: dict | None = None,
-    created_at: str | None = None,
-    expires_at: int | None = None,
-) -> Message:
-    now = created_at or utc_now_iso()
-    message_id = str(uuid.uuid4())
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
-        sender_type=SenderType.BOT,
-        message_type=MessageType.TEXT,
-        status=MessageStatus.DELIVERED,
-        content=text,
-        metadata=metadata,
-        created_at=now,
-        expires_at=expires_at,
-    )
 
 
 def post_bot_message(
@@ -612,8 +680,13 @@ def post_bot_message(
     """Respuesta del bot en el hilo. Nace DELIVERED (persistir es entregar; el widget la
     recoge en el sondeo) y no cuenta como no leida: los no leidos son del asesor (RF-035).
     `expires_at` acompaña al TTL de la conversacion anonima (D-029)."""
-    message = _bot_message(
-        conversation_id, text, metadata=metadata, created_at=created_at, expires_at=expires_at
+    message = _new_message(
+        conversation_id,
+        sender_type=SenderType.BOT,
+        content=text,
+        metadata=metadata,
+        created_at=created_at,
+        expires_at=expires_at,
     )
     repository.put_message(message, count_as_unread=False)
     return message
@@ -679,9 +752,17 @@ def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
             closed_by=str(ClosedBy.ADVISOR),
             release_case_slot_for_user=conversation.user_id,
         )
-    if not done:
-        raise NotAssignedToAdvisor(conversation.conversation_id)
     current = repository.get_conversation(conversation.conversation_id)
     if current is None:  # pragma: no cover
         raise repository.ConversationNotFound(conversation.conversation_id)
+    if not done:
+        # La condicion fallo: o ya no es el asesor asignado, o el caso YA estaba cerrado
+        # (segundo clic en "cerrar", otra pestaña). Antes ambos daban "solo el asesor
+        # asignado puede cerrar", que para el segundo era mentira (auditoria 2026-09-06).
+        already = current.status == ConversationStatus.CLOSED or (
+            returns_to_bot_on_close(current) and current.assigned_advisor_id is None
+        )
+        if already:
+            raise ConversationClosed(conversation.conversation_id)
+        raise NotAssignedToAdvisor(conversation.conversation_id)
     return current
