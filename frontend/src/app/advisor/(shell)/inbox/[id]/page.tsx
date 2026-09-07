@@ -374,11 +374,14 @@ function MobileContext({ conversation, now }: { conversation: Conversation; now:
           />
         </summary>
         <div className="border-t border-black/5 px-3.5 py-2.5">
+          {/* Mismo orden que el <aside> de desktop (D-010): el CUU primero, es el código
+              que el usuario ve en VMC y dice por teléfono. */}
           <dl className="space-y-1.5 text-sm">
-            <Field label="Nombre" value={conversation.user_name} />
+            <Field label="CUU" value={conversation.user_cuu} />
             <Field label="Correo" value={conversation.user_email} />
-            <Field label="Empresa" value={conversation.user_company} />
             <Field label="ID VMC" value={conversation.user_id} />
+            <Field label="Nombre" value={conversation.user_name} />
+            <Field label="Empresa" value={conversation.user_company} />
           </dl>
           <p className="mt-2.5 rounded-lg bg-[color:var(--vmc-color-vault-500)]/5 p-2.5 text-sm text-neutral-700">
             <span className="font-semibold text-[color:var(--vmc-color-vault-700)]">Resumen IA: </span>
