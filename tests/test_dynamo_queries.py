@@ -196,7 +196,7 @@ def test_consumo_de_ia_de_una_conversacion(tablas):
     )
 
     tipos = sorted(u["execution_type"] for u in respuesta["Items"])
-    assert tipos == ["CLASSIFICATION", "RESPONSE"], "Haiku clasifica y Gemini redacta (RF-015/020)"
+    assert tipos == ["CLASSIFICATION", "RESPONSE"], "clasificar y redactar (RF-015/020, TD-008)"
 
 
 def test_costo_mensual_agregado_por_gsi_billing(tablas):
@@ -215,7 +215,7 @@ def test_costo_mensual_agregado_por_gsi_billing(tablas):
     por_proveedor = {}
     for u in respuesta["Items"]:
         por_proveedor[u["provider"]] = por_proveedor.get(u["provider"], 0) + u["input_tokens"]
-    assert set(por_proveedor) == {"ANTHROPIC", "GOOGLE"}
+    assert set(por_proveedor) == {"GOOGLE"}, "TD-008: un solo proveedor hoy"
 
 
 # ───────────────────── Patrones criticos de escritura (validan el modelo) ─────────────────────
