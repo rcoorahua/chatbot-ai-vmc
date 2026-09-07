@@ -41,7 +41,13 @@ function build() {
   const cuerpo = parts()
     .map((name) => readFileSync(join(SRC_DIR, name), "utf8"))
     .join("");
-  return `${BANNER}${cuerpo}`;
+  return lf(`${BANNER}${cuerpo}`);
+}
+
+/** El repo guarda LF, pero un checkout en Windows entrega CRLF: sin normalizar, `--check`
+ *  fallaba en local y pasaba en CI por el fin de linea, no por el contenido. */
+function lf(texto) {
+  return texto.replace(/\r\n/g, "\n");
 }
 
 const esperado = build();
@@ -54,7 +60,7 @@ if (process.argv.includes("--check")) {
     console.error("widget/subastin.js no existe; corre `node widget/build.mjs`");
     process.exit(1);
   }
-  if (actual !== esperado) {
+  if (lf(actual) !== esperado) {
     console.error(
       "widget/subastin.js no coincide con widget/src/*.js.\n" +
         "Corre `node widget/build.mjs` y commitea el resultado.",
