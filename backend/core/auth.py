@@ -43,6 +43,8 @@ USER_TYPE_ANONYMOUS = "ANONYMOUS"
 _MAX_NAME_CHARS = 120
 _MAX_EMAIL_CHARS = 254
 _MAX_USER_ID_CHARS = 64
+# El CUU de VMC es un codigo corto ("ZEEJ7K"); el tope solo acota lo que se persiste.
+_MAX_CUU_CHARS = 32
 
 
 class IdentityError(Exception):
@@ -60,6 +62,11 @@ class VmcIdentity:
     user_id: str
     name: str | None = None
     email: str | None = None
+    # D-010: el codigo de usuario que VMC le muestra a la persona en la plataforma ("ZEEJ7K").
+    # Es lo que el usuario dice por telefono y lo que el asesor busca en VMC, asi que se guarda
+    # para MOSTRARLO. Nunca es credencial ni clave de busqueda: es visible para el usuario y no
+    # prueba nada por si mismo — quien identifica es `user_id`, que sale del JWT firmado.
+    cuu: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +159,17 @@ def _clean_text(value: Any, max_chars: int) -> str | None:
     return text[:max_chars] if text else None
 
 
+def _clean_id(value: Any) -> str | None:
+    """Como `_clean_text`, pero acepta el entero: el JWT real de VMC manda `sub` como texto
+    ("215011") y `user_id` como numero (215011). Sin esto, un token que solo trajera el numero
+    se rechazaba con "falta sub"."""
+    if isinstance(value, bool):  # bool es int en Python; no es un id
+        return None
+    if isinstance(value, int):
+        value = str(value)
+    return _clean_text(value, _MAX_USER_ID_CHARS)
+
+
 def verify_vmc_identity(user_jwt: str) -> VmcIdentity:
     secret = get_settings().vmc_identity_secret
     if not secret:
@@ -161,13 +179,14 @@ def verify_vmc_identity(user_jwt: str) -> VmcIdentity:
     # `sub` es el claim estandar; `user_id` es el nombre que usa Intercom en su JWT de
     # identidad. Aceptar ambos deja que VMC reutilice el codigo que ya firma ese token,
     # cambiando solo el secreto.
-    user_id = _clean_text(payload.get("sub") or payload.get("user_id"), _MAX_USER_ID_CHARS)
+    user_id = _clean_id(payload.get("sub") or payload.get("user_id"))
     if user_id is None:
         raise IdentityError("falta sub")
     return VmcIdentity(
         user_id=user_id,
         name=_clean_text(payload.get("name"), _MAX_NAME_CHARS),
         email=_clean_text(payload.get("email"), _MAX_EMAIL_CHARS),
+        cuu=_clean_text(payload.get("cuu"), _MAX_CUU_CHARS),
     )
 
 

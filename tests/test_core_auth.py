@@ -46,6 +46,43 @@ def test_jwt_valido_de_vmc_identifica_al_usuario():
     )
 
 
+def test_el_jwt_real_de_vmc_trae_cuu_y_user_id_numerico():
+    # Payload real de VMC (2026-09-07): `sub` es texto, `user_id` numero y el CUU es el codigo
+    # que la plataforma le muestra al usuario. D-010.
+    token = _jwt_vmc(
+        {
+            "aud": "3",
+            "sub": "215011",
+            "user_id": 215011,
+            "cuu": "ZEEJ7K",
+            "email": "usuario@example.test",
+            "scopes": ["vmcsubastas.com"],
+            "exp": _en_una_hora(),
+        }
+    )
+
+    identity = auth.verify_vmc_identity(token)
+
+    assert identity.user_id == "215011"
+    assert identity.cuu == "ZEEJ7K"
+    assert identity.email == "usuario@example.test"
+    assert identity.name is None  # el JWT de VMC no manda nombre; lo pone el asesor
+
+
+def test_user_id_numerico_alcanza_como_identidad():
+    # Sin `sub`, el claim numerico tiene que servir igual: antes se rechazaba con "falta sub".
+    token = _jwt_vmc({"user_id": 215011, "exp": _en_una_hora()})
+
+    assert auth.verify_vmc_identity(token).user_id == "215011"
+
+
+def test_un_booleano_no_es_una_identidad():
+    token = _jwt_vmc({"user_id": True, "exp": _en_una_hora()})
+
+    with pytest.raises(auth.IdentityError):
+        auth.verify_vmc_identity(token)
+
+
 def test_acepta_user_id_como_en_el_jwt_de_intercom():
     # VMC ya firma un JWT asi para Intercom; reutilizar ese codigo con otro secreto es el
     # camino mas corto para ellos.

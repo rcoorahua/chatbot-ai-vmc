@@ -46,7 +46,8 @@ class ConversationOut(ProjectionModel):
 class ConversationDetail(ProjectionModel):
     """La conversacion como la ve el ASESOR (bandeja y vista): espejo de `Conversation` en
     frontend/src/lib/types.ts. Campos del usuario: los que ya guarda la conversacion (nombre,
-    correo, empresa, id VMC); si D-010 decide menos, se recortan aqui."""
+    correo, empresa, id VMC y CUU). D-010 quedo cerrada (2026-09-07): el asesor ve el CUU
+    para ubicar a la persona en VMC, y no se busca por el."""
 
     conversation_id: str
     user_type: str
@@ -57,6 +58,7 @@ class ConversationDetail(ProjectionModel):
     user_id: str | None = None
     user_name: str | None = None
     user_email: str | None = None
+    user_cuu: str | None = None
     user_company: str | None = None
     # D-029: asunto del caso y de que hilo salio.
     title: str | None = None
@@ -117,6 +119,7 @@ class TicketOut(ProjectionModel):
     user_type: str
     user_id: str | None = None
     user_email: str | None = None
+    user_cuu: str | None = None
     problem_type: str
     category: str
     priority: str

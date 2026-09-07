@@ -31,6 +31,7 @@ def abrir_sesion(
     autenticado: bool = False,
     name: str = "Jorge",
     email: str | None = "jorge@example.test",
+    cuu: str | None = "ZEEJ7K",
 ) -> dict:
     """POST /chat/sessions. Anonima por defecto; `autenticado=True` fabrica un JWT de VMC con
     un usuario nuevo (o se pasa `user_jwt` propio). Registra la conversacion en `limpiar`."""
@@ -38,6 +39,8 @@ def abrir_sesion(
         claims = {"name": name}
         if email:
             claims["email"] = email
+        if cuu:
+            claims["cuu"] = cuu
         user_jwt = jwt_vmc("vmc_" + uuid.uuid4().hex[:8], **claims)
     body = {"user_jwt": user_jwt} if user_jwt else {}
     response = client.post("/chat/sessions", json=body)

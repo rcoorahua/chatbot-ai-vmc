@@ -113,6 +113,11 @@ class Conversation(DynamoModel):
     user_id: str | None = None
     user_name: str | None = None
     user_email: str | None = None
+    # D-010 (cerrada 2026-09-07, Aaron): el codigo que VMC le muestra al usuario ("ZEEJ7K").
+    # Viaja en el JWT de identidad y se guarda para que el asesor identifique a la persona en
+    # VMC. Es solo para mostrar: no hay GSI ni busqueda por CUU (es visible para el usuario y
+    # no prueba nada; quien identifica es `user_id`).
+    user_cuu: str | None = None
     user_company: str | None = None
     assigned_advisor_id: str | None = None
     # D-029: asunto del caso (lo escribe el usuario en el formulario).

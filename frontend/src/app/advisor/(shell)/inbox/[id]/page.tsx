@@ -289,14 +289,14 @@ export default function ConversationDetailPage() {
         <div>
           <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
           <dl className="mt-2.5 space-y-1.5 text-sm">
-            <Field label="Nombre" value={conversation.user_name} />
+            {/* D-010 (cerrada 2026-09-07): el CUU va primero porque es el codigo que el
+                usuario ve en VMC y el que dice por telefono. */}
+            <Field label="CUU" value={conversation.user_cuu} />
             <Field label="Correo" value={conversation.user_email} />
-            <Field label="Empresa" value={conversation.user_company} />
             <Field label="ID VMC" value={conversation.user_id} />
+            <Field label="Nombre" value={conversation.user_name} />
+            <Field label="Empresa" value={conversation.user_company} />
           </dl>
-          <p className="mt-2.5 text-xs text-neutral-400">
-            Campos soportados hoy por el modelo de datos. Set definitivo pendiente de D-010.
-          </p>
         </div>
 
         {/* Lo que la IA ya resolvió — tinte violeta (identidad de Subastín, el asistente),
