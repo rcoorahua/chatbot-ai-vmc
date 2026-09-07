@@ -50,25 +50,11 @@ redacta), **Pinecone** (búsqueda del Centro de Ayuda), y más adelante **Slack*
 
 ### Cómo se conecta todo
 
-```
-Widget en vmcsubastas.com          App del asesor (Next.js, fuera de AWS)
-        │                                   │
-        │  /chat/*                          │  /advisor/*, /dashboard/*
-        │  (JWT de VMC + token de sesión)   │  (JWT de Cognito)
-        ▼                                   ▼
-              API Gateway HTTP API
-                       │
-                       ▼
-              Lambda `api`  ──── responde 202 y encola ────►  SQS ai-jobs
-                       │                                          │
-                       │                                          ▼
-                       │                               Lambda `worker-ai`
-                       │                                 │      │       │
-                       │                              Gemini  Pinecone  │
-                       │                                              SQS notifications
-                       ▼                                                  │
-              DynamoDB · S3 · Secrets Manager                   Lambda `worker-notify`
-```
+Todo entra por el API Gateway. La Lambda `api` atiende lo síncrono y escribe en DynamoDB; cuando
+hay que llamar a un modelo, encola en SQS y responde al instante, y la Lambda `worker-ai` toma el
+trabajo, consulta Pinecone y Gemini, y guarda la respuesta. La Lambda `worker-notify` hace lo
+mismo con los avisos. El diagrama está en [README.md](README.md) §3 y el detalle en
+[docs/PLAN.md](docs/PLAN.md).
 
 La respuesta del bot es **asíncrona**: la API contesta al instante y el widget consulta cada
 pocos segundos si ya hay respuesta. Eso mantiene la API rápida y hace que un fallo del modelo se
@@ -167,6 +153,27 @@ aws secretsmanager put-secret-value --secret-id subastin-stage-ai \
 Los dos secretos de identidad son **distintos a propósito**: si fueran el mismo, un token de
 sesión de Subastín podría presentarse como identidad de VMC.
 
+#### Quién puede actualizar un secreto después
+
+Cualquiera con permiso IAM de `secretsmanager:PutSecretValue` **sobre ese secreto**, desde la
+consola de AWS (Secrets Manager → el secreto → *Retrieve secret value* → *Edit*) o con el comando
+de arriba. **No hace falta desplegar ni pedírselo a quien administra la infraestructura**: pedir
+un permiso acotado a esos dos secretos es suficiente, y es lo razonable — rotar una API key de
+Gemini no debería requerir un `cdk deploy`.
+
+Dos cosas que hay que saber al rotar una clave:
+
+- **Los cambios no se aplican al instante.** Cada Lambda lee los secretos **una vez al arrancar**
+  y los guarda mientras el proceso viva. Las instancias que ya están calientes siguen con el
+  valor viejo hasta que AWS las recicla (minutos, sin garantía). Para forzarlo: desplegar de
+  nuevo, o cambiar cualquier variable de entorno de la función — las dos cosas obligan a un
+  arranque en frío.
+- **Hay que mandar el JSON completo.** `put-secret-value` **reemplaza** todo el valor: si mandas
+  solo `GEMINI_API_KEY`, borras `PINECONE_API_KEY`. Desde la consola, editando campo por campo,
+  esto no pasa.
+- **Cuidado con `SESSION_SIGNING_KEY`**: cambiarla invalida todas las sesiones abiertas del chat
+  (los usuarios pierden su conversación en curso). Solo se toca a propósito.
+
 ### 4.4 Lo que queda por conectar fuera de AWS
 
 | Qué | Estado |
@@ -237,7 +244,11 @@ sí terminó, se vuelve a desplegar el commit anterior. **En prod los datos est�
 - **`worker-notify` todavía es un stub**: la cola y la Lambda existen, pero no mandan nada hasta
   que se cierre la decisión del canal de Slack (D-016).
 - **Falta configurar alarmas** de CloudWatch (mensajes en la DLQ, errores de los workers, 5xx de
-  la API). Está anotado en el stack como pendiente.
+  la API). Está anotado en el stack como pendiente. **Cuesta centavos**: una alarma estándar vale
+  ~US$0.10 al mes y las primeras 10 entran en la capa gratuita, así que las 5 o 6 que hacen falta
+  salen gratis o casi; los avisos por correo vía SNS también son gratuitos en ese volumen.
+  Confirmar los precios vigentes de la región antes de prometer la cifra. Lo caro no es la
+  alarma: es enterarse tarde de que la cola de errores lleva días llenándose.
 - **El login del asesor todavía no usa Cognito.** El User Pool existe y el API Gateway ya valida
   su JWT, pero la app Next.js guarda un token pegado a mano. Conectar la Hosted UI es trabajo
   pendiente, no un paso de despliegue.
