@@ -18,45 +18,20 @@ el umbral (0.913), y la consola decia solo "Fallback (sin modelo)" sin la causa.
 Contra dynamodb-local real, con modelo e indice sustituidos por dobles.
 """
 
-import uuid
 from datetime import timedelta
 
 import pytest
-from boto3.dynamodb.conditions import Key
 
 from backend.agent import flows, prompts
 from backend.agent.rag import Fragment, RagResult
-from backend.conversations import repository, service
-from backend.conversations.models import SenderType
+from backend.conversations import repository
 from backend.core import llm
-from backend.core.auth import VmcIdentity
 from backend.core.clock import to_iso, utc_now
-from backend.core.config import reset_settings
-from backend.core.jobs import AIJob
 from backend.workers import ai_worker
+from tests.helpers.fakes import FakeLLM, install_llm
+from tests.helpers.scenario import atiende, conversacion, escribe, fresca, respuestas_bot, usos_de
 
-pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture
-def limpiar(tablas):
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        for tabla, sk in (("messages", "message_key"), ("ai_usage", "execution_key")):
-            for item in tablas[tabla].query(
-                KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-            )["Items"]:
-                tablas[tabla].delete_item(Key={"conversation_id": conversation_id, sk: item[sk]})
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-
-
-@pytest.fixture(autouse=True)
-def _sin_rate_limit(monkeypatch):
-    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
-    reset_settings()
-    yield
-    reset_settings()
+pytestmark = pytest.mark.usefixtures("entorno_dynamo", "sin_rate_limit")
 
 
 QUOTA_MESSAGE = (
@@ -65,47 +40,16 @@ QUOTA_MESSAGE = (
 )
 
 
-class DeadLLM:
-    """Gemini con la cuota agotada: rechaza TODO al instante con 429 (el caso real)."""
-
-    def __init__(self):
-        self.calls = 0
-
-    def generate(self, **kwargs):
-        self.calls += 1
-        raise llm.LLMError(QUOTA_MESSAGE, provider="gemini", status_code=429, is_fatal=True)
-
-
-class FakeLLM:
-    def __init__(self, intent="FAQ", answer="Respuesta con evidencia."):
-        self.intent = intent
-        self.answer = answer
-        self.calls: list = []
-
-    def generate(self, *, tier, system, messages, max_output_tokens, temperature=None):
-        self.calls.append(tier)
-        text = f"<intent>{self.intent}</intent>" if tier == llm.ModelTier.FAST else self.answer
-        return llm.LLMResponse(
-            text=text, model=llm.model_for(tier).name, tier=tier,
-            usage={"input": 100, "output": 10, "cached_read": 0, "cached_creation": 0},
-            latency_ms=50,
-        )
-
-
 @pytest.fixture
 def gemini_caido(monkeypatch):
-    dead = DeadLLM()
-    monkeypatch.setattr("backend.agent.classifier.get_client", lambda: dead)
-    monkeypatch.setattr("backend.agent.writer.get_client", lambda: dead)
-    return dead
+    """Gemini con la cuota agotada: rechaza TODO al instante con 429 (el caso real)."""
+    error = llm.LLMError(QUOTA_MESSAGE, provider="gemini", status_code=429, is_fatal=True)
+    return install_llm(monkeypatch, FakeLLM(error=error))
 
 
 @pytest.fixture
 def gemini_vivo(monkeypatch):
-    fake = FakeLLM()
-    monkeypatch.setattr("backend.agent.classifier.get_client", lambda: fake)
-    monkeypatch.setattr("backend.agent.writer.get_client", lambda: fake)
-    return fake
+    return install_llm(monkeypatch, FakeLLM(answer="Respuesta con evidencia."))
 
 
 HIT = Fragment(text="Paso 1: ingresa a vmcsubastas.com.", topic="Registro", score=0.913)
@@ -135,90 +79,48 @@ def indice_por_tema(monkeypatch):
     )
 
 
-def _conversacion(limpiar):
-    identity = VmcIdentity(user_id="vmc_" + uuid.uuid4().hex[:8], name="Aaron")
-    conversation, _ = service.open_conversation(identity)
-    limpiar(conversation.conversation_id)
-    return conversation
-
-
-def _escribe(conversation, texto):
-    message, _ = service.post_user_message(
-        conversation, client_message_id="cli-" + uuid.uuid4().hex, content=texto
-    )
-    return message
-
-
-def _atiende(message):
-    ai_worker._process(
-        AIJob(
-            conversation_id=message.conversation_id, message_id=message.message_id,
-            message_key=message.message_key, requested_at=message.created_at,
-        ).model_dump_json()
-    )
-
-
-def _bot(conversation_id):
-    return [
-        m for m in repository.list_messages(conversation_id) if m.sender_type == SenderType.BOT
-    ]
-
-
-def _fresca(conversation):
-    return repository.get_conversation(conversation.conversation_id)
-
-
-def _usos(tablas, conversation_id):
-    return sorted(
-        tablas["ai_usage"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"],
-        key=lambda u: u["created_at"],
-    )
-
-
 # ───────────────────── AC-R1 / AC-R2: modelo caido, evidencia presente ─────────────────────
 
 
 def test_con_evidencia_y_gemini_caido_el_bot_admite_que_no_esta_disponible(
     limpiar, gemini_caido, con_evidencia, tablas
 ):
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "quiero registrarme"))
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "quiero registrarme"))
 
-    ultima = _bot(conversation.conversation_id)[-1]
+    ultima = respuestas_bot(conversation.conversation_id)[-1]
     assert ultima.content == prompts.MODEL_UNAVAILABLE_CONFIRM_RESPONSE
     assert prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE not in [
-        m.content for m in _bot(conversation.conversation_id)
+        m.content for m in respuestas_bot(conversation.conversation_id)
     ], "el dato existe: no puede decir que no lo tiene"
     # Con los botones si/no del asesor, como cualquier confirmacion.
     assert ultima.metadata["interaction"]["flow"] == flows.HANDOFF_CONFIRM
 
-    usos = _usos(tablas, conversation.conversation_id)
+    usos = usos_de(tablas, conversation.conversation_id)
     clasificacion = next(u for u in usos if u["execution_type"] == "CLASSIFICATION")
     respuesta = next(u for u in usos if u["source"] == "model_unavailable")
     assert clasificacion["status"] == "ERROR" and clasificacion["error"].startswith("quota 429")
     assert respuesta["status"] == "ERROR" and respuesta["error"].startswith("quota 429")
     assert respuesta["rag_used"] is True
-    assert gemini_caido.calls == 2, "clasificador y redactor, una vez cada uno (sin respaldo)"
+    assert len(gemini_caido.calls) == 2, "clasificador y redactor, una vez cada uno (sin respaldo)"
 
 
 def test_sin_evidencia_y_gemini_caido_sigue_siendo_no_tengo_ese_dato(
     limpiar, gemini_caido, sin_evidencia
 ):
     """Sin fragmentos el redactor ni se llama: aqui si es "no tengo ese dato"."""
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "cuanto cuesta tramitar placas en marte"))
-    assert _bot(conversation.conversation_id)[-1].content == (
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "cuanto cuesta tramitar placas en marte"))
+    assert respuestas_bot(conversation.conversation_id)[-1].content == (
         prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
     )
 
 
 def test_con_gemini_vivo_no_hay_error_registrado(limpiar, gemini_vivo, con_evidencia, tablas):
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "quiero registrarme"))
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "quiero registrarme"))
     assert all(u["status"] == "SUCCESS" and "error" not in u
-               for u in _usos(tablas, conversation.conversation_id))
+               for u in usos_de(tablas, conversation.conversation_id))
 
 
 # ───────────────────────── AC-R3: familias de error ─────────────────────────
@@ -269,39 +171,39 @@ def test_tras_ignorar_el_si_no_un_disparador_ofrece_su_flujo(
 ):
     """Sesion real: "no tengo ese dato, ¿asesor?" → "quiero participar" iba al clasificador y
     al RAG con el texto literal (0/4) → otra vez "no tengo ese dato, ¿asesor?". En bucle."""
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "cuanto cuesta tramitar placas en marte"))
-    assert _fresca(conversation).active_flow == flows.HANDOFF_CONFIRM
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "cuanto cuesta tramitar placas en marte"))
+    assert fresca(conversation).active_flow == flows.HANDOFF_CONFIRM
     llamadas = len(gemini_vivo.calls)
 
-    _atiende(_escribe(_fresca(conversation), "quiero participar"))
+    atiende(escribe(fresca(conversation), "quiero participar"))
 
-    ultima = _bot(conversation.conversation_id)[-1]
+    ultima = respuestas_bot(conversation.conversation_id)[-1]
     assert ultima.metadata["interaction"]["flow"] == "PARTICIPATION"
-    assert _fresca(conversation).active_flow == "PARTICIPATION"
+    assert fresca(conversation).active_flow == "PARTICIPATION"
     assert len(gemini_vivo.calls) == llamadas, "ofrecer botones no llama a ningun modelo"
 
 
 def test_tras_ignorar_el_si_no_una_pregunta_normal_sigue_el_pipeline(
     limpiar, gemini_vivo, indice_por_tema
 ):
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "cuanto cuesta tramitar placas en marte"))
-    assert _fresca(conversation).active_flow == flows.HANDOFF_CONFIRM
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "cuanto cuesta tramitar placas en marte"))
+    assert fresca(conversation).active_flow == flows.HANDOFF_CONFIRM
 
-    _atiende(_escribe(_fresca(conversation), "mejor dime cuanto es la comision"))
+    atiende(escribe(fresca(conversation), "mejor dime cuanto es la comision"))
 
-    assert _bot(conversation.conversation_id)[-1].content == gemini_vivo.answer
-    assert _fresca(conversation).active_flow is None
+    assert respuestas_bot(conversation.conversation_id)[-1].content == gemini_vivo.answer
+    assert fresca(conversation).active_flow is None
 
 
 # ───────────────────── AC-R5: flujo vencido + disparador nuevo ─────────────────────
 
 
 def test_un_flujo_vencido_mas_un_disparador_ofrece_los_botones(limpiar, gemini_vivo):
-    conversation = _conversacion(limpiar)
-    _atiende(_escribe(conversation, "quiero consignar"))
-    current = _fresca(conversation)
+    conversation = conversacion(limpiar)
+    atiende(escribe(conversation, "quiero consignar"))
+    current = fresca(conversation)
     assert current.active_flow == "CONSIGNMENT"
     # Se vence a mano: la fecha de expiracion queda en el pasado.
     repository.set_flow_state(
@@ -310,9 +212,9 @@ def test_un_flujo_vencido_mas_un_disparador_ofrece_los_botones(limpiar, gemini_v
         expected_version=current.flow_version,
     )
 
-    _atiende(_escribe(_fresca(conversation), "quiero participar"))
+    atiende(escribe(fresca(conversation), "quiero participar"))
 
-    respuestas = _bot(conversation.conversation_id)
+    respuestas = respuestas_bot(conversation.conversation_id)
     assert len(respuestas) == 2, "antes: silencio (la transicion perdia la carrera de version)"
     assert respuestas[-1].metadata["interaction"]["flow"] == "PARTICIPATION"
-    assert _fresca(conversation).active_flow == "PARTICIPATION"
+    assert fresca(conversation).active_flow == "PARTICIPATION"

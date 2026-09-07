@@ -10,24 +10,15 @@ La parte que si llama a Gemini corre a mano: `python -m scripts.eval_intents` (c
 centavos y necesita GEMINI_API_KEY; por eso no esta en CI).
 """
 
-import json
-from pathlib import Path
 
 import pytest
 
 from backend.agent import guardrails, trivial
 from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
+from tests.helpers.golden import load_golden
 
-GOLDEN = Path(__file__).parent / "golden" / "intents.jsonl"
-
-
-def load_golden() -> list[dict]:
-    lines = GOLDEN.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip() and not line.startswith("#")]
-
-
-CASES = load_golden()
+CASES = load_golden("intents.jsonl")
 
 
 def test_el_golden_set_tiene_tamano_y_forma():

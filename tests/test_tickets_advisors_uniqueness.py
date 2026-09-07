@@ -43,27 +43,11 @@ def _conversation(conversation_id: str) -> Conversation:
     )
 
 
-@pytest.fixture
-def limpiar_ticket(tablas):
-    ids: list[str] = []
-    yield ids
-    for ticket_id in ids:
-        tablas["tickets"].delete_item(Key={"ticket_id": ticket_id})
-
-
-@pytest.fixture
-def limpiar_advisor(tablas):
-    ids: list[str] = []
-    yield ids
-    for advisor_id in ids:
-        tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
-
-
-def test_open_ticket_concurrente_deja_una_sola_fila(tablas, limpiar_ticket):
+def test_open_ticket_concurrente_deja_una_sola_fila(tablas, limpiar):
     conversation_id = f"conv_test_uniq_{uuid.uuid4().hex[:8]}"
     conversation = _conversation(conversation_id)
     ticket_id = tickets_service.ticket_id_for_conversation(conversation_id)
-    limpiar_ticket.append(ticket_id)
+    limpiar.ticket(ticket_id)
 
     barrera = threading.Barrier(N_THREADS)
 
@@ -87,11 +71,11 @@ def test_open_ticket_concurrente_deja_una_sola_fila(tablas, limpiar_ticket):
     assert filas[0]["ticket_id"] == ticket_id
 
 
-def test_open_ticket_secuencial_inmediato_es_idempotente(tablas, limpiar_ticket):
+def test_open_ticket_secuencial_inmediato_es_idempotente(tablas, limpiar):
     conversation_id = f"conv_test_uniq_{uuid.uuid4().hex[:8]}"
     conversation = _conversation(conversation_id)
     ticket_id = tickets_service.ticket_id_for_conversation(conversation_id)
-    limpiar_ticket.append(ticket_id)
+    limpiar.ticket(ticket_id)
 
     primero = tickets_service.open_ticket(conversation)
     segundo = tickets_service.open_ticket(conversation)
@@ -104,11 +88,11 @@ def test_open_ticket_secuencial_inmediato_es_idempotente(tablas, limpiar_ticket)
     assert len(filas) == 1
 
 
-def test_resolve_advisor_concurrente_primer_login_deja_una_sola_fila(tablas, limpiar_advisor):
+def test_resolve_advisor_concurrente_primer_login_deja_una_sola_fila(tablas, limpiar):
     cognito_sub = f"sub-uniq-{uuid.uuid4().hex[:8]}"
     claims = CognitoClaims(sub=cognito_sub, email="asesor@example.com", name="Asesor de Prueba")
     advisor_id = advisors_service.advisor_id_for_cognito_sub(cognito_sub)
-    limpiar_advisor.append(advisor_id)
+    limpiar.asesor(advisor_id)
 
     barrera = threading.Barrier(N_THREADS)
 

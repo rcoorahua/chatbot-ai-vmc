@@ -18,62 +18,21 @@ El authorizer del asesor se simula con el middleware de dev y el encolado a SQS 
 igual que en tests/test_chat_cases.py.
 """
 
-import uuid
 
 import pytest
 from boto3.dynamodb.conditions import Key
-from fastapi.testclient import TestClient
 
-from backend.api import dev_auth
-from backend.api.main import app
-from backend.api.routers import chat as chat_router
-from backend.core import auth
-from backend.core.clock import epoch_seconds
-from backend.core.config import get_settings, reset_settings
 from backend.tickets import repository as tickets_repository
+from tests.helpers.http import (
+    abrir_sesion,
+    asesor_nuevo,
+    pedir_handoff,
+    ticket_de,
+    tomar,
+)
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
 
-DEV_SECRET = "test-advisor-dev-secret"
-
-
-@pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("ADVISOR_DEV_AUTH", "1")
-    monkeypatch.setenv("ADVISOR_DEV_JWT_SECRET", DEV_SECRET)
-    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
-    reset_settings()
-    monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", lambda job: None)
-    yield TestClient(dev_auth.DevCognitoAuthorizer(app))
-    reset_settings()
-
-
-@pytest.fixture
-def limpiar(tablas):
-    """Borra conversaciones, mensajes, asesores y los tickets que cuelguen de ellas."""
-    conversaciones: list[str] = []
-    asesores: list[str] = []
-
-    class Registro:
-        conversacion = staticmethod(conversaciones.append)
-        asesor = staticmethod(asesores.append)
-
-    yield Registro
-    for conversation_id in conversaciones:
-        for item in tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        for item in tablas["tickets"].query(
-            IndexName="gsi1_conversation",
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id),
-        )["Items"]:
-            tablas["tickets"].delete_item(Key={"ticket_id": item["ticket_id"]})
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-    for advisor_id in asesores:
-        tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
 
 
 # ───────────────────────────────────── Helpers ─────────────────────────────────────
@@ -84,68 +43,23 @@ FORMULARIO = {
 }
 
 
-def _sesion(client, limpiar, *, autenticado=True) -> dict:
-    body = {}
-    if autenticado:
-        body["user_jwt"] = auth.sign_jwt(
-            {
-                "sub": "vmc_" + uuid.uuid4().hex[:8],
-                "exp": epoch_seconds() + 600,
-                "name": "Jorge",
-                "email": "jorge@example.test",
-            },
-            get_settings().vmc_identity_secret,
-        )
-    response = client.post("/chat/sessions", json=body)
-    assert response.status_code == 201, response.text
-    sesion = response.json()
-    limpiar.conversacion(sesion["conversation"]["conversation_id"])
-    return sesion
-
-
 def _handoff(client, sesion, limpiar, **campos) -> dict:
-    response = client.post(
-        f"/chat/conversations/{sesion['conversation']['conversation_id']}/handoff",
-        json={**FORMULARIO, **campos},
-        headers={"Authorization": f"Bearer {sesion['token']}"},
-    )
+    """Deriva con el formulario de ESTE archivo (su texto decide el problem_type) y devuelve
+    el caso ya registrado para limpiar."""
+    response = pedir_handoff(client, sesion, limpiar, formulario=FORMULARIO, **campos)
     assert response.status_code == 201, response.text
-    caso = response.json()["conversation"]
-    limpiar.conversacion(caso["conversation_id"])
-    return caso
-
-
-def _asesor_nuevo(client, limpiar) -> tuple[str, dict]:
-    sub = "sub-test-" + uuid.uuid4().hex[:8]
-    payload = {"sub": sub, "token_use": "id", "exp": epoch_seconds() + 600, "name": "Ana P."}
-    headers = {"Authorization": f"Bearer {auth.sign_jwt(payload, DEV_SECRET)}"}
-    me = client.get("/advisor/me", headers=headers)
-    assert me.status_code == 200, me.text
-    limpiar.asesor(me.json()["advisor_id"])
-    return me.json()["advisor_id"], headers
-
-
-def _ticket(client, headers, conversation_id) -> dict:
-    response = client.get(f"/advisor/conversations/{conversation_id}/ticket", headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def _tomar(client, headers, conversation_id) -> dict:
-    response = client.post(f"/advisor/conversations/{conversation_id}/take", headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
+    return response.json()["conversation"]
 
 
 # ───────────────────── AC-T1: derivar abre el ticket ─────────────────────
 
 
 def test_el_caso_del_autenticado_abre_un_ticket_clasificado(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
 
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     assert ticket["status"] == "PENDING"
     assert ticket["conversation_id"] == caso["conversation_id"]
@@ -162,12 +76,12 @@ def test_el_caso_del_autenticado_abre_un_ticket_clasificado(client, limpiar):
 
 
 def test_un_caso_abre_un_solo_ticket(client, limpiar, tablas):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
 
     # Pedirlo varias veces (la red de seguridad corre en cada lectura) no debe duplicar.
-    ids = {_ticket(client, headers, caso["conversation_id"])["ticket_id"] for _ in range(3)}
+    ids = {ticket_de(client, headers, caso["conversation_id"])["ticket_id"] for _ in range(3)}
     en_tabla = tablas["tickets"].query(
         IndexName="gsi1_conversation",
         KeyConditionExpression=Key("conversation_id").eq(caso["conversation_id"]),
@@ -177,7 +91,7 @@ def test_un_caso_abre_un_solo_ticket(client, limpiar, tablas):
 
 
 def test_el_tipo_y_la_prioridad_salen_del_texto_del_usuario(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(
         client,
         sesion,
@@ -185,9 +99,9 @@ def test_el_tipo_y_la_prioridad_salen_del_texto_del_usuario(client, limpiar):
         subject="La sala no carga",
         detail="Estoy en un proceso en vivo y no me deja pujar, ya van 3 veces que sale error.",
     )
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
 
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     assert ticket["problem_type"] == "PLATFORM_BUG" and ticket["category"] == "TECHNICAL"
     # Base MEDIUM, pero el proceso está corriendo: sube a HIGH (MAPEO.md §8).
@@ -198,13 +112,13 @@ def test_el_tipo_y_la_prioridad_salen_del_texto_del_usuario(client, limpiar):
 
 
 def test_tomar_la_conversacion_pone_el_ticket_en_curso(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar)
 
-    _tomar(client, headers, caso["conversation_id"])
+    tomar(client, headers, caso["conversation_id"])
 
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
     assert ticket["status"] == "IN_PROGRESS"
     assert ticket["assigned_advisor_id"] == advisor_id and ticket["assigned_at"]
 
@@ -213,19 +127,19 @@ def test_volver_a_tomar_el_hilo_reabre_su_ticket(client, limpiar):
     """Auditoría 2026-09-06: tomar → cerrar → volver a tomar (D-022/D-023) dejaba un ticket
     CLOSED colgando de una conversación IN_ATTENTION, porque el id es determinista por
     conversación y `assign` devolvía el cerrado tal cual. Ahora lo reabre."""
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     hilo_id = sesion["conversation"]["conversation_id"]
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    _tomar(client, headers, hilo_id)
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    tomar(client, headers, hilo_id)
     cierre = client.post(
         f"/advisor/conversations/{hilo_id}/close", headers=headers, json={"resolution": "Listo"}
     )
     assert cierre.status_code == 200, cierre.text
-    assert _ticket(client, headers, hilo_id)["status"] == "CLOSED"
+    assert ticket_de(client, headers, hilo_id)["status"] == "CLOSED"
 
-    _tomar(client, headers, hilo_id)
+    tomar(client, headers, hilo_id)
 
-    ticket = _ticket(client, headers, hilo_id)
+    ticket = ticket_de(client, headers, hilo_id)
     assert ticket["status"] == "IN_PROGRESS" and ticket["assigned_advisor_id"] == advisor_id
     assert ticket["closed_at"] is None and ticket["resolution"] is None
 
@@ -234,10 +148,10 @@ def test_volver_a_tomar_el_hilo_reabre_su_ticket(client, limpiar):
 
 
 def test_cambiar_el_tipo_arrastra_categoria_datos_minimos_y_deja_rastro(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     response = client.patch(
         f"/advisor/tickets/{ticket['ticket_id']}",
@@ -254,10 +168,10 @@ def test_cambiar_el_tipo_arrastra_categoria_datos_minimos_y_deja_rastro(client, 
 
 
 def test_registrar_datos_reduce_lo_que_falta(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     primero = client.patch(
         f"/advisor/tickets/{ticket['ticket_id']}",
@@ -276,10 +190,10 @@ def test_registrar_datos_reduce_lo_que_falta(client, limpiar):
 
 
 def test_la_prioridad_que_pone_el_asesor_manda_sobre_la_regla(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     bajada = client.patch(
         f"/advisor/tickets/{ticket['ticket_id']}",
@@ -298,10 +212,10 @@ def test_la_prioridad_que_pone_el_asesor_manda_sobre_la_regla(client, limpiar):
 
 
 def test_un_tipo_o_una_etiqueta_inventados_son_422(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    ticket = ticket_de(client, headers, caso["conversation_id"])
 
     for cuerpo in ({"problem_type": "NO_EXISTE"}, {"tags": ["INVENTADA"]}):
         response = client.patch(
@@ -311,7 +225,7 @@ def test_un_tipo_o_una_etiqueta_inventados_son_422(client, limpiar):
 
 
 def test_un_ticket_inexistente_es_404(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
     response = client.patch(
         "/advisor/tickets/tick_no_existe", json={"priority": "LOW"}, headers=headers
     )
@@ -322,10 +236,10 @@ def test_un_ticket_inexistente_es_404(client, limpiar):
 
 
 def test_cerrar_el_caso_cierra_el_ticket_con_su_resolucion(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    _tomar(client, headers, caso["conversation_id"])
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    tomar(client, headers, caso["conversation_id"])
 
     cerrada = client.post(
         f"/advisor/conversations/{caso['conversation_id']}/close",
@@ -334,7 +248,7 @@ def test_cerrar_el_caso_cierra_el_ticket_con_su_resolucion(client, limpiar):
     )
     assert cerrada.status_code == 200, cerrada.text
 
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
     assert ticket["status"] == "CLOSED" and ticket["closed_at"]
     assert ticket["closed_by"] == advisor_id
     assert ticket["resolution"] == "Se aplicó el pago a mano y se avisó al usuario."
@@ -342,26 +256,26 @@ def test_cerrar_el_caso_cierra_el_ticket_con_su_resolucion(client, limpiar):
 
 def test_cerrar_sin_cuerpo_sigue_funcionando(client, limpiar):
     """El cuerpo es opcional: la app del asesor puede cerrar sin escribir resolución."""
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    _tomar(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    tomar(client, headers, caso["conversation_id"])
 
     cerrada = client.post(
         f"/advisor/conversations/{caso['conversation_id']}/close", headers=headers
     )
 
     assert cerrada.status_code == 200, cerrada.text
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
     assert ticket["status"] == "CLOSED" and ticket["resolution"] is None
 
 
 def test_un_ticket_cerrado_ya_no_se_edita(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    _tomar(client, headers, caso["conversation_id"])
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    tomar(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
     client.post(f"/advisor/conversations/{caso['conversation_id']}/close", headers=headers)
 
     response = client.patch(
@@ -376,8 +290,8 @@ def test_un_ticket_cerrado_ya_no_se_edita(client, limpiar):
 def test_cerrar_el_hilo_del_autenticado_no_inventa_ticket(client, limpiar):
     """El hilo con el bot no es trabajo humano (RF-023): tomarlo sí abre ticket, pero una
     conversación que nunca se escaló no debe dejar rastro en Tickets."""
-    sesion = _sesion(client, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
+    _, headers = asesor_nuevo(client, limpiar)
     hilo_id = sesion["conversation"]["conversation_id"]
 
     sin_ticket = client.get(f"/advisor/conversations/{hilo_id}/ticket", headers=headers)
@@ -389,10 +303,10 @@ def test_cerrar_el_hilo_del_autenticado_no_inventa_ticket(client, limpiar):
 
 
 def test_la_bandeja_filtra_por_estado_y_por_mis_tickets(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    mio = _handoff(client, _sesion(client, limpiar), limpiar)
-    ajeno = _handoff(client, _sesion(client, limpiar), limpiar)
-    _tomar(client, headers, mio["conversation_id"])
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    mio = _handoff(client, abrir_sesion(client, limpiar, autenticado=True), limpiar)
+    ajeno = _handoff(client, abrir_sesion(client, limpiar, autenticado=True), limpiar)
+    tomar(client, headers, mio["conversation_id"])
 
     pendientes = client.get(
         "/advisor/tickets", params={"status": "PENDING", "limit": 100}, headers=headers
@@ -409,9 +323,9 @@ def test_la_bandeja_filtra_por_estado_y_por_mis_tickets(client, limpiar):
 
 
 def test_los_tickets_cerrados_salen_de_mi_bandeja(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
-    caso = _handoff(client, _sesion(client, limpiar), limpiar)
-    _tomar(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    caso = _handoff(client, abrir_sesion(client, limpiar, autenticado=True), limpiar)
+    tomar(client, headers, caso["conversation_id"])
     client.post(f"/advisor/conversations/{caso['conversation_id']}/close", headers=headers)
 
     mios = client.get("/advisor/tickets", params={"mine": "true"}, headers=headers).json()[
@@ -435,13 +349,13 @@ def test_un_caso_escalado_sin_ticket_lo_recibe_al_abrirlo_el_asesor(client, limp
     El id es determinista (DETAILS.md §4.4 / Paso 5): recrearlo devuelve el MISMO ticket_id,
     no uno nuevo — es lo que hace posible que dos intentos casi simultaneos de red de
     seguridad nunca dupliquen la fila."""
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    _, headers = _asesor_nuevo(client, limpiar)
-    original = _ticket(client, headers, caso["conversation_id"])
+    _, headers = asesor_nuevo(client, limpiar)
+    original = ticket_de(client, headers, caso["conversation_id"])
     tablas["tickets"].delete_item(Key={"ticket_id": original["ticket_id"]})
 
-    recreado = _ticket(client, headers, caso["conversation_id"])
+    recreado = ticket_de(client, headers, caso["conversation_id"])
 
     assert recreado["ticket_id"] == original["ticket_id"]
     assert recreado["problem_type"] == "PAYMENT_ISSUE", "se reclasifica desde el formulario"
@@ -450,15 +364,15 @@ def test_un_caso_escalado_sin_ticket_lo_recibe_al_abrirlo_el_asesor(client, limp
 
 
 def test_tomar_un_caso_sin_ticket_tambien_lo_crea(client, limpiar, tablas):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True)
     caso = _handoff(client, sesion, limpiar)
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    original = _ticket(client, headers, caso["conversation_id"])
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    original = ticket_de(client, headers, caso["conversation_id"])
     tablas["tickets"].delete_item(Key={"ticket_id": original["ticket_id"]})
 
-    _tomar(client, headers, caso["conversation_id"])
+    tomar(client, headers, caso["conversation_id"])
 
-    ticket = _ticket(client, headers, caso["conversation_id"])
+    ticket = ticket_de(client, headers, caso["conversation_id"])
     assert ticket["status"] == "IN_PROGRESS" and ticket["assigned_advisor_id"] == advisor_id
 
 
@@ -466,7 +380,7 @@ def test_tomar_un_caso_sin_ticket_tambien_lo_crea(client, limpiar, tablas):
 
 
 def test_la_taxonomia_se_publica_marcada_como_propuesta(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
 
     catalogo = client.get("/advisor/taxonomy", headers=headers)
 
@@ -479,3 +393,8 @@ def test_la_taxonomia_se_publica_marcada_como_propuesta(client, limpiar):
 
 def test_la_taxonomia_exige_token_de_asesor(client):
     assert client.get("/advisor/taxonomy").status_code == 401
+
+
+@pytest.fixture
+def client(advisor_client):
+    return advisor_client

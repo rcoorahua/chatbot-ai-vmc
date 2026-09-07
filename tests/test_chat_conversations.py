@@ -17,31 +17,12 @@ import pytest
 from boto3.dynamodb.conditions import Key
 
 from backend.conversations import repository, service
-from backend.conversations.models import Conversation, Message, UserType
+from backend.conversations.models import Conversation, UserType
 from backend.core.auth import VmcIdentity
 from backend.core.config import reset_settings
+from tests.helpers.scenario import escribe
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture
-def limpiar(tablas):
-    """Registra conversaciones creadas por la prueba y las borra (con sus mensajes) al final.
-
-    Las de usuario autenticado tienen id determinista, asi que cada prueba usa un user_id
-    unico para no pisarse con otra.
-    """
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        items = tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]
-        for item in items:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
 
 
 def _identidad(**extra) -> VmcIdentity:
@@ -222,16 +203,9 @@ def test_el_mensaje_vacio_no_se_persiste(limpiar, content):
 # ───────────────────── AC-C6: listados sin marcadores y cursor exclusivo ─────────────────────
 
 
-def _enviar(conversation, texto) -> Message:
-    message, _ = service.post_user_message(
-        conversation, client_message_id="cli-" + uuid.uuid4().hex, content=texto
-    )
-    return message
-
-
 def test_el_listado_es_cronologico_y_sin_marcadores(limpiar, tablas):
     conversation, _ = _abrir(limpiar, None)
-    enviados = [_enviar(conversation, f"mensaje {i}") for i in range(3)]
+    enviados = [escribe(conversation, f"mensaje {i}") for i in range(3)]
 
     listado = repository.list_messages(conversation.conversation_id)
 
@@ -246,8 +220,8 @@ def test_el_listado_es_cronologico_y_sin_marcadores(limpiar, tablas):
 
 def test_el_cursor_after_entrega_solo_lo_nuevo(limpiar):
     conversation, _ = _abrir(limpiar, None)
-    primero = _enviar(conversation, "viejo")
-    segundo = _enviar(conversation, "nuevo")
+    primero = escribe(conversation, "viejo")
+    segundo = escribe(conversation, "nuevo")
 
     nuevos = repository.list_messages(conversation.conversation_id, after=primero.message_key)
 
@@ -259,7 +233,7 @@ def test_la_ventana_reciente_devuelve_los_ultimos_n_en_orden(limpiar):
     """RF-013: la IA recibe los N mas recientes, no los N primeros ni marcadores."""
     conversation, _ = _abrir(limpiar, None)
     for i in range(4):
-        _enviar(conversation, f"m{i}")
+        escribe(conversation, f"m{i}")
 
     ventana = repository.list_recent_messages(conversation.conversation_id, limit=2)
 

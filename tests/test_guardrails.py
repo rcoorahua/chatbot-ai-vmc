@@ -18,10 +18,7 @@ con `created_at` de hace dos horas es indistinguible de uno que se escribio hace
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
-from backend.api.main import app
-from backend.api.routers import chat as chat_router
 from backend.conversations import repository, service
 from backend.conversations.models import (
     Conversation,
@@ -35,23 +32,7 @@ from backend.conversations.models import (
 from backend.core.clock import minutes_ago_iso, utc_now_iso
 from backend.core.config import get_settings, reset_settings
 
-pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture
-def limpiar(tablas):
-    from boto3.dynamodb.conditions import Key
-
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        for item in tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
+pytestmark = pytest.mark.usefixtures("entorno_dynamo", "settings_limpios")
 
 
 @pytest.fixture
@@ -67,18 +48,6 @@ def conversacion(limpiar) -> Conversation:
     repository.create_conversation(conversation)
     limpiar(conversation.conversation_id)
     return conversation
-
-
-@pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", lambda job: None)
-    return TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _settings_limpios():
-    yield
-    reset_settings()
 
 
 def _escribir(conversation_id: str, texto: str, *, created_at: str, sender=SenderType.USER):
