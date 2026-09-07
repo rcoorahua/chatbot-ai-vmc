@@ -375,6 +375,8 @@ def post_message(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Primero toma la conversacion para responder"
         ) from exc
+    except service.ConversationClosed as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "El caso ya esta cerrado") from exc
     except (service.MessageTooLong, service.EmptyMessage) as exc:
         raise HTTPException(422, str(exc)) from exc
     return MessageCreated(message=MessageOut.from_model(message), duplicate=not created)
@@ -391,6 +393,8 @@ def close(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Solo el asesor asignado puede cerrar el caso"
         ) from exc
+    except service.ConversationClosed as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "El caso ya estaba cerrado") from exc
     # El ticket se cierra con el caso (RF-031). Si ya estaba cerrado no es un error: la
     # conversacion es la fuente de verdad del cierre y este endpoint es idempotente para ella.
     ticket = tickets.for_conversation(conversation_id)

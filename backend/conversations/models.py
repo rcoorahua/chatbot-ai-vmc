@@ -102,11 +102,7 @@ class SystemEvent(StrEnum):
     CASE_OPENED = "CASE_OPENED"
 
 
-# Alias historico: el modelo base vive en core/dynamo_model.py.
-_DynamoModel = DynamoModel
-
-
-class Conversation(_DynamoModel):
+class Conversation(DynamoModel):
     conversation_id: str
     user_type: UserType
     # D-029. El default THREAD mantiene validas las filas anteriores a la decision.
@@ -151,7 +147,7 @@ class Conversation(_DynamoModel):
     expires_at: int | None = None
 
 
-class Message(_DynamoModel):
+class Message(DynamoModel):
     conversation_id: str
     message_key: str
     message_id: str

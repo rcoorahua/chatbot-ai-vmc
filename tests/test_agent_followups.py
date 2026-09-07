@@ -44,6 +44,25 @@ def test_pedir_seguir_es_continuacion(texto):
     assert continuacion is True and regla == "pide_seguir"
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "que mas necesito para registrarme",
+        "sigue sin cargar la pagina",
+        "continuar con mi registro",
+        "adelante con la compra",
+    ],
+)
+def test_empezar_como_un_pedido_de_seguir_no_basta(texto):
+    """Auditoria 2026-09-06: un `startswith` marcaba estas como "pide_seguir", saltaban el
+    clasificador y se buscaba la pregunta ANTERIOR del usuario en vez de esta."""
+    assert followups.is_continuation(texto) == (False, None)
+
+
+def test_un_pedido_de_seguir_admite_una_cola_corta():
+    assert followups.is_continuation("y luego que hago") == (True, "pide_seguir")
+
+
 # ───────────────────────── AC-S2: lo corto no basta ─────────────────────────
 
 

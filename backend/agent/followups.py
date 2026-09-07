@@ -92,9 +92,24 @@ _CONTINUATIONS = _phrases(
 # cambiando de tema. Sin esta salvedad, la consulta mezclaría los dos temas y recuperaría peor
 # que sin contextualizar nada.
 _INTERROGATIVES = (
-    "que ", "qué ", "como ", "cuanto", "cuando", "donde", "quien", "cual", "por que",
+    "que ", "como ", "cuanto", "cuando", "donde", "quien", "cual", "por que",
     "porque ", "para que", "se puede", "puedo ", "hay ",
 )
+
+# Cuantas palabras pueden seguir a un pedido de seguir sin que deje de serlo: "y luego que
+# hago" sigue pidiendo el paso siguiente; "que mas necesito para registrarme" ya es una
+# pregunta propia. Un `startswith` a secas marcaba esa ultima como continuacion (y "sigue sin
+# cargar la pagina", "continuar con mi registro", "adelante con la compra"): saltaba el
+# clasificador y buscaba la pregunta ANTERIOR del usuario (auditoria 2026-09-06).
+_CONTINUATION_TAIL_WORDS = 2
+
+
+def _asks_to_continue(normalized: str, phrase: str) -> bool:
+    if normalized == phrase:
+        return True
+    if not normalized.startswith(phrase + " "):
+        return False
+    return len(normalized[len(phrase):].split()) <= _CONTINUATION_TAIL_WORDS
 
 
 def _looks_like_question(normalized: str) -> bool:
@@ -136,7 +151,7 @@ def is_continuation(text: str, *, bot_asked: bool = False) -> tuple[bool, str | 
     if limpio in _ACKNOWLEDGEMENTS:
         return True, "acuse"
     # Antes de descartar preguntas: "¿y luego?" es una pregunta Y una continuación.
-    if any(limpio.startswith(frase) for frase in _CONTINUATIONS):
+    if any(_asks_to_continue(limpio, frase) for frase in _CONTINUATIONS):
         return True, "pide_seguir"
     if bot_asked and not _looks_like_question(con_signos):
         return True, "responde_al_bot"

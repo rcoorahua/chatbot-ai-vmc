@@ -12,11 +12,12 @@ Los tests de este módulo corren contra dynamodb-local real: un GSI mal usado fa
 
 from typing import Any
 
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from backend.core.aws import dynamodb_resource
 from backend.core.config import get_settings
+from backend.core.dynamo import query_up_to
 from backend.tickets.models import Ticket
 
 
@@ -86,15 +87,21 @@ def list_inbox(status: str | None = None, *, limit: int = 50) -> list[Ticket]:
     return [Ticket.from_item(item) for item in response["Items"]]
 
 
-def find_by_advisor(advisor_id: str, *, limit: int = 50) -> list[Ticket]:
-    """Tickets de un asesor, el más reciente primero (GSI2)."""
-    response = _tickets().query(
-        IndexName="gsi2_advisor",
-        KeyConditionExpression=Key("assigned_advisor_id").eq(advisor_id),
-        ScanIndexForward=False,
-        Limit=limit,
-    )
-    return [Ticket.from_item(item) for item in response["Items"]]
+def find_by_advisor(
+    advisor_id: str, *, limit: int = 50, status: str | None = None, exclude_closed: bool = False
+) -> list[Ticket]:
+    """Tickets de un asesor, el más reciente primero (GSI2). `status` o `exclude_closed`
+    filtran paginando (el filtro se aplica DESPUÉS del `Limit`: ver `core.dynamo.query_up_to`)."""
+    kwargs: dict[str, Any] = {
+        "IndexName": "gsi2_advisor",
+        "KeyConditionExpression": Key("assigned_advisor_id").eq(advisor_id),
+        "ScanIndexForward": False,
+    }
+    if status is not None:
+        kwargs["FilterExpression"] = Attr("status").eq(status)
+    elif exclude_closed:
+        kwargs["FilterExpression"] = Attr("status").ne("CLOSED")
+    return [Ticket.from_item(item) for item in query_up_to(_tickets(), limit, **kwargs)]
 
 
 def update_ticket(

@@ -382,7 +382,9 @@ _MARKDOWN_EMPHASIS = re.compile(
 # Solo espacios horizontales antes de la almohadilla: con `\s` el patron se comeria los saltos
 # de linea previos y dejaria parrafos pegados.
 _MARKDOWN_HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+", re.MULTILINE)
-_DASH_SEPARATOR = re.compile(r"\s*[—–]\s*")
+# Un guion largo entre DIGITOS es un rango ("10–15 dias"), no un separador de maquina:
+# convertirlo en coma cambiaba el sentido ("10, 15 dias"; auditoria 2026-09-06).
+_DASH_SEPARATOR = re.compile(r"\s*(?<!\d)[—–](?!\d)\s*")
 _BLANK_LINES = re.compile(r"\n{3,}")
 
 

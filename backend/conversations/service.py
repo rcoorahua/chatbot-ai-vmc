@@ -62,7 +62,8 @@ class RateLimited(RuntimeError):
 
 
 class ConversationClosed(RuntimeError):
-    """La conversacion esta CLOSED: es de solo lectura (D-029). Se responde 409."""
+    """La conversacion esta CLOSED: es de solo lectura (D-029). Se responde 409. Tambien la
+    levanta `close_case` cuando el caso ya se habia cerrado (o el hilo ya volvio al bot)."""
 
 
 class HandoffNotAllowed(RuntimeError):
@@ -219,10 +220,14 @@ def post_user_message(
         expires_at=conversation.expires_at,
     )
     # Solo cuenta como "no leido" para el asesor si el bot ya no atiende (RF-035): mientras la
-    # IA responde sola, no hay nadie que deba leerlo.
-    return repository.save_message_idempotent(
-        message, count_as_unread=not conversation.bot_enabled
-    )
+    # IA responde sola, no hay nadie que deba leerlo. `require_open` hace atomico el chequeo
+    # de CLOSED de arriba: la copia leida puede ser vieja (el caso se cerro desde otro request).
+    try:
+        return repository.save_message_idempotent(
+            message, count_as_unread=not conversation.bot_enabled, require_open=True
+        )
+    except repository.ConversationStateChanged as exc:
+        raise ConversationClosed(conversation.conversation_id) from exc
 
 
 def _check_rate_limit(conversation_id: str) -> None:
@@ -447,8 +452,9 @@ def list_inbox(
     page = limit or get_settings().inbox_page_size
     if advisor_id:
         # Los cerrados conservan `assigned_advisor_id` como historial: fuera de la bandeja.
-        mine = repository.find_conversations_by_advisor(advisor_id, limit=page)
-        return [c for c in mine if c.status != ConversationStatus.CLOSED]
+        return repository.find_conversations_by_advisor(
+            advisor_id, limit=page, exclude_closed=True
+        )
     if status is not None:
         return repository.list_inbox(
             str(status), limit=page, oldest_first=status == ConversationStatus.PENDING_ADVISOR
@@ -571,7 +577,16 @@ def post_advisor_message(
         metadata={"sender_name": advisor_name} if advisor_name else None,
         created_at=now,
     )
-    return repository.save_message_idempotent(message, count_as_unread=False)
+    # Guardas atomicas: sigue asignada a ESTE asesor y no esta cerrada. El chequeo en memoria
+    # de arriba es solo el camino rapido (otra pestaña pudo cerrarla o soltarla entre medio).
+    try:
+        return repository.save_message_idempotent(
+            message, count_as_unread=False, require_open=True, require_advisor=advisor_id
+        )
+    except repository.ConversationStateChanged as exc:
+        if exc.conversation.status == ConversationStatus.CLOSED:
+            raise ConversationClosed(conversation.conversation_id) from exc
+        raise NotAssignedToAdvisor(conversation.conversation_id) from exc
 
 
 # ───────────────────────────── Lado del bot (RF-020..027, worker IA) ─────────────────────────────
@@ -679,9 +694,17 @@ def close_case(conversation: Conversation, *, advisor_id: str) -> Conversation:
             closed_by=str(ClosedBy.ADVISOR),
             release_case_slot_for_user=conversation.user_id,
         )
-    if not done:
-        raise NotAssignedToAdvisor(conversation.conversation_id)
     current = repository.get_conversation(conversation.conversation_id)
     if current is None:  # pragma: no cover
         raise repository.ConversationNotFound(conversation.conversation_id)
+    if not done:
+        # La condicion fallo: o ya no es el asesor asignado, o el caso YA estaba cerrado
+        # (segundo clic en "cerrar", otra pestaña). Antes ambos daban "solo el asesor
+        # asignado puede cerrar", que para el segundo era mentira (auditoria 2026-09-06).
+        already = current.status == ConversationStatus.CLOSED or (
+            returns_to_bot_on_close(current) and current.assigned_advisor_id is None
+        )
+        if already:
+            raise ConversationClosed(conversation.conversation_id)
+        raise NotAssignedToAdvisor(conversation.conversation_id)
     return current

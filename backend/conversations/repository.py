@@ -35,6 +35,7 @@ from backend.conversations.models import (
 from backend.core.aws import dynamodb_resource
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
+from backend.core.dynamo import condition_failed_at, query_up_to
 
 # Toda SK de mensaje empieza por el año (`2026-...`); los marcadores empiezan por `CMID#`, que
 # ordena despues. Acotar la SK por arriba con "3" saca los marcadores de la consulta sin
@@ -53,6 +54,16 @@ class OpenCaseLimitReached(RuntimeError):
     es compartida con agent/quota.py (contadores atomicos por actor); este modulo NO la
     importa — solo referencia el nombre de tabla via core.config, para no romper la regla de
     dependencia de backend/__init__.py (dominio nunca importa integraciones)."""
+
+
+class ConversationStateChanged(RuntimeError):
+    """La guarda de la transaccion fallo: la conversacion existe pero ya no esta en el estado
+    que el mensaje exigia (se cerro, o cambio de asesor, desde otro request). Trae la fila
+    fresca para que el service decida que error corresponde."""
+
+    def __init__(self, conversation: Conversation) -> None:
+        super().__init__("la conversacion cambio de estado")
+        self.conversation = conversation
 
 
 def _conversations():
@@ -86,25 +97,6 @@ def find_conversations_by_user(user_id: str, *, limit: int = 10) -> list[Convers
     return [Conversation.from_item(item) for item in response["Items"]]
 
 
-def list_open_cases(user_id: str) -> list[Conversation]:
-    """Casos del usuario que siguen abiertos (D-029: tope de N). Consulta GSI1 con filtro y
-    paginando hasta el final: el filtro se aplica DESPUES del Limit, asi que una sola pagina
-    podria dejar fuera un caso abierto detras de muchos cerrados."""
-    kwargs: dict[str, Any] = {
-        "IndexName": "gsi1_user",
-        "KeyConditionExpression": Key("user_id").eq(user_id),
-        "FilterExpression": Attr("kind").eq("CASE") & Attr("status").ne("CLOSED"),
-    }
-    found: list[Conversation] = []
-    while True:
-        response = _conversations().query(**kwargs)
-        found.extend(Conversation.from_item(item) for item in response["Items"])
-        last = response.get("LastEvaluatedKey")
-        if not last:
-            return found
-        kwargs["ExclusiveStartKey"] = last
-
-
 def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> list[Conversation]:
     """Bandeja por estado (GSI2, RF-032). Los pendientes salen del mas antiguo al mas nuevo:
     el que mas espera va primero."""
@@ -117,15 +109,22 @@ def list_inbox(status: str, *, limit: int = 50, oldest_first: bool = True) -> li
     return [Conversation.from_item(item) for item in response["Items"]]
 
 
-def find_conversations_by_advisor(advisor_id: str, *, limit: int = 50) -> list[Conversation]:
-    """Casos asignados a un asesor, mas reciente primero (GSI3)."""
-    response = _conversations().query(
-        IndexName="gsi3_advisor",
-        KeyConditionExpression=Key("assigned_advisor_id").eq(advisor_id),
-        ScanIndexForward=False,
-        Limit=limit,
-    )
-    return [Conversation.from_item(item) for item in response["Items"]]
+def find_conversations_by_advisor(
+    advisor_id: str, *, limit: int = 50, exclude_closed: bool = False
+) -> list[Conversation]:
+    """Casos asignados a un asesor, mas reciente primero (GSI3). Los cerrados conservan
+    `assigned_advisor_id` como historial: `exclude_closed` los filtra paginando, para que la
+    bandeja no vuelva corta por tenerlos delante."""
+    kwargs: dict[str, Any] = {
+        "IndexName": "gsi3_advisor",
+        "KeyConditionExpression": Key("assigned_advisor_id").eq(advisor_id),
+        "ScanIndexForward": False,
+    }
+    if exclude_closed:
+        kwargs["FilterExpression"] = Attr("status").ne("CLOSED")
+    return [
+        Conversation.from_item(item) for item in query_up_to(_conversations(), limit, **kwargs)
+    ]
 
 
 def create_conversation(conversation: Conversation) -> bool:
@@ -587,36 +586,76 @@ def list_messages_before(
 
 
 def _touch_conversation_update(
-    conversation_id: str, message: Message, *, count_as_unread: bool
+    conversation_id: str,
+    message: Message,
+    *,
+    count_as_unread: bool,
+    require_open: bool = False,
+    require_advisor: str | None = None,
 ) -> dict[str, Any]:
-    """Update de los campos desnormalizados de la conversacion, para meter en la transaccion."""
+    """Update de los campos desnormalizados de la conversacion, para meter en la transaccion.
+
+    Las guardas van EN la condicion de la transaccion, no en memoria: `require_open` rechaza
+    el mensaje si la conversacion ya esta CLOSED (D-029: solo lectura) y `require_advisor`
+    si ya no es el asesor asignado (otro la cerro o la solto desde otra pestaña). Chequearlo
+    solo con la copia leida antes era check-then-act: el mensaje entraba igual (auditoria
+    2026-09-06). Quien la use con estas guardas debe tratar `ConditionalCheckFailed` en su
+    item como "cambio de estado", no como "no existe" (ver `_guard_failure`)."""
     expression = (
         "SET message_count = message_count + :one, last_message_at = :at, "
         "last_message_preview = :preview, updated_at = :at"
     )
     if count_as_unread:
         expression += ", unread_count = unread_count + :one"
-    return {
-        "Update": {
-            "TableName": get_settings().table_conversations,
-            "Key": {"conversation_id": conversation_id},
-            "UpdateExpression": expression,
-            "ConditionExpression": "attribute_exists(conversation_id)",
-            "ExpressionAttributeValues": {
-                ":one": 1,
-                ":at": message.created_at,
-                ":preview": (message.content or "")[:_PREVIEW_CHARS],
-            },
-        }
+    condition = "attribute_exists(conversation_id)"
+    values: dict[str, Any] = {
+        ":one": 1,
+        ":at": message.created_at,
+        ":preview": (message.content or "")[:_PREVIEW_CHARS],
     }
+    names: dict[str, str] = {}
+    if require_open:
+        condition += " AND #status <> :closed"
+        names["#status"] = "status"
+        values[":closed"] = "CLOSED"
+    if require_advisor is not None:
+        condition += " AND assigned_advisor_id = :advisor"
+        values[":advisor"] = require_advisor
+    update: dict[str, Any] = {
+        "TableName": get_settings().table_conversations,
+        "Key": {"conversation_id": conversation_id},
+        "UpdateExpression": expression,
+        "ConditionExpression": condition,
+        "ExpressionAttributeValues": values,
+    }
+    if names:
+        update["ExpressionAttributeNames"] = names
+    return {"Update": update}
 
 
-def save_message_idempotent(message: Message, *, count_as_unread: bool) -> tuple[Message, bool]:
+def _guard_failure(conversation_id: str) -> Exception:
+    """Que error corresponde cuando fallo la condicion sobre la conversacion: no existe, o
+    existe y ya no esta como el mensaje exigia (la fila fresca viaja en la excepcion)."""
+    current = get_conversation(conversation_id)
+    if current is None:
+        return ConversationNotFound(conversation_id)
+    return ConversationStateChanged(current)
+
+
+def save_message_idempotent(
+    message: Message,
+    *,
+    count_as_unread: bool,
+    require_open: bool = False,
+    require_advisor: str | None = None,
+) -> tuple[Message, bool]:
     """Guarda un mensaje una sola vez por `client_message_id` (RF-038 / RNF-004).
 
     Sirve para el usuario (widget) y para el asesor (app): los dos reintentan con el mismo id.
     Devuelve `(mensaje, True)` si se guardo ahora y `(mensaje original, False)` si era un
     reintento: el frontend recibe en ambos casos el mismo mensaje confirmado (AC-006).
+    `require_open` / `require_advisor`: guardas atomicas sobre la conversacion (ver
+    `_touch_conversation_update`); si fallan, `ConversationStateChanged`.
     """
     if not message.client_message_id:
         raise ValueError("un mensaje idempotente necesita client_message_id")
@@ -641,22 +680,25 @@ def save_message_idempotent(message: Message, *, count_as_unread: bool) -> tuple
                 },
                 {"Put": {"TableName": table_messages, "Item": message.to_item()}},
                 _touch_conversation_update(
-                    message.conversation_id, message, count_as_unread=count_as_unread
+                    message.conversation_id,
+                    message,
+                    count_as_unread=count_as_unread,
+                    require_open=require_open,
+                    require_advisor=require_advisor,
                 ),
             ]
         )
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "TransactionCanceledException":
             raise
-        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
-        if reasons and reasons[0] == "ConditionalCheckFailed":
+        if condition_failed_at(exc, 0):
             original = find_message_by_client_id(
                 message.conversation_id, message.client_message_id
             )
             if original is not None:
                 return original, False
-        if len(reasons) > 2 and reasons[2] == "ConditionalCheckFailed":
-            raise ConversationNotFound(message.conversation_id) from exc
+        if condition_failed_at(exc, 2):
+            raise _guard_failure(message.conversation_id) from exc
         raise
     return message, True
 
@@ -674,7 +716,12 @@ def put_message(message: Message, *, count_as_unread: bool = False) -> None:
             ]
         )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] == "TransactionCanceledException":
+        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
+        # Solo la condicion del item 1 (la conversacion existe) significa "no encontrada";
+        # un `TransactionConflict` o un throttling se propagan tal cual (auditoria 2026-09-06:
+        # antes cualquier cancelacion se disfrazaba de ConversationNotFound).
+        if condition_failed_at(exc, 1):
             raise ConversationNotFound(message.conversation_id) from exc
         raise
 

@@ -403,6 +403,60 @@ def test_decir_que_no_cierra_sin_insistir(limpiar, fake_llm, sin_rag):
     assert repository.get_conversation(conversation.conversation_id).active_flow is None
 
 
+@pytest.mark.parametrize("acuse", ["ok", "vale", "okey", "bueno"])
+def test_un_acuse_a_la_confirmacion_tambien_saca_el_formulario(
+    limpiar, fake_llm, sin_rag, acuse
+):
+    """Auditoria 2026-09-06: "ok" tras "¿te conecto con un asesor?" caia como trivial de
+    cierre ("¡Con gusto!") porque los triviales corrian ANTES de resolver la confirmacion, y
+    el flujo quedaba vivo para un "si" posterior sobre otro tema. Un acuse es un si a ESA
+    pregunta."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+
+    _atiende(_escribe(conversation, acuse))
+
+    ultima, _campos = _formulario_ofrecido(conversation.conversation_id)
+    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
+    assert repository.get_conversation(conversation.conversation_id).active_flow is None
+
+
+def test_un_gracias_a_la_confirmacion_la_declina_sin_dejarla_viva(limpiar, fake_llm, sin_rag):
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+
+    _atiende(_escribe(conversation, "gracias"))
+
+    respuestas = _respuestas_bot(conversation.conversation_id)
+    assert respuestas[-1].content == prompts.HANDOFF_DECLINED_RESPONSE
+    assert repository.get_conversation(conversation.conversation_id).active_flow is None
+
+
+def test_un_trivial_ajeno_descarta_la_confirmacion_y_un_si_posterior_no_deriva(
+    limpiar, fake_llm, sin_rag
+):
+    """Un "hola" no contesta la pregunta: se descarta (y se responde como saludo). El "si"
+    de despues ya no tiene pregunta que contestar y NO abre el formulario."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
+    conversation = repository.get_conversation(conversation.conversation_id)
+
+    _atiende(_escribe(conversation, "hola"))
+
+    assert repository.get_conversation(conversation.conversation_id).active_flow is None
+    ultima = _respuestas_bot(conversation.conversation_id)[-1]
+    assert ultima.content == prompts.TRIVIAL_GREETING_RESPONSE
+
+    conversation = repository.get_conversation(conversation.conversation_id)
+    _atiende(_escribe(conversation, "si"))
+
+    ultima = _respuestas_bot(conversation.conversation_id)[-1]
+    interaction = (ultima.metadata or {}).get("interaction") or {}
+    assert interaction.get("type") != "HANDOFF_FORM", "no habia pregunta que contestar"
+
+
 def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
     limpiar, fake_llm, monkeypatch
 ):
