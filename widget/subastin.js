@@ -1,3 +1,7 @@
+/* GENERADO por widget/build.mjs — NO EDITAR A MANO.
+ * Las fuentes son widget/src/*.js; tras tocarlas, corre `node widget/build.mjs`.
+ * El archivo se versiona para que VMC siga sirviendo un solo JS sin build.
+ */
 /*
  * Subastin — widget de chat embebible en VMC (RF-001, RF-004, RF-005, RF-036, RF-037, RF-038).
  *

@@ -49,6 +49,8 @@ python -m pytest -q                                  # suite completa (lo que co
 python -m pytest tests/test_dynamo_queries.py -q     # un archivo
 python -m pytest -k "gsi1" -q                        # un patrón / una prueba
 python -m ruff check .            # lint (line-length 100, reglas E/F/I/UP/B)
+node widget/build.mjs             # regenera widget/subastin.js desde widget/src/*.js
+node widget/build.mjs --check     # falla si el bundle quedo viejo (lo corre el CI)
 node --check widget/subastin.js   # sintaxis del widget (no tiene tests)
 
 cd infra; npx -y aws-cdk@2 synth -c stage=stage      # valida la infra sin desplegar (lo corre el CI)
@@ -452,8 +454,13 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   El dominio NUNCA importa integraciones; la composición vive en la entrada (p. ej. el pipeline
   IA en `workers/ai_worker.py`). Cada `repository.py` es el único que conoce claves/GSIs.
 - Infra en `infra/`, app del asesor/dashboard en `frontend/` (Next.js), **widget del chat en
-  `widget/`** (JS plano sin build, se embebe en VMC; `test.html` para probarlo). Todo el código
-  nuevo sigue este layout. `widget/logo-voyager.svg`, `widget/animation.html` y
+  `widget/`** (JS plano sin build, se embebe en VMC; `test.html` para probarlo). **`widget/
+  subastin.js` es GENERADO** (2026-09-07): se edita `widget/src/*.js` y se regenera con
+  `node widget/build.mjs`; los 14 fragmentos son partes del cuerpo de UNA IIFE (comparten el
+  closure, no son módulos), por eso `node --check` corre sobre el bundle y no sobre las partes.
+  El bundle se versiona para que VMC siga sirviendo un solo archivo sin build, y el CI verifica
+  con `build.mjs --check` que no quedó viejo. Índice de fragmentos en `widget/README.md`.
+  Todo el código nuevo sigue este layout. `widget/logo-voyager.svg`, `widget/animation.html` y
   `widget/Anima-Bot.json` son **fuentes de referencia, no assets servidos**: `subastin.js` trae
   el wordmark de VMC calcado del SVG, el avatar animado del bot es un puerto a Canvas/WebGPU del
   efecto "Liquid Orb" de `animation.html` (decisión de producto, Aaron 2026-08-31) y el Lottie de
