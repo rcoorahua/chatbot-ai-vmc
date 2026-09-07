@@ -25,24 +25,14 @@ import pytest
 
 from backend.agent import rag
 from backend.core.config import reset_settings
+from tests.helpers.fakes import FakeIndex, hit
 
 REGISTRO = "¡Registrarte es fácil y rápido!"
 COMISION = "La Comisión, ¿por qué, cuánto y cómo se paga?"
 
 
-class FakeIndex:
-    def __init__(self, hits):
-        self._hits = hits
-        self.calls = []
-
-    def search(self, **kwargs):
-        self.calls.append(kwargs)
-        return {"result": {"hits": self._hits}}
-
-
 def _hit(text, score, topic=REGISTRO):
-    return {"_id": text, "_score": score, "fields": {
-        "text": text, "topic": topic, "source_url": "https://ayuda.vmc.test/x"}}
+    return hit(text, score, topic=topic, url="https://ayuda.vmc.test/x")
 
 
 @pytest.fixture

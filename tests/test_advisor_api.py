@@ -22,108 +22,22 @@ el codigo de las rutas no distingue entornos, solo lee claims del evento.
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
-from backend.api import dev_auth
-from backend.api.main import app
-from backend.api.routers import chat as chat_router
 from backend.core import auth
 from backend.core.clock import epoch_seconds
-from backend.core.config import get_settings, reset_settings
+from backend.core.config import reset_settings
 from scripts.seed_data import ANA_ID, LUIS_ID
+from tests.helpers.http import (
+    DEV_SECRET,
+    abrir_sesion,
+    asesor_nuevo,
+    bearer,
+    enviar,
+    tomar,
+)
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
 
-DEV_SECRET = "test-advisor-dev-secret"
-
-
-@pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("ADVISOR_DEV_AUTH", "1")
-    monkeypatch.setenv("ADVISOR_DEV_JWT_SECRET", DEV_SECRET)
-    reset_settings()
-    monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", lambda job: None)
-    yield TestClient(dev_auth.DevCognitoAuthorizer(app))
-    reset_settings()
-
-
-@pytest.fixture
-def limpiar(tablas):
-    from boto3.dynamodb.conditions import Key
-
-    conversaciones: list[str] = []
-    asesores: list[str] = []
-
-    class Registro:
-        conversacion = staticmethod(conversaciones.append)
-        asesor = staticmethod(asesores.append)
-
-    yield Registro
-    for conversation_id in conversaciones:
-        for item in tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-    for advisor_id in asesores:
-        tablas["advisors"].delete_item(Key={"advisor_id": advisor_id})
-
-
-def _token(sub: str, *, name: str | None = None, email: str | None = None, **extra) -> str:
-    payload = {"sub": sub, "token_use": "id", "exp": epoch_seconds() + 600, **extra}
-    if name:
-        payload["name"] = name
-    if email:
-        payload["email"] = email
-    return auth.sign_jwt(payload, DEV_SECRET)
-
-
-def _bearer(sub: str, **claims) -> dict:
-    return {"Authorization": f"Bearer {_token(sub, **claims)}"}
-
-
-def _asesor_nuevo(client, limpiar, *, name="Ana Prueba") -> tuple[str, dict]:
-    """Un asesor efimero (sub aleatorio) para no contaminar los GSI de otras pruebas."""
-    sub = "sub-test-" + uuid.uuid4().hex[:8]
-    headers = _bearer(sub, name=name, email=f"{sub}@vmc.test")
-    me = client.get("/advisor/me", headers=headers)
-    assert me.status_code == 200, me.text
-    limpiar.asesor(me.json()["advisor_id"])
-    return me.json()["advisor_id"], headers
-
-
-def _conversacion_de_usuario(client, limpiar, *, autenticado=True) -> dict:
-    """Sesion del widget: la conversacion que el asesor va a atender."""
-    body = {}
-    if autenticado:
-        user_id = "vmc_" + uuid.uuid4().hex[:8]
-        body["user_jwt"] = auth.sign_jwt(
-            {"sub": user_id, "exp": epoch_seconds() + 600, "name": "Jorge", "email": "j@x.test"},
-            get_settings().vmc_identity_secret,
-        )
-    response = client.post("/chat/sessions", json=body)
-    assert response.status_code == 201, response.text
-    sesion = response.json()
-    limpiar.conversacion(sesion["conversation"]["conversation_id"])
-    return sesion
-
-
-def _usuario_escribe(client, sesion, texto="hola") -> dict:
-    response = client.post(
-        f"/chat/conversations/{sesion['conversation']['conversation_id']}/messages",
-        json={"client_message_id": "cli-" + uuid.uuid4().hex, "content": texto},
-        headers={"Authorization": f"Bearer {sesion['token']}"},
-    )
-    assert response.status_code == 202, response.text
-    return response.json()["message"]
-
-
-def _tomar(client, headers, conversation_id) -> dict:
-    response = client.post(f"/advisor/conversations/{conversation_id}/take", headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 # ───────────────────────────── AC-A1: 401 como el authorizer ─────────────────────────────
@@ -136,7 +50,7 @@ def test_sin_token_es_401_con_el_cuerpo_del_api_gateway(client):
 
 
 def test_el_token_de_sesion_del_widget_no_sirve_como_asesor(client, limpiar):
-    sesion = _conversacion_de_usuario(client, limpiar, autenticado=False)
+    sesion = abrir_sesion(client, limpiar)
     response = client.get("/advisor/me", headers={"Authorization": f"Bearer {sesion['token']}"})
     assert response.status_code == 401
 
@@ -156,7 +70,7 @@ def test_el_chat_publico_no_pasa_por_el_authorizer(client):
 
 
 def test_auto_alta_al_primer_login_y_misma_fila_despues(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar, name="Nueva Asesora")
+    advisor_id, headers = asesor_nuevo(client, limpiar, name="Nueva Asesora")
 
     otra_vez = client.get("/advisor/me", headers=headers).json()
     assert otra_vez["advisor_id"] == advisor_id
@@ -165,23 +79,48 @@ def test_auto_alta_al_primer_login_y_misma_fila_despues(client, limpiar):
     assert otra_vez["last_login_at"]
 
 
-def test_el_asesor_del_seed_se_resuelve_por_sub_y_el_invitado_se_activa(client, tablas):
-    ana = client.get("/advisor/me", headers=_bearer("sub-ana-001", name="Ana Torres")).json()
+def test_el_login_no_se_reescribe_en_cada_request(client, limpiar, tablas):
+    """Auditoria 2026-09-06: cada request a /advisor hacia un UpdateItem de `last_login_at`
+    (uno por cada sondeo de la bandeja). Dentro de la ventana la fila no se toca."""
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    primero = tablas["advisors"].get_item(Key={"advisor_id": advisor_id})["Item"]
+
+    client.get("/advisor/me", headers=headers)
+    client.get("/advisor/me", headers=headers)
+
+    despues = tablas["advisors"].get_item(Key={"advisor_id": advisor_id})["Item"]
+    assert despues["last_login_at"] == primero["last_login_at"]
+    assert despues["updated_at"] == primero["updated_at"]
+
+
+@pytest.fixture
+def asesores_del_seed_intactos(tablas):
+    """La UNICA prueba que entra como los asesores del seed (RF-006: el `sub` resuelve a la fila
+    sembrada) les escribe `status`/`last_login_at`. Sus filas se guardan antes y se restauran
+    al final PASE LO QUE PASE: antes se restauraban a mano tras los asserts, y un fallo dejaba
+    a Luis ACTIVE para las pruebas de lectura (auditoria 2026-09-06)."""
+    filas = {
+        advisor_id: tablas["advisors"].get_item(Key={"advisor_id": advisor_id}).get("Item")
+        for advisor_id in (ANA_ID, LUIS_ID)
+    }
+    yield
+    for item in filas.values():
+        if item is not None:
+            tablas["advisors"].put_item(Item=item)
+
+
+def test_el_asesor_del_seed_se_resuelve_por_sub_y_el_invitado_se_activa(
+    client, asesores_del_seed_intactos
+):
+    ana = client.get("/advisor/me", headers=bearer("sub-ana-001", name="Ana Torres")).json()
     assert ana["advisor_id"] == ANA_ID
 
-    luis = client.get("/advisor/me", headers=_bearer("sub-luis-002", name="Luis Ramos")).json()
+    luis = client.get("/advisor/me", headers=bearer("sub-luis-002", name="Luis Ramos")).json()
     assert luis["advisor_id"] == LUIS_ID and luis["status"] == "ACTIVE"
-    # Se devuelve el seed a su estado para las demas pruebas.
-    tablas["advisors"].update_item(
-        Key={"advisor_id": LUIS_ID},
-        UpdateExpression="SET #s = :invited REMOVE last_login_at",
-        ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":invited": "INVITED"},
-    )
 
 
 def test_el_asesor_deshabilitado_es_403(client, limpiar, tablas):
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar)
     tablas["advisors"].update_item(
         Key={"advisor_id": advisor_id},
         UpdateExpression="SET #s = :disabled",
@@ -195,10 +134,10 @@ def test_el_asesor_deshabilitado_es_403(client, limpiar, tablas):
 
 
 def test_la_bandeja_filtra_por_estado_y_por_mis_casos(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, headers, conv_id)
+    tomar(client, headers, conv_id)
 
     en_atencion = client.get(
         "/advisor/conversations", params={"status": "IN_ATTENTION"}, headers=headers
@@ -216,7 +155,7 @@ def test_la_bandeja_filtra_por_estado_y_por_mis_casos(client, limpiar):
 
 
 def test_sin_filtro_los_pendientes_van_antes_que_los_en_atencion(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
     todas = client.get("/advisor/conversations", headers=headers).json()["conversations"]
     estados = [c["status"] for c in todas]
     assert "PENDING_ADVISOR" in estados, "el seed conv_002 esta pendiente"
@@ -226,7 +165,7 @@ def test_sin_filtro_los_pendientes_van_antes_que_los_en_atencion(client, limpiar
 
 
 def test_un_estado_invalido_es_422(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
     response = client.get("/advisor/conversations", params={"status": "X"}, headers=headers)
     assert response.status_code == 422
 
@@ -235,11 +174,11 @@ def test_un_estado_invalido_es_422(client, limpiar):
 
 
 def test_tomar_apaga_el_bot_asigna_y_deja_la_nota_en_el_hilo(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar, name="Ana Prueba")
-    sesion = _conversacion_de_usuario(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar, name="Ana Prueba")
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
 
-    tomada = _tomar(client, headers, conv_id)
+    tomada = tomar(client, headers, conv_id)
     assert tomada["status"] == "IN_ATTENTION"
     assert tomada["assigned_advisor_id"] == advisor_id
     assert tomada["bot_enabled"] is False
@@ -260,8 +199,8 @@ def test_tomar_apaga_el_bot_asigna_y_deja_la_nota_en_el_hilo(client, limpiar):
 def test_la_conversacion_de_un_visitante_no_se_toma(client, limpiar):
     """D-031: al visitante lo atiende SOLO el bot. Ni la toma proactiva (D-022) aplica: el
     409 devuelve el estado, que sigue con el bot encendido."""
-    _, headers = _asesor_nuevo(client, limpiar, name="Ana Prueba")
-    sesion = _conversacion_de_usuario(client, limpiar, autenticado=False)
+    _, headers = asesor_nuevo(client, limpiar, name="Ana Prueba")
+    sesion = abrir_sesion(client, limpiar)
     conv_id = sesion["conversation"]["conversation_id"]
 
     response = client.post(f"/advisor/conversations/{conv_id}/take", headers=headers)
@@ -273,26 +212,26 @@ def test_la_conversacion_de_un_visitante_no_se_toma(client, limpiar):
 
 
 def test_solo_un_asesor_gana_la_toma_y_el_otro_recibe_el_estado_actual(client, limpiar):
-    primero, h1 = _asesor_nuevo(client, limpiar)
-    segundo, h2 = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    primero, h1 = asesor_nuevo(client, limpiar)
+    segundo, h2 = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
 
-    _tomar(client, h1, conv_id)
+    tomar(client, h1, conv_id)
     rebote = client.post(f"/advisor/conversations/{conv_id}/take", headers=h2)
 
     assert rebote.status_code == 409
     assert rebote.json()["detail"]["conversation"]["assigned_advisor_id"] == primero
     # Idempotente para el que ya la tiene.
-    assert _tomar(client, h1, conv_id)["assigned_advisor_id"] == primero
+    assert tomar(client, h1, conv_id)["assigned_advisor_id"] == primero
 
 
 # ───────────────────────────── AC-A5: responder ─────────────────────────────
 
 
 def test_responder_sin_tomar_es_409(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     response = client.post(
         f"/advisor/conversations/{sesion['conversation']['conversation_id']}/messages",
         json={"client_message_id": "adv-" + uuid.uuid4().hex, "content": "hola"},
@@ -302,10 +241,10 @@ def test_responder_sin_tomar_es_409(client, limpiar):
 
 
 def test_la_respuesta_nace_entregada_firmada_y_no_se_duplica_al_reintentar(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar, name="Ana Prueba")
-    sesion = _conversacion_de_usuario(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar, name="Ana Prueba")
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, headers, conv_id)
+    tomar(client, headers, conv_id)
 
     url = f"/advisor/conversations/{conv_id}/messages"
     cuerpo = {"client_message_id": "adv-" + uuid.uuid4().hex, "content": "  Hola Jorge, te ayudo  "}
@@ -329,10 +268,10 @@ def test_la_respuesta_nace_entregada_firmada_y_no_se_duplica_al_reintentar(clien
 
 
 def test_el_largo_maximo_aplica_tambien_al_asesor(client, limpiar, monkeypatch):
-    _, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, headers, conv_id)
+    tomar(client, headers, conv_id)
     monkeypatch.setenv("MAX_MESSAGE_CHARS", "10")
     reset_settings()
     response = client.post(
@@ -351,11 +290,11 @@ def test_el_hilo_entrega_los_ultimos_20_y_pagina_hacia_atras(client, limpiar, mo
     # tope por minuto de D-005 (que tiene sus propias pruebas en tests/test_guardrails.py).
     monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
     reset_settings()
-    _, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
     for i in range(25):
-        _usuario_escribe(client, sesion, f"m{i:02d}")
+        enviar(client, sesion, f"m{i:02d}")["message"]
 
     pagina = client.get(f"/advisor/conversations/{conv_id}/messages", headers=headers).json()
     assert [m["content"] for m in pagina["messages"]] == [f"m{i:02d}" for i in range(5, 25)]
@@ -369,7 +308,7 @@ def test_el_hilo_entrega_los_ultimos_20_y_pagina_hacia_atras(client, limpiar, mo
     assert [m["content"] for m in anterior["messages"]] == [f"m{i:02d}" for i in range(5)]
     assert anterior["has_more"] is False
 
-    nuevo = _usuario_escribe(client, sesion, "m25")
+    nuevo = enviar(client, sesion, "m25")["message"]
     sondeo = client.get(
         f"/advisor/conversations/{conv_id}/messages",
         params={"after": pagina["next_after"]},
@@ -379,12 +318,12 @@ def test_el_hilo_entrega_los_ultimos_20_y_pagina_hacia_atras(client, limpiar, mo
 
 
 def test_abrir_el_hilo_consume_los_no_leidos(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, headers, conv_id)  # bot apagado: lo que escriba el usuario cuenta (RF-035)
-    _usuario_escribe(client, sesion, "sigo esperando")
-    _usuario_escribe(client, sesion, "hola?")
+    tomar(client, headers, conv_id)  # bot apagado: lo que escriba el usuario cuenta (RF-035)
+    enviar(client, sesion, "sigo esperando")["message"]
+    enviar(client, sesion, "hola?")["message"]
 
     antes = client.get(f"/advisor/conversations/{conv_id}", headers=headers).json()
     assert antes["unread_count"] == 2
@@ -396,8 +335,8 @@ def test_abrir_el_hilo_consume_los_no_leidos(client, limpiar):
 
 
 def test_before_y_after_son_excluyentes(client, limpiar):
-    _, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     response = client.get(
         f"/advisor/conversations/{sesion['conversation']['conversation_id']}/messages",
         params={"before": "a", "after": "b"},
@@ -410,21 +349,21 @@ def test_before_y_after_son_excluyentes(client, limpiar):
 
 
 def test_cerrar_exige_ser_el_asignado(client, limpiar):
-    _, h1 = _asesor_nuevo(client, limpiar)
-    _, h2 = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    _, h1 = asesor_nuevo(client, limpiar)
+    _, h2 = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, h1, conv_id)
+    tomar(client, h1, conv_id)
 
     assert client.post(f"/advisor/conversations/{conv_id}/close", headers=h2).status_code == 409
 
 
 def test_cerrar_deja_la_nota_y_devuelve_la_conversacion_al_bot(client, limpiar):
-    advisor_id, headers = _asesor_nuevo(client, limpiar)
-    sesion = _conversacion_de_usuario(client, limpiar)
+    advisor_id, headers = asesor_nuevo(client, limpiar)
+    sesion = abrir_sesion(client, limpiar, autenticado=True, email="j@x.test")
     conv_id = sesion["conversation"]["conversation_id"]
-    _tomar(client, headers, conv_id)
-    _usuario_escribe(client, sesion, "gracias")
+    tomar(client, headers, conv_id)
+    enviar(client, sesion, "gracias")["message"]
 
     cerrada = client.post(f"/advisor/conversations/{conv_id}/close", headers=headers).json()
     assert cerrada["status"] == "BOT_ATTENDING" and cerrada["bot_enabled"] is True
@@ -439,4 +378,9 @@ def test_cerrar_deja_la_nota_y_devuelve_la_conversacion_al_bot(client, limpiar):
     assert del_usuario[-1]["content"] == "TICKET_CLOSED"
 
     # Vuelve a ser tomable por cualquiera (la asignacion se libero).
-    assert _tomar(client, headers, conv_id)["assigned_advisor_id"] == advisor_id
+    assert tomar(client, headers, conv_id)["assigned_advisor_id"] == advisor_id
+
+
+@pytest.fixture
+def client(advisor_client):
+    return advisor_client

@@ -14,7 +14,6 @@ para que meter Anthropic o Bedrock sea agregar una subclase de `LLMClient` y una
 from __future__ import annotations
 
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -396,11 +395,11 @@ def get_client() -> LLMClient:
     """
     global _client
     if _client is None:
-        # Settings lee `.env` (dev) o las variables que inyecta el entorno (AWS). Antes se leia
-        # solo `os.environ`, y pydantic NO exporta `.env` al proceso: la key en `.env` nunca
-        # llegaba aqui y el bot caia al fallback en silencio. `os.environ` queda como respaldo
-        # para quien exporta la variable a mano.
-        api_key = get_settings().gemini_api_key or os.environ.get("GEMINI_API_KEY")
+        # Settings lee `.env` (dev) y las variables del proceso (AWS, o quien exporta la
+        # variable a mano); pydantic-settings prioriza el entorno sobre `.env`, asi que no hace
+        # falta releer `os.environ`. Antes se leia SOLO `os.environ`, y pydantic no exporta
+        # `.env` al proceso: la key de `.env` nunca llegaba y el bot caia al fallback en silencio.
+        api_key = get_settings().gemini_api_key
         if not api_key:
             raise LLMError(
                 "Falta GEMINI_API_KEY (en AWS se lee de Secrets Manager, no del entorno en claro)",

@@ -12,34 +12,15 @@ Criterios:
 import logging
 
 import pytest
-from boto3.dynamodb.conditions import Key
-from fastapi.testclient import TestClient
 
 from backend.agent import usage
-from backend.api.main import app
 from backend.core.config import reset_settings
+from tests.helpers.http import (
+    abrir_sesion,
+    auth_headers,
+)
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
-
-
-@pytest.fixture
-def limpiar(tablas):
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        for tabla, sk in (("messages", "message_key"), ("ai_usage", "execution_key")):
-            for item in tablas[tabla].query(
-                KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-            )["Items"]:
-                tablas[tabla].delete_item(
-                    Key={"conversation_id": conversation_id, sk: item[sk]}
-                )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
 
 
 @pytest.fixture(autouse=True)
@@ -48,18 +29,6 @@ def _observabilidad_encendida(monkeypatch):
     reset_settings()
     yield
     reset_settings()
-
-
-def _sesion(client, limpiar) -> dict:
-    response = client.post("/chat/sessions", json={})
-    assert response.status_code == 201, response.text
-    data = response.json()
-    limpiar(data["conversation"]["conversation_id"])
-    return data
-
-
-def _auth(sesion: dict) -> dict:
-    return {"Authorization": f"Bearer {sesion['token']}"}
 
 
 def _registrar(conversation_id: str, *, pagada: bool) -> None:
@@ -95,13 +64,15 @@ def _registrar(conversation_id: str, *, pagada: bool) -> None:
 
 
 def test_la_sesion_ve_sus_ejecuciones_con_totales(client, limpiar, caplog):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     conversation_id = sesion["conversation"]["conversation_id"]
     with caplog.at_level(logging.INFO, logger="backend.agent.usage"):
         _registrar(conversation_id, pagada=False)
         _registrar(conversation_id, pagada=True)
 
-    response = client.get(f"/dev/conversations/{conversation_id}/ai-usage", headers=_auth(sesion))
+    response = client.get(
+        f"/dev/conversations/{conversation_id}/ai-usage", headers=auth_headers(sesion)
+    )
 
     assert response.status_code == 200, response.text
     data = response.json()
@@ -146,12 +117,12 @@ def test_la_sesion_ve_sus_ejecuciones_con_totales(client, limpiar, caplog):
 
 
 def test_otra_conversacion_es_403_y_sin_token_401(client, limpiar):
-    sesion = _sesion(client, limpiar)
-    otra = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
+    otra = abrir_sesion(client, limpiar)
 
     ajena = client.get(
         f"/dev/conversations/{otra['conversation']['conversation_id']}/ai-usage",
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
     assert ajena.status_code == 403
 
@@ -162,13 +133,13 @@ def test_otra_conversacion_es_403_y_sin_token_401(client, limpiar):
 
 
 def test_apagada_la_ruta_no_existe(client, limpiar, monkeypatch):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     monkeypatch.setenv("DEV_OBSERVABILITY", "0")
     reset_settings()
 
     response = client.get(
         f"/dev/conversations/{sesion['conversation']['conversation_id']}/ai-usage",
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
     assert response.status_code == 404, "en prod la ruta no se revela ni con sesion valida"
 

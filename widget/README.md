@@ -80,7 +80,7 @@ Qué verificar:
   enviarla entra a un **caso nuevo** y su hilo con Subastín sigue respondiendo. La pestaña
   **Mensajes** lista el hilo y sus casos con estado; un caso cerrado por el asesor queda de
   solo lectura con "Volver a Subastín".
-- **Historial largo**: el hilo abre en los últimos 50 mensajes y arriba aparece "Ver mensajes
+- **Historial largo**: el hilo abre en los últimos 100 mensajes y arriba aparece "Ver mensajes
   anteriores" mientras quede historia.
 - **El saludo abre el hilo, no se repite**: "¡Hola! 👋..." es la primera burbuja de la
   conversación. Minimizar y volver a abrir el panel **no** lo reinyecta al final: si ya
@@ -189,7 +189,7 @@ avatar SVG estático.
 2. El token viaja como `Authorization: Bearer` en `/chat/conversations`,
    `/chat/conversations/{id}/messages` y `/chat/conversations/{id}/handoff`. El autenticado ve
    su hilo y sus casos; el visitante solo la conversación de su token.
-3. El primer `GET …/messages` sin cursor trae los **últimos** 50 y el estado de la conversación;
+3. El primer `GET …/messages` sin cursor trae los **últimos** 100 (`CONFIG.pageSize`; el servidor acepta hasta 100) y el estado de la conversación;
    después `?after=<message_key>` trae solo lo nuevo y `?before=` pagina hacia atrás.
 4. Cadencia del sondeo (TD-001): 2 s mientras se espera al bot (también con el panel
    cerrado, para que la respuesta llegue al contador del botón; vence sola a los 45 s), 5 s

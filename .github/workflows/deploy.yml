@@ -21,12 +21,15 @@ permissions:
 
 jobs:
   deploy-stage:
-    if: false # ← BLOQUEADO: activar al cerrar PLAN.md §6
+    # ← BLOQUEADO: quitar el "false &&" al cerrar PLAN.md §6. La rama se decide AQUI, a nivel
+    # de job: con el `if` solo en el checkout, un push a main habria corrido este job sin
+    # codigo y fallado en el pip install (auditoria 2026-09-06).
+    if: ${{ false && github.ref == 'refs/heads/develop' }}
     runs-on: ubuntu-latest
     environment: stage
+    concurrency: deploy-stage
     steps:
       - uses: actions/checkout@v7
-        if: github.ref == 'refs/heads/develop'
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -43,12 +46,13 @@ jobs:
         working-directory: infra
 
   deploy-prod:
-    if: false # ← BLOQUEADO: activar al cerrar PLAN.md §6 + environment `prod` con reviewers
+    # ← BLOQUEADO: quitar el "false &&" al cerrar PLAN.md §6 + environment `prod` con reviewers
+    if: ${{ false && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: prod # gate manual: required reviewers aprueban aqui
+    concurrency: deploy-prod
     steps:
       - uses: actions/checkout@v7
-        if: github.ref == 'refs/heads/main'
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"

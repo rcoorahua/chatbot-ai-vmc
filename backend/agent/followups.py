@@ -35,9 +35,10 @@ mensaje repetido y "ok"/"listo" tras una pregunta del bot caían como el cierre 
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass
+
+from backend.core.metadata import RAG_QUERY
+from backend.core.text import BARE_PUNCTUATION, normalize, phrases, strip_trailing_decoration
 
 # Un mensaje más largo que esto ya se sostiene solo: aunque siga la conversación, tiene
 # suficiente contenido para recuperar por sí mismo y mezclarlo solo agregaría ruido.
@@ -55,24 +56,10 @@ LOOKBACK_MESSAGES = 6
 # no con el texto del botón ("Oferta En Vivo"); y tras varios "sí" seguidos la cadena ya no
 # depende de cuántos mensajes atrás haya quedado la pregunta original. El historial del
 # usuario (`last_user_question`) queda como respaldo para respuestas que no la traen.
-RAG_QUERY_KEY = "rag_query"
-
-_WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(text: str) -> str:
-    """Minúsculas, sin tildes, espacios comprimidos (misma técnica que heuristics.py)."""
-    decomposed = unicodedata.normalize("NFKD", (text or "").lower().strip())
-    without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return _WHITESPACE.sub(" ", without_marks)
-
-
-def _phrases(*items: str) -> tuple[str, ...]:
-    return tuple(normalize(item) for item in items)
-
+RAG_QUERY_KEY = RAG_QUERY
 
 # Confirmaciones y acuses: "ya hice lo que me dijiste". No aportan tema, solo posición.
-_ACKNOWLEDGEMENTS = _phrases(
+_ACKNOWLEDGEMENTS = phrases(
     "ya estoy", "ya estoy ahi", "ya estoy aqui", "aqui estoy", "ahi estoy", "ya llegue",
     "ya entre", "ya ingrese", "ya lo hice", "ya esta", "ya estaria", "listo", "hecho",
     "ok", "oka", "okey", "vale", "dale", "perfecto", "ya", "si", "sip", "claro",
@@ -80,7 +67,13 @@ _ACKNOWLEDGEMENTS = _phrases(
 )
 
 # Pedidos explícitos de seguir: el usuario pide el resto de algo que ya se estaba explicando.
-_CONTINUATIONS = _phrases(
+# Reglas de `is_continuation` que no dejan duda: un acuse ("si", "listo") o un pedido
+# explicito de seguir ("y luego?"). Con ellas el clasificador sobra y un texto repetido no es
+# "repetido". "responde_al_bot" (texto corto cualquiera tras una pregunta del bot) es mas debil
+# y sigue clasificandose con modelo.
+CERTAIN_CONTINUATIONS = frozenset({"acuse", "pide_seguir"})
+
+_CONTINUATIONS = phrases(
     "y luego", "y despues", "y ahora", "y entonces", "que sigue", "cual es el siguiente",
     "siguiente paso", "el siguiente", "continua", "continuemos", "sigue", "sigamos",
     "adelante", "mas detalles", "cuentame mas", "explicame mas", "y que mas", "que mas",
@@ -92,9 +85,24 @@ _CONTINUATIONS = _phrases(
 # cambiando de tema. Sin esta salvedad, la consulta mezclaría los dos temas y recuperaría peor
 # que sin contextualizar nada.
 _INTERROGATIVES = (
-    "que ", "qué ", "como ", "cuanto", "cuando", "donde", "quien", "cual", "por que",
+    "que ", "como ", "cuanto", "cuando", "donde", "quien", "cual", "por que",
     "porque ", "para que", "se puede", "puedo ", "hay ",
 )
+
+# Cuantas palabras pueden seguir a un pedido de seguir sin que deje de serlo: "y luego que
+# hago" sigue pidiendo el paso siguiente; "que mas necesito para registrarme" ya es una
+# pregunta propia. Un `startswith` a secas marcaba esa ultima como continuacion (y "sigue sin
+# cargar la pagina", "continuar con mi registro", "adelante con la compra"): saltaba el
+# clasificador y buscaba la pregunta ANTERIOR del usuario (auditoria 2026-09-06).
+_CONTINUATION_TAIL_WORDS = 2
+
+
+def _asks_to_continue(normalized: str, phrase: str) -> bool:
+    if normalized == phrase:
+        return True
+    if not normalized.startswith(phrase + " "):
+        return False
+    return len(normalized[len(phrase):].split()) <= _CONTINUATION_TAIL_WORDS
 
 
 def _looks_like_question(normalized: str) -> bool:
@@ -128,7 +136,7 @@ def is_continuation(text: str, *, bot_asked: bool = False) -> tuple[bool, str | 
     y se sostiene perfectamente solo — arrastrarle el tema anterior empeoraría la búsqueda.
     """
     con_signos = normalize(text).strip()
-    limpio = con_signos.strip(" .!¡?¿,")
+    limpio = con_signos.strip(BARE_PUNCTUATION)
     if not limpio:
         return False, None
     if len(limpio) > MAX_CONTINUATION_CHARS:
@@ -136,17 +144,11 @@ def is_continuation(text: str, *, bot_asked: bool = False) -> tuple[bool, str | 
     if limpio in _ACKNOWLEDGEMENTS:
         return True, "acuse"
     # Antes de descartar preguntas: "¿y luego?" es una pregunta Y una continuación.
-    if any(limpio.startswith(frase) for frase in _CONTINUATIONS):
+    if any(_asks_to_continue(limpio, frase) for frase in _CONTINUATIONS):
         return True, "pide_seguir"
     if bot_asked and not _looks_like_question(con_signos):
         return True, "responde_al_bot"
     return False, None
-
-
-# Categorías Unicode que se descartan al buscar el signo de cierre: símbolos (los emoji son
-# `So`), modificadores de símbolo (los tonos de piel), marcas sin espaciado (los selectores de
-# variación) y los invisibles de formato (el ZWJ que une emoji compuestos).
-_TRAILING_DECORATION = frozenset({"So", "Sk", "Sm", "Mn", "Cf", "Zs"})
 
 
 def bot_asked_something(last_bot_message: str | None) -> bool:
@@ -162,10 +164,7 @@ def bot_asked_something(last_bot_message: str | None) -> bool:
     (visto en una conversación real el 2026-09-02). Solo se descarta decoración: si el mensaje
     termina en punto o en cifra, sigue sin ser una pregunta.
     """
-    texto = (last_bot_message or "").rstrip()
-    while texto and unicodedata.category(texto[-1]) in _TRAILING_DECORATION:
-        texto = texto[:-1].rstrip()
-    return texto.endswith("?")
+    return strip_trailing_decoration(last_bot_message).endswith("?")
 
 
 def build_query(

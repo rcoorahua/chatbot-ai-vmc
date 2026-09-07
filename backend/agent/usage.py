@@ -29,6 +29,10 @@ RESPONSE = "RESPONSE"
 # Proveedor de los caminos que no llamaron a ningun modelo (reglas, triviales, fallbacks).
 NO_PROVIDER = "NONE"
 
+# `status` de la fila: la ejecucion termino bien, o el proveedor fallo (`error` dice por que).
+SUCCESS = "SUCCESS"
+ERROR = "ERROR"
+
 logger = logging.getLogger(__name__)
 
 # Campos de la fila que NO van al log: la SK y el mes de facturacion son detalle de almacenamiento.
@@ -45,7 +49,7 @@ def list_executions(conversation_id: str, limit: int = 100) -> list[dict[str, An
     Decimal y los modelos de salida quieren int/float."""
     from boto3.dynamodb.conditions import Key
 
-    from backend.core.dynamo_model import from_dynamo
+    from backend.core.dynamo import from_dynamo
 
     response = _table().query(
         KeyConditionExpression=Key("conversation_id").eq(conversation_id),
@@ -72,7 +76,7 @@ def record_execution(
     rag_fragments: list[dict[str, Any]] | None = None,
     rag_min_score: float | None = None,
     handoff_triggered: bool = False,
-    status: str = "SUCCESS",
+    status: str = SUCCESS,
     error: str | None = None,
 ) -> None:
     """Registra una ejecucion del pipeline. Nunca lanza hacia el llamador: perder una metrica

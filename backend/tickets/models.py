@@ -20,7 +20,8 @@ que es el dato con el que se mide si la propuesta sirve antes de cerrarla.
 from enum import StrEnum
 from typing import Any
 
-from backend.core.dynamo_model import DynamoModel
+from backend.conversations.models import UserType
+from backend.core.dynamo import DynamoModel
 from backend.tickets.taxonomy import Category, Priority, ProblemType, TicketStatus
 
 
@@ -35,7 +36,7 @@ class ClassificationSource(StrEnum):
 class Ticket(DynamoModel):
     ticket_id: str
     conversation_id: str
-    user_type: str = "AUTHENTICATED"
+    user_type: UserType = UserType.AUTHENTICATED
     user_id: str | None = None
     user_email: str | None = None
 

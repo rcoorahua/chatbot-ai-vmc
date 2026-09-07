@@ -70,13 +70,23 @@ De ahí que un GSI mal definido se detecte en `tests/test_dynamo_queries.py` y n
 Convenciones de la suite (`tests/conftest.py`): `conftest` fija SIEMPRE los endpoints locales y
 apunta `AWS_CONFIG_FILE` a `devnull` — un `.env` en blanco no puede convertir la suite en una
 escritura a AWS real; también fija secretos de identidad de prueba, así que no necesita `.env`.
-Los tests que **escriben** crean ids con el fixture `conversacion_temporal` (`conv_test_*`, se
-borran al terminar y se purgan al arrancar) y **nunca mutan el dataset de `seed_data`**, que es
-lo que consultan las pruebas de lectura. Los tests de IA sustituyen `LLMClient` por un doble
-(`tests/test_agent_llm.py`), no simulan el SDK: la suite corre sin claves ni red.
+Los tests que **escriben** registran lo que crean en la fixture `limpiar` (un `Registro`:
+`limpiar(conversation_id)`, `.asesor()`, `.ticket()`, `.limite()`; borra mensajes, AIUsage,
+ticket y fila al terminar) y **nunca mutan el dataset de `seed_data`**, que es lo que
+consultan las pruebas de lectura. **El andamiaje vive en `tests/helpers/` (desde
+2026-09-07)** y no se copia por archivo: `fakes.py` (`FakeLLM` hereda de `LLMClient`,
+`ExplodingLLM`, `install_llm`, dobles del RAG `fragmento`/`con_evidencia`/`sin_evidencia`/
+`RagSpy`/`install_rag`, `FakeIndex` + `hit`), `scenario.py` (`conversacion`, `escribe`,
+`atiende`, `respuestas_bot`, `fresca`, `usos_de`…: dominio + worker), `http.py`
+(`abrir_sesion`, `enviar`, `pedir_handoff`, `asesor_nuevo`, `tomar`, `cerrar`…: API) y
+`golden.py`; las fixtures (`fake_llm`, `sin_llm`, `sin_rag`, `con_rag`, `sin_rag_llamada`,
+`cola_falsa`, `client`, `advisor_client`, `sin_rate_limit`, `settings_limpios`) están en
+`conftest.py`. Antes de escribir un `_foo` en un archivo de tests, buscar ahí; si dos
+archivos lo necesitan, va ahí. La suite corre sin claves ni red: nadie simula el SDK.
 
-CI (`.github/workflows/ci.yml`): lint + tests (dynamodb-local 2.5.2 y localstack 3.7 como
-`services`, mismos tags que `docker-compose.yml`) + `cdk synth`, sin credenciales AWS. El CD
+CI (`.github/workflows/ci.yml`): lint (ruff pineado al lock + `node --check` del widget) + tests
+(dynamodb-local 2.5.2 y localstack 3.7 como `services`, mismos tags que `docker-compose.yml`, con
+espera activa a que respondan) + `cdk synth` + lint y build del frontend, sin credenciales AWS. El CD
 (`deploy.yml`) está **maquetado y apagado** (`if: false`) hasta tener cuenta AWS (PLAN.md §6);
 `infra/config.py` lleva `account=None` a propósito.
 
@@ -453,7 +463,7 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
   `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
-  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
+  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` (la entrada; desde 2026-09-07 las piezas viven en `workers/ai/`: `trace`, `state`, `window`, `accounting`, `replies`, `faq`, `guided`, con dependencias en un sentido) compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
   `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:
@@ -488,12 +498,20 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 
 **Invariantes que cruzan archivos (romperlos no lo detecta el linter):**
 
-- El esquema DynamoDB está **duplicado a propósito** en `infra/stacks/subastin_stack.py` (AWS) y
-  `scripts/local_setup.py` (local). Cambiar una clave o un GSI exige tocar **los dos** — si no,
-  las pruebas pasan en local contra un esquema que no existe en stage.
+- El esquema DynamoDB **y el TTL** están **duplicados a propósito** en `infra/stacks/subastin_stack.py`
+  (AWS) y `scripts/local_setup.py` (local, `TABLAS_CON_TTL`). Cambiar una clave, un GSI o el TTL
+  exige tocar **los dos** — si no, las pruebas pasan en local contra un esquema que no existe en
+  stage (hasta 2026-09-07 el TTL solo existía en AWS y el camino de caducidad nunca corría en dev).
 - Los nombres de variable de entorno son el contrato entre los tres entornos: `common_env` del
   stack, `nombres_de_tabla()` de `local_setup.py` y `.env.example` usan **los mismos**
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
+- **`api/` (desde 2026-09-07)**: las excepciones de dominio se traducen a HTTP en UN solo
+  sitio, `api/errors.py` (`RESPONDERS`, instalado en `main.py`); los routers llaman al
+  service y dejan subir la excepción, sin `try/except`. Los modelos de salida (`*Out`,
+  `ProjectionModel.from_model`, `page_cursors`) viven en `api/schemas.py`; los de entrada,
+  en cada router. Ningún router importa un `repository` (lo verifica
+  `tests/test_architecture.py`, junto con la regla de dependencias, `os.environ` solo en
+  `core/config.py` y "lo que vive en `core` no se vuelve a definir").
 - `backend/api/main.py`: `Mangum(app, lifespan="off")` — con lifespan activo la Lambda se cuelga
   en el startup. Los routers `advisor`/`dashboard` **no** validan JWT en código: lo hace el
   authorizer de Cognito en el API Gateway (T1); el backend solo lee los claims que Mangum deja en

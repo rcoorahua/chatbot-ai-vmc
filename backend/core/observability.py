@@ -90,6 +90,13 @@ def configure_logging(force: bool = False) -> None:
         return
     settings = get_settings()
     level = logging.getLevelName(settings.effective_log_level)
+    invalid_level: str | None = None
+    if not isinstance(level, int):
+        # `getLevelName("DEBUGG")` devuelve el string "Level DEBUGG" y `setLevel` revienta:
+        # una variable mal escrita tumbaba el cold start entero de la API y los workers
+        # (auditoria 2026-09-06). Un nivel invalido cae a INFO y se avisa una vez.
+        invalid_level = settings.effective_log_level
+        level = logging.INFO
     formatter = JsonFormatter() if settings.effective_log_format == "json" else TextFormatter()
 
     root = logging.getLogger()
@@ -105,6 +112,10 @@ def configure_logging(force: bool = False) -> None:
     for name in _NOISY_LIBRARIES:
         logging.getLogger(name).setLevel(max(level, logging.WARNING))
     _configured = True
+    if invalid_level is not None:
+        logging.getLogger(__name__).warning(
+            "logging.invalid_level", extra={"log_level": invalid_level, "fallback": "INFO"}
+        )
 
 
 def reset_logging() -> None:
