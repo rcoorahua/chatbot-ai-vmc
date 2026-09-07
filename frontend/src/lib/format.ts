@@ -1,4 +1,4 @@
-import type { ConversationStatus, HandoffReason, SenderType } from "./types";
+import type { ConversationStatus, ProblemType, SenderType } from "./types";
 
 /** T7: los estados viven en inglés en el backend; el texto visible vive solo en el frontend. */
 export const STATUS_LABEL: Record<ConversationStatus, string> = {
@@ -15,19 +15,24 @@ export const SENDER_LABEL: Record<SenderType, string> = {
   SYSTEM: "Sistema",
 };
 
-/** T7: motivo de derivación — código de regla/backend, label en español para el asesor. */
-export const HANDOFF_REASON_LABEL: Record<HandoffReason, string> = {
-  advisor_request: "Pidió hablar con una persona",
-  bot_rejection: "Rechazó seguir hablando con el bot",
-  voice_channel: "Pidió un número para llamar",
-  legal_threat: "Amenaza con Indecopi / libro de reclamaciones",
-  fraud_accusation: "Acusación de estafa o fraude",
-  hostility: "Tono hostil hacia el servicio",
-  peruvian_complaint: "Reclamo informal (\"floreo\")",
-  funds_claim: "Reclama que le devuelvan dinero/garantía",
-  advisor_intent: "El modelo detectó intención de hablar con un asesor",
-  faq_no_evidence: "El Centro de Ayuda no tenía evidencia para responder",
-};
+/**
+ * T7: motivo de derivación en español. Hoy el único valor que produce el backend es `user_form`
+ * (el caso nace del formulario de asesor, D-029); un código nuevo se muestra tal cual en vez
+ * de fallar. El mapa de 10 códigos de versiones previas describía reglas que ya no derivan.
+ */
+export function handoffReasonLabel(reason: string): string {
+  return reason === "user_form" ? "Pidió hablar con un asesor (formulario)" : reason;
+}
+
+/**
+ * `problem_type` legible mientras D-008 siga abierta: el catálogo (`GET /advisor/taxonomy`) no
+ * trae label en español todavía, y copiar la lista aquí es justo lo que CLAUDE.md prohíbe.
+ * "PAYMENT_ISSUE" → "Payment issue".
+ */
+export function problemTypeLabel(problemType: ProblemType | string): string {
+  const words = problemType.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 /** Traduce el código SystemEvent (RF-050) que viaja como contenido de un mensaje SYSTEM. */
 export const SYSTEM_EVENT_LABEL: Record<string, string> = {

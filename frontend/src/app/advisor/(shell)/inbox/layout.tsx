@@ -5,12 +5,10 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import QueueRow from "@/components/QueueRow";
 import { LayersIcon } from "@/components/icons";
-import { apiErrorMessage, getConversations } from "@/lib/api";
+import { apiErrorMessage, getConversations, getTickets } from "@/lib/api";
 import { useAdvisor } from "@/lib/advisor-context";
-// MOCK_TICKET_TYPE: D-008 (taxonomía real de tickets) sigue sin cerrar — "agrupar por tipo"
-// queda como maqueta (ver el title del botón) hasta que haya un problem_type real que agrupar.
-import { MOCK_TICKET_TYPE } from "@/lib/mock-data";
-import type { Conversation, ConversationStatus } from "@/lib/types";
+import { problemTypeLabel } from "@/lib/format";
+import type { Conversation, ConversationStatus, TicketStatus } from "@/lib/types";
 
 /**
  * `GET /advisor/conversations` sin `status` NO es "todas" — es la bandeja
@@ -52,11 +50,23 @@ const TOP_FILTERS: TopFilter[] = [
 
 const SIN_CLASIFICAR = "Sin clasificar";
 
-/** Agrupa por tipo de ticket — MOCK, D-008 (taxonomía real) sigue abierta. */
-function groupByTicketType(conversations: Conversation[]): Array<[string, Conversation[]]> {
+/** `GET /advisor/tickets` sin `status` es la bandeja (pendientes + en curso): los cerrados se
+ *  piden aparte, igual que las conversaciones. */
+const TICKET_STATUSES: TicketStatus[] = ["PENDING", "IN_PROGRESS", "CLOSED"];
+
+/**
+ * Agrupa por el `problem_type` del ticket real de cada conversación (propuesta de D-008 en
+ * `backend/tickets/taxonomy.py`). Antes usaba un mock con ids que la API nunca devuelve, así
+ * que TODO caía en "Sin clasificar" (auditoría 2026-09-06). Las que no tienen ticket (el bot
+ * las atiende) siguen sin clasificar, al final.
+ */
+function groupByTicketType(
+  conversations: Conversation[],
+  typeOf: Record<string, string>,
+): Array<[string, Conversation[]]> {
   const groups = new Map<string, Conversation[]>();
   for (const conv of conversations) {
-    const type = MOCK_TICKET_TYPE[conv.conversation_id] ?? SIN_CLASIFICAR;
+    const type = typeOf[conv.conversation_id] ?? SIN_CLASIFICAR;
     groups.set(type, [...(groups.get(type) ?? []), conv]);
   }
   return [...groups.entries()].sort(([a, ac], [b, bc]) =>
@@ -138,6 +148,28 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
       .catch((err: unknown) => {
         if (cancelled) return;
         setResult({ error: apiErrorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // El tipo de cada caso, por conversación. Si la bandeja de tickets falla, la cola sigue
+  // funcionando y "agrupar por tipo" lo deja todo en "Sin clasificar".
+  const [ticketType, setTicketType] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(TICKET_STATUSES.map((status) => getTickets({ status, limit: 100 })))
+      .then((byStatus) => {
+        if (cancelled) return;
+        const byConversation: Record<string, string> = {};
+        for (const ticket of byStatus.flat()) {
+          byConversation[ticket.conversation_id] = problemTypeLabel(ticket.problem_type);
+        }
+        setTicketType(byConversation);
+      })
+      .catch(() => {
+        /* sin tickets: todo queda "Sin clasificar" */
       });
     return () => {
       cancelled = true;
@@ -279,7 +311,7 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
               Nada en &quot;{activeChild?.label ?? topFilter.label}&quot; ahora mismo.
             </p>
           ) : agruparPorTipo ? (
-            groupByTicketType(conversations).map(([type, convs]) => (
+            groupByTicketType(conversations, ticketType).map(([type, convs]) => (
               <div key={type} className="pb-2">
                 <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-neutral-400">
                   {type} · {convs.length}
