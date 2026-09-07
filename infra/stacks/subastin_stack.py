@@ -346,11 +346,16 @@ class SubastinStack(Stack):
         # moria con un JSONDecodeError en vez de un "falta VMC_IDENTITY_SECRET" claro. Lo que
         # es NUESTRO (SESSION_SIGNING_KEY) se genera aqui mismo; lo compartido o de terceros
         # queda vacio hasta el put-secret-value (config.py ignora los valores vacios).
+        # `removal` tambien aqui: en prod un secreto no puede ser DESTROY. Si CloudFormation
+        # reemplaza el recurso (renombrarlo, cambiar como se genera), se llevaria por delante el
+        # VMC_IDENTITY_SECRET cargado a mano — que VMC comparte y no se puede regenerar solo — y
+        # el SESSION_SIGNING_KEY, cuyo cambio invalida TODAS las sesiones abiertas.
         identity_secret = secretsmanager.Secret(
             self,
             "IdentitySecret",
             secret_name=f"{prefix}-identity",
             description="VMC_IDENTITY_SECRET (completar a mano) + SESSION_SIGNING_KEY (D-001)",
+            removal_policy=removal,
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 secret_string_template=json.dumps({"VMC_IDENTITY_SECRET": ""}),
                 generate_string_key="SESSION_SIGNING_KEY",
@@ -358,15 +363,25 @@ class SubastinStack(Stack):
                 exclude_punctuation=True,
             ),
         )
+        # Mismo patron que el de identidad, y NO `secret_object_value`: ese pone el valor como
+        # propiedad de la plantilla, asi que cualquier update del recurso vuelve a escribir las
+        # claves VACIAS encima de las API keys cargadas a mano. `generate_secret_string` solo se
+        # aplica al CREAR. La clave generada no la lee nadie (Settings ignora las que no conoce,
+        # `extra="ignore"`): esta solo porque CloudFormation exige una para generar.
         ai_secret = secretsmanager.Secret(
             self,
             "AiSecret",
             secret_name=f"{prefix}-ai",
             description="GEMINI_API_KEY + PINECONE_API_KEY (TD-008/RF-017) - completar a mano",
-            secret_object_value={
-                "GEMINI_API_KEY": cdk.SecretValue.unsafe_plain_text(""),
-                "PINECONE_API_KEY": cdk.SecretValue.unsafe_plain_text(""),
-            },
+            removal_policy=removal,
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template=json.dumps(
+                    {"GEMINI_API_KEY": "", "PINECONE_API_KEY": ""}
+                ),
+                generate_string_key="UNUSED_PLACEHOLDER",
+                password_length=16,
+                exclude_punctuation=True,
+            ),
         )
 
         # ──────────────────────────────────── Lambdas (T2/T3) ───────────────────────────────────
