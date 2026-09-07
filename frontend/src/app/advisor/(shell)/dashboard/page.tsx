@@ -5,6 +5,7 @@ import Link from "next/link";
 import QueueRow from "@/components/QueueRow";
 import StatusBadge from "@/components/StatusBadge";
 import { apiErrorMessage, getConversations } from "@/lib/api";
+import { STATUS_COLOR, STATUS_DEEP_COLOR } from "@/lib/status-colors";
 import { useAdvisor } from "@/lib/advisor-context";
 import { STATUS_LABEL } from "@/lib/format";
 import type { Conversation, ConversationStatus } from "@/lib/types";
@@ -30,28 +31,22 @@ import type { Conversation, ConversationStatus } from "@/lib/types";
 
 const STATUSES: ConversationStatus[] = ["PENDING_ADVISOR", "IN_ATTENTION", "BOT_ATTENDING", "CLOSED"];
 
-const BAR_COLOR: Record<ConversationStatus, string> = {
-  PENDING_ADVISOR: "#ED8936",
-  IN_ATTENTION: "#00AEB1",
-  BOT_ATTENDING: "#8460E5",
-  // Mismo tono que StatusBadge.DOT_COLOR.CLOSED — antes decía #C7C9CC, un gris inventado aparte.
-  CLOSED: "#99A1AF",
-};
-
-/** Mismo tono oscuro que StatusBadge usa como texto — el único seguro en contraste sobre blanco. */
-const DEEP_COLOR: Record<ConversationStatus, string> = {
-  PENDING_ADVISOR: "#9A4A0F",
-  IN_ATTENTION: "#00696B",
-  BOT_ATTENDING: "#3B1782",
-  CLOSED: "#5C6266",
-};
-
-const FILTER_PARAM: Record<ConversationStatus, string> = {
-  PENDING_ADVISOR: "pendientes",
-  IN_ATTENTION: "atencion",
-  BOT_ATTENDING: "todas",
+/**
+ * A que tab de la bandeja lleva cada estado (inbox/layout.tsx, TOP_FILTERS): "Subastín" es el
+ * tab sin `estado` en la URL — antes se mandaba `?estado=todas`, que la bandeja no conoce y
+ * resolvia al primer tab por casualidad (auditoria 2026-09-06).
+ */
+const FILTER_PARAM: Record<ConversationStatus, string | null> = {
+  PENDING_ADVISOR: "asesor&sub=pendientes",
+  IN_ATTENTION: "asesor&sub=atencion",
+  BOT_ATTENDING: null,
   CLOSED: "cerradas",
 };
+
+function inboxHref(status: ConversationStatus): string {
+  const param = FILTER_PARAM[status];
+  return param ? `/advisor/inbox?estado=${param}` : "/advisor/inbox";
+}
 
 export default function DashboardPage() {
   const { advisor } = useAdvisor();
@@ -145,10 +140,10 @@ export default function DashboardPage() {
                   {countByStatus.PENDING_ADVISOR > 0 && (
                     <span
                       className="absolute inline-flex h-full w-full rounded-full opacity-75 motion-safe:animate-ping"
-                      style={{ background: BAR_COLOR.PENDING_ADVISOR }}
+                      style={{ background: STATUS_COLOR.PENDING_ADVISOR }}
                     />
                   )}
-                  <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: BAR_COLOR.PENDING_ADVISOR }} />
+                  <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: STATUS_COLOR.PENDING_ADVISOR }} />
                 </span>
                 Pendientes de asesor
               </p>
@@ -158,7 +153,7 @@ export default function DashboardPage() {
             </div>
             <p
               className="flex-shrink-0 text-5xl font-bold leading-none tracking-tight"
-              style={{ color: countByStatus.PENDING_ADVISOR > 0 ? DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
+              style={{ color: countByStatus.PENDING_ADVISOR > 0 ? STATUS_DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
             >
               {countByStatus.PENDING_ADVISOR}
             </p>
@@ -169,7 +164,7 @@ export default function DashboardPage() {
               <p className="text-xs font-bold uppercase tracking-wide text-neutral-500">Espera promedio</p>
               <p
                 className="text-3xl font-bold leading-none tracking-tight"
-                style={{ color: avgWaitMinutes !== null ? DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
+                style={{ color: avgWaitMinutes !== null ? STATUS_DEEP_COLOR.PENDING_ADVISOR : "#191C1C" }}
               >
                 {avgWaitMinutes === null ? "—" : `${avgWaitMinutes} min`}
               </p>
@@ -198,8 +193,8 @@ export default function DashboardPage() {
               {presentStatuses.map((status) => (
                 <Link
                   key={status}
-                  href={`/advisor/inbox?estado=${FILTER_PARAM[status]}`}
-                  style={{ background: BAR_COLOR[status] }}
+                  href={inboxHref(status)}
+                  style={{ background: STATUS_COLOR[status] }}
                   title={`${STATUS_LABEL[status]}: ${countByStatus[status]}`}
                   className="rounded-full transition hover:brightness-110"
                 />
@@ -209,11 +204,11 @@ export default function DashboardPage() {
               {STATUSES.map((status) => (
                 <Link
                   key={status}
-                  href={`/advisor/inbox?estado=${FILTER_PARAM[status]}`}
+                  href={inboxHref(status)}
                   className="flex items-center justify-between gap-2 transition hover:opacity-80"
                 >
                   <StatusBadge status={status} />
-                  <span className="text-sm font-bold" style={{ color: DEEP_COLOR[status] }}>
+                  <span className="text-sm font-bold" style={{ color: STATUS_DEEP_COLOR[status] }}>
                     {countByStatus[status]}
                   </span>
                 </Link>
@@ -229,7 +224,7 @@ export default function DashboardPage() {
           <p className="mt-2.5 flex items-baseline gap-2">
             <span
               className="text-5xl font-bold leading-none tracking-tight"
-              style={{ color: myOpenCases.length > 0 ? DEEP_COLOR.IN_ATTENTION : "#191C1C" }}
+              style={{ color: myOpenCases.length > 0 ? STATUS_DEEP_COLOR.IN_ATTENTION : "#191C1C" }}
             >
               {myOpenCases.length}
             </span>

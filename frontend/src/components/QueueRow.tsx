@@ -1,14 +1,8 @@
 import Link from "next/link";
 import AvatarZone from "@/concorde/components/AvatarZone";
 import { formatWaitTime, STATUS_LABEL } from "@/lib/format";
-import type { Conversation, ConversationStatus } from "@/lib/types";
-
-const URGENCY_COLOR: Record<ConversationStatus, string> = {
-  PENDING_ADVISOR: "#ED8936",
-  IN_ATTENTION: "#00AEB1",
-  BOT_ATTENDING: "#8460E5",
-  CLOSED: "#C7C9CC",
-};
+import { STATUS_COLOR } from "@/lib/status-colors";
+import type { Conversation } from "@/lib/types";
 
 /**
  * `closed_by` solo distingue ADVISOR de todo lo demás (D-029): "AUTO" y `null`/`undefined`
@@ -19,8 +13,8 @@ const URGENCY_COLOR: Record<ConversationStatus, string> = {
  */
 function closedByTag(closedBy: Conversation["closed_by"]): { label: string; color: string } {
   return closedBy === "ADVISOR"
-    ? { label: "Cerrado por asesor", color: URGENCY_COLOR.IN_ATTENTION }
-    : { label: "Cerrado por Subastín", color: URGENCY_COLOR.BOT_ATTENDING };
+    ? { label: "Cerrado por asesor", color: STATUS_COLOR.IN_ATTENTION }
+    : { label: "Cerrado por Subastín", color: STATUS_COLOR.BOT_ATTENDING };
 }
 
 /**
@@ -55,7 +49,7 @@ export default function QueueRow({
     >
       <span
         className="mt-2 h-2 w-2 flex-shrink-0 rounded-full"
-        style={{ background: URGENCY_COLOR[conversation.status] }}
+        style={{ background: STATUS_COLOR[conversation.status] }}
         aria-hidden
       />
       <AvatarZone size="sm" title={conversation.user_name ?? "Anónimo"} />

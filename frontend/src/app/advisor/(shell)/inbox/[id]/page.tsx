@@ -10,19 +10,8 @@ import MessageBubble from "@/components/MessageBubble";
 import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
 import { ApiError, apiErrorMessage, closeConversation, getMessages, postAdvisorMessage, takeConversation } from "@/lib/api";
 import { useAdvisor } from "@/lib/advisor-context";
-import { formatWaitTime, SENDER_LABEL } from "@/lib/format";
+import { SENDER_LABEL, formatWaitTime, handoffReasonLabel } from "@/lib/format";
 import type { Conversation, Message } from "@/lib/types";
-
-/**
- * `handoff_reason` es `str | None` libre en el backend (conversations/models.py), no un enum —
- * hoy el único valor real que produce el formulario de handoff (D-029) es "user_form"
- * (conversations/service.py). Un solo caso no justifica un mapa de labels (ver el mapeo viejo
- * de 10 códigos en versiones previas de este archivo, ya no vigente tras D-029); si aparece un
- * código nuevo, se muestra tal cual en vez de fallar.
- */
-function handoffReasonLabel(reason: string): string {
-  return reason === "user_form" ? "Pidió hablar con un asesor (formulario)" : reason;
-}
 
 /**
  * Vista de conversación del cockpit (RF-033/034/035/036/037/038). Vive dentro
