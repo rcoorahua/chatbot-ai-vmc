@@ -14,7 +14,7 @@ una consulta real como saludo (no responderla) es mucho mayor que una llamada ba
 
 from __future__ import annotations
 
-from backend.agent.heuristics import normalize
+from backend.core.text import BARE_PUNCTUATION, bare, normalize
 
 # Frases completas, no subcadenas: "buenas" es un saludo, "buenas ofertas tienen?" no.
 # Se normalizan al importar con la misma funcion que el mensaje (tildes fuera, minusculas).
@@ -65,7 +65,7 @@ def match_trivial(message: str) -> str | None:
     text = normalize(message or "")
     if not text or len(text) > _MAX_TRIVIAL_CHARS:
         return None
-    stripped = text.strip("!¡?¿.,;:() ")
+    stripped = text.strip(BARE_PUNCTUATION)
     if stripped in _GREETINGS:
         return "greeting"
     if stripped in _THANKS:
@@ -78,6 +78,6 @@ def match_trivial(message: str) -> str | None:
 def same_message(a: str, b: str) -> bool:
     """Igualdad para detectar repeticion (D-006): normalizada, para que "Hola??" y "hola"
     cuenten como el mismo mensaje."""
-    left = normalize(a or "").strip("!¡?¿.,;:() ")
-    right = normalize(b or "").strip("!¡?¿.,;:() ")
+    left = bare(a)
+    right = bare(b)
     return bool(left) and left == right

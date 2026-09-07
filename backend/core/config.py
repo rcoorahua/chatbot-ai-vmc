@@ -205,8 +205,6 @@ class Settings(BaseSettings):
     def effective_log_format(self) -> str:
         if self.log_format:
             return self.log_format.lower()
-        import os
-
         return "json" if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") else "text"
 
     @property

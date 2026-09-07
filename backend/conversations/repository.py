@@ -28,14 +28,21 @@ from botocore.exceptions import ClientError
 from backend.conversations.models import (
     IDEMPOTENCY_KEY_PREFIX,
     Conversation,
+    ConversationStatus,
     Message,
     MessageStatus,
     idempotency_key_for,
 )
+from backend.core import counters
 from backend.core.aws import dynamodb_resource
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
-from backend.core.dynamo import condition_failed_at, query_up_to
+from backend.core.dynamo import (
+    condition_failed_at,
+    is_condition_failure,
+    is_transaction_canceled,
+    query_up_to,
+)
 
 # Toda SK de mensaje empieza por el año (`2026-...`); los marcadores empiezan por `CMID#`, que
 # ordena despues. Acotar la SK por arriba con "3" saca los marcadores de la consulta sin
@@ -50,10 +57,8 @@ class ConversationNotFound(LookupError):
 
 
 class OpenCaseLimitReached(RuntimeError):
-    """El contador `OPEN_CASES#USER#<id>` (RateLimits, Paso 6) ya esta en el limite. La tabla
-    es compartida con agent/quota.py (contadores atomicos por actor); este modulo NO la
-    importa — solo referencia el nombre de tabla via core.config, para no romper la regla de
-    dependencia de backend/__init__.py (dominio nunca importa integraciones)."""
+    """El contador de casos abiertos del usuario (RateLimits, Paso 6; forma de la fila en
+    `core/counters.py`, compartido con la cuota de IA de agent/quota.py) ya esta en el limite."""
 
 
 class ConversationStateChanged(RuntimeError):
@@ -72,10 +77,6 @@ def _conversations():
 
 def _messages():
     return dynamodb_resource().Table(get_settings().table_messages)
-
-
-def _is_condition_failure(exc: ClientError) -> bool:
-    return exc.response["Error"]["Code"] == "ConditionalCheckFailedException"
 
 
 # ───────────────────────────────────── Conversations ─────────────────────────────────────
@@ -121,7 +122,7 @@ def find_conversations_by_advisor(
         "ScanIndexForward": False,
     }
     if exclude_closed:
-        kwargs["FilterExpression"] = Attr("status").ne("CLOSED")
+        kwargs["FilterExpression"] = Attr("status").ne(str(ConversationStatus.CLOSED))
     return [
         Conversation.from_item(item) for item in query_up_to(_conversations(), limit, **kwargs)
     ]
@@ -135,7 +136,7 @@ def create_conversation(conversation: Conversation) -> bool:
             ConditionExpression="attribute_not_exists(conversation_id)",
         )
     except ClientError as exc:
-        if _is_condition_failure(exc):
+        if is_condition_failure(exc):
             return False
         raise
     return True
@@ -187,31 +188,15 @@ def create_conversation_with_messages(
         if not conversation.user_id:  # pragma: no cover — un caso siempre tiene user_id
             raise ValueError("open_case_limit requiere conversation.user_id")
         reserve_index = len(items)
-        items.append(
-            {
-                "Update": {
-                    "TableName": get_settings().table_rate_limits,
-                    "Key": {
-                        "limit_key": f"OPEN_CASES#USER#{conversation.user_id}",
-                        "window": "LIVE",
-                    },
-                    "UpdateExpression": "ADD open_cases :one",
-                    "ConditionExpression": (
-                        "attribute_not_exists(open_cases) OR open_cases < :limit"
-                    ),
-                    "ExpressionAttributeValues": {":one": 1, ":limit": open_case_limit},
-                }
-            }
-        )
+        items.append(counters.reserve_open_case_item(conversation.user_id, open_case_limit))
     try:
         client.transact_write_items(TransactItems=items)
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+        if not is_transaction_canceled(exc):
             raise
-        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
-        if reserve_index is not None and reasons[reserve_index] == "ConditionalCheckFailed":
+        if reserve_index is not None and condition_failed_at(exc, reserve_index):
             raise OpenCaseLimitReached() from exc
-        if reasons and reasons[0] == "ConditionalCheckFailed":
+        if condition_failed_at(exc, 0):
             return False
         raise
     return True
@@ -247,7 +232,7 @@ def reset_unread(conversation_id: str) -> None:
             ExpressionAttributeValues={":zero": 0},
         )
     except ClientError as exc:
-        if not _is_condition_failure(exc):
+        if not is_condition_failure(exc):
             raise
 
 
@@ -268,7 +253,12 @@ def assign_advisor(
     )
     update["ExpressionAttributeNames"] = {"#status": "status"}
     update["ExpressionAttributeValues"].update(
-        {":advisor": advisor_id, ":in_attention": "IN_ATTENTION", ":off": False, **placeholders}
+        {
+            ":advisor": advisor_id,
+            ":in_attention": str(ConversationStatus.IN_ATTENTION),
+            ":off": False,
+            **placeholders,
+        }
     )
     return _transact_note(update, note)
 
@@ -287,7 +277,7 @@ def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> 
     update["ExpressionAttributeValues"].update(
         {
             ":advisor": advisor_id,
-            ":bot_attending": "BOT_ATTENDING",
+            ":bot_attending": str(ConversationStatus.BOT_ATTENDING),
             ":on": True,
             ":off": False,
             ":zero": 0,
@@ -319,24 +309,17 @@ def close_conversation(
     update["ConditionExpression"] = "assigned_advisor_id = :advisor AND #status <> :closed"
     update["ExpressionAttributeNames"] = {"#status": "status"}
     update["ExpressionAttributeValues"].update(
-        {":advisor": advisor_id, ":closed": "CLOSED", ":off": False, ":zero": 0,
-         ":closed_by": closed_by}
+        {
+            ":advisor": advisor_id,
+            ":closed": str(ConversationStatus.CLOSED),
+            ":off": False,
+            ":zero": 0,
+            ":closed_by": closed_by,
+        }
     )
     extra_items = None
     if release_case_slot_for_user:
-        extra_items = [
-            {
-                "Update": {
-                    "TableName": get_settings().table_rate_limits,
-                    "Key": {
-                        "limit_key": f"OPEN_CASES#USER#{release_case_slot_for_user}",
-                        "window": "LIVE",
-                    },
-                    "UpdateExpression": "ADD open_cases :minus_one",
-                    "ExpressionAttributeValues": {":minus_one": -1},
-                }
-            }
-        ]
+        extra_items = [counters.release_open_case_item(release_case_slot_for_user)]
     return _transact_note(update, note, extra_items=extra_items)
 
 
@@ -351,8 +334,8 @@ def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) 
         "handoff_requested_at = :requested_at, handoff_reason = :reason"
     )
     values: dict[str, Any] = {
-        ":pending": "PENDING_ADVISOR",
-        ":bot_attending": "BOT_ATTENDING",
+        ":pending": str(ConversationStatus.PENDING_ADVISOR),
+        ":bot_attending": str(ConversationStatus.BOT_ATTENDING),
         ":off": False,
         ":requested_at": at,
         ":reason": reason,
@@ -404,7 +387,7 @@ def set_flow_state(
             },
         )
     except ClientError as exc:
-        if _is_condition_failure(exc):
+        if is_condition_failure(exc):
             return None
         raise
     return new_version
@@ -432,7 +415,7 @@ def clear_flow_state(conversation_id: str, *, expected_version: int) -> bool:
             },
         )
     except ClientError as exc:
-        if _is_condition_failure(exc):
+        if is_condition_failure(exc):
             return False
         raise
     return True
@@ -450,7 +433,7 @@ def mark_wait_message_sent(conversation_id: str) -> bool:
             ExpressionAttributeValues={":sent": True, ":not_sent": False},
         )
     except ClientError as exc:
-        if _is_condition_failure(exc):
+        if is_condition_failure(exc):
             return False
         raise
     return True
@@ -474,10 +457,9 @@ def _transact_note(
             ]
         )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+        if not is_transaction_canceled(exc):
             raise
-        reasons = [r.get("Code") for r in exc.response.get("CancellationReasons", [])]
-        if reasons and reasons[0] == "ConditionalCheckFailed":
+        if condition_failed_at(exc, 0):
             return False
         raise
     return True
@@ -617,7 +599,7 @@ def _touch_conversation_update(
     if require_open:
         condition += " AND #status <> :closed"
         names["#status"] = "status"
-        values[":closed"] = "CLOSED"
+        values[":closed"] = str(ConversationStatus.CLOSED)
     if require_advisor is not None:
         condition += " AND assigned_advisor_id = :advisor"
         values[":advisor"] = require_advisor
@@ -689,7 +671,7 @@ def save_message_idempotent(
             ]
         )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+        if not is_transaction_canceled(exc):
             raise
         if condition_failed_at(exc, 0):
             original = find_message_by_client_id(
@@ -716,7 +698,7 @@ def put_message(message: Message, *, count_as_unread: bool = False) -> None:
             ]
         )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "TransactionCanceledException":
+        if not is_transaction_canceled(exc):
             raise
         # Solo la condicion del item 1 (la conversacion existe) significa "no encontrada";
         # un `TransactionConflict` o un throttling se propagan tal cual (auditoria 2026-09-06:

@@ -32,6 +32,7 @@ from backend.conversations.models import Conversation, Message, MessageStatus
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
+from backend.core.metadata import INTERACTION
 from backend.tickets import service as tickets
 
 logger = logging.getLogger(__name__)
@@ -358,7 +359,7 @@ def post_message(
             content=body.content,
             sender_id=session.user_id,
             metadata=(
-                {"interaction": body.interaction.model_dump(exclude_none=True)}
+                {INTERACTION: body.interaction.model_dump(exclude_none=True)}
                 if body.interaction
                 else None
             ),

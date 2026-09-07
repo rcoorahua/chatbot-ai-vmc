@@ -61,6 +61,7 @@ from backend.core import llm
 from backend.core.clock import minutes_ago_iso, to_iso, utc_now, utc_now_iso
 from backend.core.config import get_settings
 from backend.core.jobs import AIJob
+from backend.core.metadata import SOURCES, InteractionType, interaction_of, link, with_interaction
 from backend.core.observability import configure_logging, content_preview
 
 configure_logging()
@@ -239,7 +240,7 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # de `_handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no debe
     # abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
     anonymous = conversation.user_type == UserType.ANONYMOUS
-    interaction = (message.metadata or {}).get("interaction")
+    interaction = interaction_of(message.metadata)
     offered = _last_bot_metadata(window, block_keys)
     # ── D-031: clic en "Contactar asesor" (el ultimo boton bajo la respuesta) ──
     # Se reconoce por estructura, no por el texto: ni clasificador ni modelo. Autenticado:
@@ -437,7 +438,7 @@ def _answer_faq(
         ],
         rag_min_score=retrieved.threshold,
         handoff_triggered=not result.has_evidence,
-        status="ERROR" if result.error else "SUCCESS",
+        status=usage.ERROR if result.error else usage.SUCCESS,
         error=result.error,
     )
     if result.has_evidence:
@@ -449,7 +450,7 @@ def _answer_faq(
         # abierta — correcto, porque ya no termina preguntando si continuar.
         metadata: dict = {
             followups.RAG_QUERY_KEY: consulta.text,
-            "sources": related.sources(fragments),
+            SOURCES: related.sources(fragments),
         }
         metadata.update(
             related.related_metadata(
@@ -518,14 +519,10 @@ def _reply_login(
     la pregunta de asesor, o agoto su cuota). El enlace viaja como boton
     (`interaction.type = LINKS`, el widget lo dibuja bajo la burbuja), nunca dentro del
     texto (D-025/D-030). Gratis."""
-    links = {
-        "interaction": {
-            "type": "LINKS",
-            "options": [
-                {"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}
-            ],
-        }
-    }
+    links = with_interaction(
+        InteractionType.LINKS,
+        options=[link(prompts.LOGIN_LINK_LABEL, get_settings().vmc_login_url)],
+    )
     _bot_says(conversation, text, metadata=links)
     _record_free(conversation, message, source=source, intent=str(intent) if intent else None)
 
@@ -624,7 +621,7 @@ def _settle_handoff_confirm(
     if active is None or active[0].name != flows.HANDOFF_CONFIRM:
         return False, conversation
     _definition, step, vigente = active
-    interaction = (message.metadata or {}).get("interaction")
+    interaction = interaction_of(message.metadata)
     value = (
         flows.validate_interaction(step, interaction, current_version=conversation.flow_version)
         if interaction is not None
@@ -685,7 +682,7 @@ def _handle_flow(
             _clear_flow_if_active(conversation)
             conversation = _refreshed(conversation)
         else:
-            interaction = (message.metadata or {}).get("interaction")
+            interaction = interaction_of(message.metadata)
             value = flows.validate_interaction(
                 step, interaction, current_version=conversation.flow_version
             ) if interaction is not None else None
@@ -937,7 +934,7 @@ def _last_bot_open_question(window: list[Message]) -> str | None:
     for item in reversed(window):
         if item.sender_type != SenderType.BOT or not item.content:
             continue
-        interaction = (item.metadata or {}).get("interaction") or {}
+        interaction = interaction_of(item.metadata) or {}
         if interaction.get("type") in _AWAITING_ANSWER:
             return None
         return item.content
@@ -1044,7 +1041,7 @@ def _record_classification(
         usage=classification.usage,
         estimated_cost_usd=_cost(llm.ModelTier.FAST, classification.model, classification.usage),
         latency_ms=classification.latency_ms,
-        status="ERROR" if classification.error else "SUCCESS",
+        status=usage.ERROR if classification.error else usage.SUCCESS,
         error=classification.error,
     )
 

@@ -7,7 +7,7 @@ tambien lo rechaza). `role` solo tiene ADVISOR en el MVP (RF-007) pero existe pa
 
 from enum import StrEnum
 
-from backend.core.dynamo_model import DynamoModel
+from backend.core.dynamo import DynamoModel
 
 
 class AdvisorStatus(StrEnum):

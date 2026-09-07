@@ -35,6 +35,8 @@ from backend.conversations.models import (
 from backend.core.auth import ChatSession, VmcIdentity
 from backend.core.clock import epoch_seconds, minutes_ago_iso, to_iso, utc_now, utc_now_iso
 from backend.core.config import get_settings
+from backend.core.ids import deterministic_id
+from backend.core.metadata import FORM_RESPONSE, SENDER_NAME, TRANSCRIPT
 
 # Namespace fijo para derivar el id de la conversacion del usuario autenticado. Cambiarlo
 # "perderia" todas las conversaciones existentes (seguirian en la tabla, pero nadie las
@@ -86,7 +88,7 @@ def conversation_id_for_user(user_id: str) -> str:
     deja pasar solo a una. Si D-002 cambiara a N conversaciones, esto vuelve a ser aleatorio y
     la busqueda pasa a GSI1.
     """
-    return str(uuid.uuid5(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}"))
+    return deterministic_id(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}")
 
 
 def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]:
@@ -366,14 +368,14 @@ def _form_response_message(
         if v
     }
     metadata: dict = {
-        "form_response": {
+        FORM_RESPONSE: {
             "form": forms.HANDOFF_FORM,
             "version": forms.HANDOFF_FORM_VERSION,
             "values": values,
         }
     }
     if transcript:
-        metadata["transcript"] = transcript
+        metadata[TRANSCRIPT] = transcript
     return Message(
         conversation_id=conversation_id,
         message_key=message_key_for(created_at, message_id),
@@ -574,7 +576,7 @@ def post_advisor_message(
         content=text,
         client_message_id=client_message_id,
         # El widget muestra el nombre del asesor (como Intercom firma cada respuesta).
-        metadata={"sender_name": advisor_name} if advisor_name else None,
+        metadata={SENDER_NAME: advisor_name} if advisor_name else None,
         created_at=now,
     )
     # Guardas atomicas: sigue asignada a ESTE asesor y no esta cerrada. El chequeo en memoria

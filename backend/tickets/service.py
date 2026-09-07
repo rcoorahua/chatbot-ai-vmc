@@ -29,13 +29,14 @@ from backend.conversations.models import (
     MessageType,
 )
 from backend.core.clock import utc_now_iso
+from backend.core.ids import deterministic_id
+from backend.core.metadata import FORM_RESPONSE
 from backend.tickets import repository
 from backend.tickets.models import ClassificationSource, Ticket
 from backend.tickets.taxonomy import (
     Category,
     Priority,
     ProblemType,
-    Tag,
     TicketStatus,
     missing_data,
     resolve_priority,
@@ -59,7 +60,7 @@ def ticket_id_for_conversation(conversation_id: str) -> str:
     de `create_ticket` es la exclusion mutua real: dos intentos calculan el MISMO id y solo uno
     gana la escritura.
     """
-    return str(uuid.uuid5(_TICKET_NAMESPACE, f"conversation:{conversation_id}"))
+    return deterministic_id(_TICKET_NAMESPACE, f"conversation:{conversation_id}")
 
 
 class TicketAlreadyClosed(RuntimeError):
@@ -152,7 +153,7 @@ def _form_detail(conversation: Conversation) -> str | None:
         conversations_repository.list_recent_messages(conversation.conversation_id, limit=20)
     ):
         if message.message_type == MessageType.FORM_RESPONSE:
-            values = (message.metadata or {}).get("form_response", {}).get("values", {})
+            values = (message.metadata or {}).get(FORM_RESPONSE, {}).get("values", {})
             return values.get("detail") or message.content
     return None
 
@@ -269,15 +270,3 @@ def close(ticket: Ticket, *, advisor_id: str, resolution: str | None = None) -> 
         raise TicketAlreadyClosed(ticket.ticket_id)
     return updated
 
-
-__all__ = [
-    "Tag",
-    "TicketAlreadyClosed",
-    "assign",
-    "close",
-    "ensure_ticket",
-    "for_conversation",
-    "list_inbox",
-    "open_ticket",
-    "reclassify",
-]

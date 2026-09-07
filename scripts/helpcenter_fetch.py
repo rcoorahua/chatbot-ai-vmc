@@ -26,11 +26,12 @@ import json
 import re
 import sys
 import time
-import unicodedata
 import urllib.request
 from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
+
+from backend.core.text import strip_accents
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "data" / "helpcenter"
@@ -85,9 +86,7 @@ class Article:
 
 
 def slugify(value: str, *, max_chars: int = 60) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower()
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", strip_accents(value)).strip("-").lower()
     return (normalized or "sin-titulo")[:max_chars]
 
 

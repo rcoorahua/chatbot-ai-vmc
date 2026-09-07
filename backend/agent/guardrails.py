@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from backend.agent.heuristics import normalize
+from backend.core.text import normalize
 
 # Tipos de veredicto de entrada. Los valores viajan a AIUsage como `guardrail:<kind>`.
 PROMPT_INJECTION = "prompt_injection"
@@ -326,9 +326,10 @@ _URL = re.compile(r"https?://[^\s<>\"')\]]+")
 def check_output(answer: str, evidence: list[str], user_message: str = "") -> OutputVerdict:
     """Primera violacion encontrada, o un veredicto limpio.
 
-    `evidence` son los fragmentos tal como viajaron al redactor (con su "(Fuente: url)"), de
-    modo que todo enlace legitimo esta ahi. `user_message` entra como fuente valida de cifras:
-    si el usuario pregunto por "un Hilux 2019", repetir "2019" no es inventar.
+    `evidence` son los fragmentos tal como viajaron al redactor: todo enlace legitimo esta ahi
+    (desde D-030 la URL de la fuente no va en el texto sino en `metadata.sources`).
+    `user_message` entra como fuente valida de cifras: si el usuario pregunto por "un Hilux
+    2019", repetir "2019" no es inventar.
     """
     text = normalize(answer or "")
     if not text:

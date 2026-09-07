@@ -22,7 +22,7 @@ from backend.conversations import repository
 from backend.core import auth, jobs
 from backend.core.aws import dynamodb_resource, sqs_client
 from backend.core.config import get_settings
-from backend.core.dynamo_model import from_dynamo
+from backend.core.dynamo import from_dynamo
 
 router = APIRouter(prefix="/dev", tags=["dev"])
 
