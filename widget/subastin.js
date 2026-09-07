@@ -73,6 +73,26 @@
     composerMaxPx: 132,
   };
 
+  // Vocabulario del backend (datos en ingles, T7): los mismos valores que `core/metadata.py`
+  // y `conversations/models.py`. Antes eran literales sueltos por todo el archivo (auditoria
+  // 2026-09-06): un estado nuevo o un tipo de boton nuevo se escribia de memoria.
+  const STATUS = {
+    BOT_ATTENDING: "BOT_ATTENDING",
+    PENDING_ADVISOR: "PENDING_ADVISOR",
+    IN_ATTENTION: "IN_ATTENTION",
+    CLOSED: "CLOSED",
+  };
+  const KIND = { THREAD: "THREAD", CASE: "CASE" };
+  const USER_TYPE = { AUTHENTICATED: "AUTHENTICATED", ANONYMOUS: "ANONYMOUS" };
+  const SENDER = { USER: "USER", BOT: "BOT", ADVISOR: "ADVISOR", SYSTEM: "SYSTEM" };
+  const MESSAGE_TYPE = { TEXT: "TEXT", SYSTEM: "SYSTEM", FORM_RESPONSE: "FORM_RESPONSE" };
+  const INTERACTION = {
+    QUICK_REPLIES: "QUICK_REPLIES",
+    RELATED_QUESTIONS: "RELATED_QUESTIONS",
+    HANDOFF_FORM: "HANDOFF_FORM",
+    LINKS: "LINKS",
+  };
+
   // Textos de la interfaz (UI en español, datos en ingles — decision T7).
   const TEXT = {
     brand: "VMC Subastas",
@@ -937,7 +957,7 @@
       stored &&
       stored.identity === identity &&
       stored.expiresAt * 1000 > Date.now() + 60000 &&
-      stored.userType === (wantAuth ? "AUTHENTICATED" : "ANONYMOUS") &&
+      stored.userType === (wantAuth ? USER_TYPE.AUTHENTICATED : USER_TYPE.ANONYMOUS) &&
       (!wantAuth || stored.userId === wantedUser);
     if (stillValid) {
       state.session = stored;
@@ -1090,7 +1110,7 @@
       known.add(message.message_id);
       added += 1;
       // Llego respuesta (bot, asesor o nota de sistema): se acabo la espera.
-      if (message.sender_type !== "USER") state.typingSince = null;
+      if (message.sender_type !== SENDER.USER) state.typingSince = null;
       if (message.client_message_id) state.pending.delete(message.client_message_id);
       if (!state.lastKey || message.message_key > state.lastKey) state.lastKey = message.message_key;
       if (!state.firstKey || message.message_key < state.firstKey) state.firstKey = message.message_key;
@@ -1101,8 +1121,12 @@
 
   // ───────────────────────── Conversaciones: hilo del bot + casos (D-029) ─────────────────────────
 
+  function lastMessage() {
+    return state.messages[state.messages.length - 1] || null;
+  }
+
   function isAnonymous() {
-    return !state.session || state.session.userType !== "AUTHENTICATED";
+    return !state.session || state.session.userType !== USER_TYPE.AUTHENTICATED;
   }
 
   function threadId() {
@@ -1110,15 +1134,15 @@
   }
 
   function isThread(conv) {
-    return !conv || conv.kind !== "CASE";
+    return !conv || conv.kind !== KIND.CASE;
   }
 
   function waitingAdvisor(conv) {
-    return Boolean(conv) && (conv.status === "PENDING_ADVISOR" || conv.status === "IN_ATTENTION");
+    return Boolean(conv) && (conv.status === STATUS.PENDING_ADVISOR || conv.status === STATUS.IN_ATTENTION);
   }
 
   function hasOpenCase() {
-    return state.conversations.some((c) => c.kind === "CASE" && c.status !== "CLOSED");
+    return state.conversations.some((c) => c.kind === KIND.CASE && c.status !== STATUS.CLOSED);
   }
 
   /** Estado fresco de una conversacion (viene en cada sondeo): se refleja en la lista. */
@@ -1127,7 +1151,7 @@
     if (conv.conversation_id === state.activeId) state.conversation = conv;
     const i = state.conversations.findIndex((c) => c.conversation_id === conv.conversation_id);
     if (i >= 0) state.conversations[i] = conv;
-    else if (conv.kind === "CASE") state.conversations.push(conv);
+    else if (conv.kind === KIND.CASE) state.conversations.push(conv);
     else state.conversations.unshift(conv);
   }
 
@@ -1180,8 +1204,7 @@
       ? saved.conversation
       : state.conversations.find((c) => c.conversation_id === id) || null;
     state.typingSince = null;
-    state.unseenBelow = 0;
-    state.stickToBottom = true;
+    scrollToBottomNext();
     state.formError = null;
     state.view = "messages";
     state.unread = 0;
@@ -1255,7 +1278,7 @@
       !state.conversation || state.conversation.status !== data.conversation.status;
     applyConversation(data.conversation);
     if (state.conversation && !state.conversation.bot_enabled) state.typingSince = null;
-    const ajenos = data.messages.filter((m) => m.sender_type !== "USER").length;
+    const ajenos = data.messages.filter((m) => m.sender_type !== SENDER.USER).length;
     if (added && before > 0 && !(state.open && state.view === "messages")) {
       state.unread += ajenos;
     }
@@ -1322,7 +1345,7 @@
     }
     const conv = state.conversation;
     // Solo un caso (autenticado) puede estar CLOSED: ahi lo unico que cambia es la lista.
-    if (conv && conv.status === "CLOSED") return state.open ? jitter(CONFIG.listEveryMs) : 0;
+    if (conv && conv.status === STATUS.CLOSED) return state.open ? jitter(CONFIG.listEveryMs) : 0;
     // Esperando al bot se sondea rapido este el panel abierto o cerrado: cerrado, la
     // respuesta tiene que llegar al contador del boton. Antes el sondeo se detenia al
     // cerrar y el badge no se enteraba hasta reabrir (DETAILS.md §4.19).
@@ -1391,9 +1414,14 @@
     }
   }
 
-  function sendMessage(text, interaction) {
-    state.stickToBottom = true; // lo propio siempre lleva la vista abajo
+  /** El proximo render aterriza abajo y olvida la pildora de "hay mensajes abajo". */
+  function scrollToBottomNext() {
+    state.stickToBottom = true;
     state.unseenBelow = 0;
+  }
+
+  function sendMessage(text, interaction) {
+    scrollToBottomNext(); // lo propio siempre lleva la vista abajo
     const content = text.trim();
     if (!content) return;
     const clientMessageId = newClientMessageId();
@@ -1592,8 +1620,7 @@
         } else {
           thread.scrollTop = thread.scrollHeight;
         }
-        state.stickToBottom = true;
-        state.unseenBelow = 0;
+        scrollToBottomNext();
       } else {
         // El usuario estaba leyendo mas arriba: se respeta su punto exacto. Si el contenido
         // crecio por arriba (paginacion hacia atras), se compensa para que no se le mueva.
@@ -1616,6 +1643,15 @@
         composer.focus({ preventScroll: true });
       }
     }
+  }
+
+  /** Boton redondo con icono (cerrar, volver): mismo markup en las cuatro cabeceras. */
+  function iconButton(label, icon, onclick) {
+    return h("button", { class: "icon-btn", type: "button", "aria-label": label, onclick }, icon);
+  }
+
+  function closeButton() {
+    return iconButton(TEXT.close, ICON.close(), () => setOpen(false));
   }
 
   /** El compositor crece con el texto hasta el tope y solo entonces hace scroll interno.
@@ -1680,7 +1716,7 @@
     if (state.conversation) return !state.conversation.bot_enabled;
     for (let i = state.messages.length - 1; i >= 0; i -= 1) {
       const message = state.messages[i];
-      if (message.sender_type !== "SYSTEM" && message.message_type !== "SYSTEM") continue;
+      if (message.sender_type !== SENDER.SYSTEM && message.message_type !== MESSAGE_TYPE.SYSTEM) continue;
       return message.content === "HANDOFF_REQUESTED" || message.content === "ADVISOR_ASSIGNED";
     }
     return false;
@@ -1774,18 +1810,7 @@
             ? h(
                 "ul",
                 { class: "list" },
-                articles.map((article) =>
-                  h(
-                    "li",
-                    {},
-                    h(
-                      "button",
-                      { type: "button", onclick: () => openArticle(article) },
-                      h("span", { text: article.title }),
-                      ICON.chevron()
-                    )
-                  )
-                )
+                articles.map(articleRow)
               )
             : h("p", { class: "muted", text: TEXT.noArticles })
         )
@@ -1842,7 +1867,7 @@
       items.push(
         renderBubble(
           {
-            sender_type: "BOT",
+            sender_type: SENDER.BOT,
             content: name ? TEXT.greetingAuth(name) : TEXT.greetingAnon,
             created_at: null,
             // Clave estable: `firstRenderOf` lo anima UNA vez por carga de pagina, no en
@@ -1865,13 +1890,13 @@
         })
       );
     }
-    const ultimo = state.messages[state.messages.length - 1] || null;
+    const ultimo = lastMessage();
     // D-030: con un formulario a la vista no hay botones de pregunta ni compositor.
     const form = visibleForm();
     for (const message of state.messages) {
       const diaAntes = lastDay;
       pushDay(message.created_at);
-      if (message.sender_type === "SYSTEM" || message.message_type === "SYSTEM") {
+      if (message.sender_type === SENDER.SYSTEM || message.message_type === MESSAGE_TYPE.SYSTEM) {
         items.push(renderSystemEvent(message));
         previo = null;
         continue;
@@ -1890,7 +1915,7 @@
     for (const [clientMessageId, draft] of state.pending) {
       if (draft.conversationId && draft.conversationId !== state.activeId) continue;
       pushDay(draft.createdAt);
-      const propio = { sender_type: "USER", created_at: draft.createdAt };
+      const propio = { sender_type: SENDER.USER, created_at: draft.createdAt };
       items.push(renderPending(clientMessageId, draft, !sameGroup(previo, propio)));
       previo = propio;
     }
@@ -1929,8 +1954,7 @@
                 onclick: () => {
                   const hilo = panelEl.querySelector(".thread");
                   if (hilo) hilo.scrollTo({ top: hilo.scrollHeight, behavior: "smooth" });
-                  state.stickToBottom = true;
-                  state.unseenBelow = 0;
+                  scrollToBottomNext();
                   render();
                 },
               },
@@ -1939,7 +1963,7 @@
             )
           : null
       ),
-      state.conversation && state.conversation.status === "CLOSED"
+      state.conversation && state.conversation.status === STATUS.CLOSED
         ? renderClosedBar()
         : form
           ? null
@@ -1949,9 +1973,9 @@
 
   function statusLabel(conv) {
     if (!conv) return null;
-    if (conv.status === "PENDING_ADVISOR") return TEXT.statusPending;
-    if (conv.status === "IN_ATTENTION") return TEXT.statusAttending;
-    if (conv.status === "CLOSED") return TEXT.statusClosed;
+    if (conv.status === STATUS.PENDING_ADVISOR) return TEXT.statusPending;
+    if (conv.status === STATUS.IN_ATTENTION) return TEXT.statusAttending;
+    if (conv.status === STATUS.CLOSED) return TEXT.statusClosed;
     return null;
   }
 
@@ -1978,10 +2002,10 @@
     return h(
       "header",
       { class: "bar" },
-      h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.back, onclick: back }, ICON.back()),
+      iconButton(TEXT.back, ICON.back(), back),
       caso ? null : botAvatar("avatar", true),
       h("div", { class: "bar-title" }, h("strong", { text: conversationLabel(conv) }), subtitulo),
-      h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+      closeButton()
     );
   }
 
@@ -2003,8 +2027,8 @@
   /** Lista de conversaciones del autenticado (D-029): el hilo con Subastín arriba y debajo
    *  los casos con asesor, el mas reciente primero, con su estado. */
   function renderInbox() {
-    const thread = state.conversations.find((c) => c.kind !== "CASE") || null;
-    const cases = state.conversations.filter((c) => c.kind === "CASE");
+    const thread = state.conversations.find((c) => c.kind !== KIND.CASE) || null;
+    const cases = state.conversations.filter((c) => c.kind === KIND.CASE);
     const row = (conv, primary, secondary, avatar) =>
       h(
         "li",
@@ -2028,7 +2052,7 @@
             ? h("span", {
                 class:
                   "chip" +
-                  (conv.status === "CLOSED" ? " chip-closed" : conv.status === "IN_ATTENTION" ? " chip-live" : ""),
+                  (conv.status === STATUS.CLOSED ? " chip-closed" : conv.status === STATUS.IN_ATTENTION ? " chip-live" : ""),
                 text: statusLabel(conv),
               })
             : ICON.chevron()
@@ -2041,7 +2065,7 @@
         "header",
         { class: "bar bar-plain" },
         h("div", { class: "bar-title" }, h("strong", { text: TEXT.inboxTitle })),
-        h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+        closeButton()
       ),
       h(
         "div",
@@ -2063,11 +2087,11 @@
    *  mensaje (D-029), salvo que se haya cerrado con la x. Solo con el bot atendiendo:
    *  derivada o cerrada, no hay nada que pedir. */
   function visibleForm() {
-    if (state.conversation && state.conversation.status !== "BOT_ATTENDING") return null;
-    const ultimo = state.messages[state.messages.length - 1];
-    if (!ultimo || state.pending.size || ultimo.sender_type !== "BOT") return null;
+    if (state.conversation && state.conversation.status !== STATUS.BOT_ATTENDING) return null;
+    const ultimo = lastMessage();
+    if (!ultimo || state.pending.size || ultimo.sender_type !== SENDER.BOT) return null;
     const interaction = ultimo.metadata && ultimo.metadata.interaction;
-    if (!interaction || interaction.type !== "HANDOFF_FORM" || !Array.isArray(interaction.fields)) return null;
+    if (!interaction || interaction.type !== INTERACTION.HANDOFF_FORM || !Array.isArray(interaction.fields)) return null;
     if (state.dismissedForm === ultimo.message_id) return null;
     return { spec: interaction, key: "form:" + ultimo.message_id, messageId: ultimo.message_id };
   }
@@ -2275,11 +2299,11 @@
   /** Quien "habla" en una burbuja. Agrupa por interlocutor, no por remitente exacto: dos
    *  mensajes seguidos del mismo asesor son un grupo; si cambia el asesor, empieza otro. */
   function speakerOf(message) {
-    if (message.sender_type === "USER") return "USER";
-    if (message.sender_type === "ADVISOR") {
+    if (message.sender_type === SENDER.USER) return SENDER.USER;
+    if (message.sender_type === SENDER.ADVISOR) {
       return "ADVISOR:" + ((message.metadata && message.metadata.sender_name) || "");
     }
-    return "BOT";
+    return SENDER.BOT;
   }
 
   // Dos mensajes del mismo interlocutor separados por mas de esto empiezan grupo nuevo, como
@@ -2298,8 +2322,8 @@
    *  si habla un asesor, el unico que muestra su nombre. El avatar y el nombre del bot NO se
    *  repiten por mensaje — eso vive en la cabecera, como en cualquier app de mensajeria. */
   function renderBubble(message, primero) {
-    const mine = message.sender_type === "USER";
-    const advisor = message.sender_type === "ADVISOR";
+    const mine = message.sender_type === SENDER.USER;
+    const advisor = message.sender_type === SENDER.ADVISOR;
     // El propio mensaje ya se animo como borrador: se reusa su client_message_id para que la
     // version confirmada no vuelva a entrar deslizandose.
     const fresh = firstRenderOf(message.client_message_id || message.message_id || "greeting");
@@ -2336,7 +2360,7 @@
    *  con puntos suspensivos si no cabe; el `title` deja ver el completo al pasar el mouse. */
   function renderSources(message) {
     const sources = message.metadata && message.metadata.sources;
-    if (message.sender_type !== "BOT" || !Array.isArray(sources) || !sources.length) return null;
+    if (message.sender_type !== SENDER.BOT || !Array.isArray(sources) || !sources.length) return null;
     const links = [];
     for (const source of sources) {
       if (!source || !isHttpUrl(source.url)) continue;
@@ -2388,38 +2412,46 @@
   /** Botones de respuesta rapida (D-028) bajo el mensaje del bot que los trae en metadata.
    *  El click manda el LABEL como texto del hilo mas el evento estructurado; el servidor
    *  valida accion/valor/version contra el paso vigente — aqui no se decide nada. */
-  function renderQuickReplies(message) {
+  /** Los botones que un mensaje del bot trae en `metadata.interaction` (QUICK_REPLIES,
+   *  RELATED_QUESTIONS o LINKS): el envoltorio con su animacion de entrada y, por opcion, el
+   *  nodo que `build` devuelva (null = esa opcion no se dibuja). Antes eran tres funciones casi
+   *  identicas que solo cambiaban en el tipo, la clase y el evento (auditoria 2026-09-06). */
+  function renderOptions(message, type, { key, extraClass = "", returning = false, build }) {
     const interaction = message.metadata && message.metadata.interaction;
-    if (!interaction || interaction.type !== "QUICK_REPLIES") return null;
-    if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
-    const wrap = h(
-      "div",
-      {
-        class: "quick-replies" + (firstRenderOf("qr:" + message.message_id) ? " is-new" : "") +
-          (state.repliesReturn ? " is-returning" : ""),
-      }
-    );
+    if (!interaction || interaction.type !== type || message.sender_type !== SENDER.BOT) return null;
+    if (!Array.isArray(interaction.options)) return null;
+    const wrap = h("div", {
+      class:
+        "quick-replies" + extraClass +
+        (firstRenderOf(key + ":" + message.message_id) ? " is-new" : "") +
+        (returning && state.repliesReturn ? " is-returning" : ""),
+    });
     for (const option of interaction.options) {
-      if (!option || !option.label || !option.value) continue;
-      wrap.appendChild(
-        h(
-          "button",
-          {
-            class: "qr",
-            type: "button",
-            onclick: () =>
-              sendMessage(option.label, {
-                action_id: interaction.action_id,
-                value: option.value,
-                flow_version: interaction.flow_version,
-                source_message_id: message.message_id,
-              }),
-          },
-          option.label
-        )
-      );
+      const node = option ? build(option, interaction) : null;
+      if (node) wrap.appendChild(node);
     }
     return wrap.childNodes.length ? wrap : null;
+  }
+
+  /** Un boton de respuesta: manda su etiqueta como texto y el evento estructurado con el. */
+  function replyButton(className, label, event) {
+    return h("button", { class: className, type: "button", onclick: () => sendMessage(label, event) }, label);
+  }
+
+  function renderQuickReplies(message) {
+    return renderOptions(message, INTERACTION.QUICK_REPLIES, {
+      key: "qr",
+      returning: true,
+      build: (option, interaction) =>
+        option.label && option.value
+          ? replyButton("qr", option.label, {
+              action_id: interaction.action_id,
+              value: option.value,
+              flow_version: interaction.flow_version,
+              source_message_id: message.message_id,
+            })
+          : null,
+    });
   }
 
   /** Preguntas hermanas (D-030): las otras preguntas del articulo que acaba de responder,
@@ -2427,53 +2459,35 @@
    *  evento {action_id, value}; el servidor la resuelve contra la metadata de SU ultimo
    *  mensaje (la consulta viaja ahi, no en el clic) y la manda al RAG sin clasificador. */
   function renderRelatedQuestions(message) {
-    const interaction = message.metadata && message.metadata.interaction;
-    if (!interaction || interaction.type !== "RELATED_QUESTIONS") return null;
-    if (message.sender_type !== "BOT" || !Array.isArray(interaction.options)) return null;
-    const wrap = h(
-      "div",
-      {
-        class: "quick-replies related" + (firstRenderOf("rq:" + message.message_id) ? " is-new" : "") +
-          (state.repliesReturn ? " is-returning" : ""),
-      }
-    );
-    for (const option of interaction.options) {
-      if (!option || !option.label || !option.value) continue;
-      // El mensaje sugerido de asesor (kind = handoff, siempre el ultimo, D-031) va en color
-      // solido: no es "otra pregunta", es la salida a una persona. Viaja como cualquier clic
-      // (texto + evento) y el servidor lo reconoce por su `value`; aqui no se decide nada.
-      const handoff = option.kind === "handoff";
-      wrap.appendChild(
-        h(
-          "button",
-          {
-            class: "qr " + (handoff ? "qr-solid qr-handoff" : "qr-related"),
-            type: "button",
-            onclick: () =>
-              sendMessage(option.label, {
-                action_id: interaction.action_id,
-                value: option.value,
-                source_message_id: message.message_id,
-              }),
-          },
-          option.label
-        )
-      );
-    }
-    return wrap.childNodes.length ? wrap : null;
+    return renderOptions(message, INTERACTION.RELATED_QUESTIONS, {
+      key: "rq",
+      extraClass: " related",
+      returning: true,
+      build: (option, interaction) => {
+        if (!option.label || !option.value) return null;
+        // El mensaje sugerido de asesor (kind = handoff, siempre el ultimo, D-031) va en color
+        // solido: no es "otra pregunta", es la salida a una persona. Viaja como cualquier clic
+        // (texto + evento) y el servidor lo reconoce por su `value`; aqui no se decide nada.
+        const handoff = option.kind === "handoff";
+        return replyButton("qr " + (handoff ? "qr-solid qr-handoff" : "qr-related"), option.label, {
+          action_id: interaction.action_id,
+          value: option.value,
+          source_message_id: message.message_id,
+        });
+      },
+    });
   }
 
   /** Enlaces (D-031): botones que abren una URL en otra pestaña, bajo el mensaje del bot que
    *  los trae en metadata (hoy, "Iniciar sesión" para el visitante). Solo http(s). */
   function renderLinks(message) {
-    const interaction = message.metadata && message.metadata.interaction;
-    if (!interaction || interaction.type !== "LINKS" || message.sender_type !== "BOT") return null;
-    const wrap = h("div", { class: "quick-replies" + (firstRenderOf("lk:" + message.message_id) ? " is-new" : "") });
-    for (const option of Array.isArray(interaction.options) ? interaction.options : []) {
-      if (!option || !option.label || !isHttpUrl(option.url)) continue;
-      wrap.appendChild(h("a", { class: "qr qr-solid", href: option.url, target: "_blank", rel: "noopener noreferrer", text: option.label }));
-    }
-    return wrap.childNodes.length ? wrap : null;
+    return renderOptions(message, INTERACTION.LINKS, {
+      key: "lk",
+      build: (option) =>
+        option.label && isHttpUrl(option.url)
+          ? h("a", { class: "qr qr-solid", href: option.url, target: "_blank", rel: "noopener noreferrer", text: option.label })
+          : null,
+    });
   }
 
   const ANON_BANNER_KEY = CONFIG.storageKey + ":anon-banner";
@@ -2636,9 +2650,9 @@
         h(
           "header",
           { class: "bar" },
-          h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.back, onclick: () => { state.helpArticle = null; render(); } }, ICON.back()),
+          iconButton(TEXT.back, ICON.back(), () => { state.helpArticle = null; render(); }),
           h("div", { class: "bar-title" }, h("strong", { text: article.title })),
-          h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+          closeButton()
         ),
         h("article", { class: "article" }, (article.body || []).map((paragraph) => h("p", {}, textWithLinks(paragraph)))),
         renderNav()
@@ -2651,7 +2665,7 @@
         "header",
         { class: "bar bar-plain" },
         h("div", { class: "bar-title" }, h("strong", { text: TEXT.helpTitle })),
-        h("button", { class: "icon-btn", type: "button", "aria-label": TEXT.close, onclick: () => setOpen(false) }, ICON.close())
+        closeButton()
       ),
       h(
         "div",
@@ -2679,9 +2693,7 @@
                 ? h(
                     "ul",
                     { class: "list list-nested" },
-                    collection.articles.map((article) =>
-                      h("li", {}, h("button", { type: "button", onclick: () => openArticle(article) }, h("span", { text: article.title }), ICON.chevron()))
-                    )
+                    collection.articles.map(articleRow)
                   )
                 : null
             )
@@ -2689,6 +2701,20 @@
         )
       ),
       renderNav()
+    );
+  }
+
+  /** Una fila de la lista de articulos: titulo + chevron, abre el articulo. */
+  function articleRow(article) {
+    return h(
+      "li",
+      {},
+      h(
+        "button",
+        { type: "button", onclick: () => openArticle(article) },
+        h("span", { text: article.title }),
+        ICON.chevron()
+      )
     );
   }
 
@@ -2726,7 +2752,7 @@
       // cerrado, se abre en la lista para que se vea.
       state.view = !isAnonymous() && state.unread > 0 && hasOpenCase() ? "inbox" : "messages";
       state.unread = 0;
-      state.stickToBottom = true;
+      scrollToBottomNext();
       // Conversacion recien empezada: el saludo entra DESPUES de que el panel termino de
       // abrir (transicion de .38s), asi su fade se percibe como un mensaje y no como parte
       // del panel. Con historial el saludo ya esta arriba y esto no cambia nada.
