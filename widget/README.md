@@ -3,6 +3,40 @@
 Chat embebible que reemplaza al messenger de Intercom en VMC. Un solo archivo sin build
 (`subastin.js`), pensado para servirse desde un CDN o desde el host del frontend (TD-003).
 
+## Dónde se edita
+
+`subastin.js` es **generado**: no editarlo a mano. Las fuentes son los fragmentos de
+`widget/src/*.js`, que se concatenan en orden de nombre:
+
+```
+node widget/build.mjs           # regenera subastin.js (commitear el resultado)
+node widget/build.mjs --check   # falla si el bundle quedó viejo (lo corre el CI)
+node --check widget/subastin.js # sintaxis del bundle
+```
+
+Los fragmentos son partes del cuerpo de **una misma IIFE**, no módulos: comparten el closure
+(`state`, `session`, `render`…) igual que cuando era un archivo solo. Por eso un fragmento
+suelto no es JS válido por sí mismo y la sintaxis se verifica sobre el bundle. El bundle se
+versiona a propósito: lo que VMC sirve sigue siendo un JS sin build ni dependencias, y el paso
+de `build.mjs` es solo para quien edita.
+
+| Fragmento | Qué vive ahí |
+|---|---|
+| `01-prelude.js` | Cabecera, apertura de la IIFE, `settings`, `CONFIG`, tablas de vocabulario (`STATUS`, `KIND`, `SENDER`, `INTERACTION`), textos y Centro de Ayuda |
+| `02-dom.js` | `h()`, `svg()`, íconos, logo de VMC y avatar del bot |
+| `03-avatar.js` | Lottie y el orbe líquido (WebGPU y su respaldo WebGL) |
+| `04-text.js` | Enlaces, texto enriquecido (D-025/D-030), fechas e ids de mensaje |
+| `05-session.js` | Sesión, JWT de identidad, `reset()` y arranque |
+| `06-state.js` | Mensajes y conversaciones en memoria, cambio de conversación |
+| `07-net.js` | Sondeo adaptativo (TD-001) y envío de mensajes |
+| `08-render.js` | `render()`, transiciones entre vistas, nav, franja e inicio |
+| `09-messages.js` | Vista de mensajes, cabecera del hilo y bandeja |
+| `10-form.js` | Formulario de handoff y sus animaciones (D-029/D-031) |
+| `11-bubbles.js` | Burbujas, fuentes, botones sugeridos, enlaces y notas de sistema |
+| `12-composer.js` | Compositor, Centro de Ayuda, `setOpen`/`setView` y `boot()` |
+| `13-styles.js` | El CSS del Shadow DOM |
+| `14-mount.js` | Montaje, foco, desmontaje y la superficie `window.Subastin` |
+
 ## Diseño
 
 Sigue el design system **Concorde/VMC**, el mismo de la app del asesor: los tokens son copia de

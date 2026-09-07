@@ -34,6 +34,9 @@ jobs:
       - run: ruff check .
       # El widget no tiene tests (JS plano sin build): la sintaxis es lo minimo que CI verifica.
       - run: node --check widget/subastin.js
+      # El bundle se versiona (VMC sirve un solo JS sin build), asi que puede quedar viejo si
+      # alguien edita widget/src/ y no lo regenera. Esto lo detecta antes del merge.
+      - run: node widget/build.mjs --check
 
   test:
     runs-on: ubuntu-latest
