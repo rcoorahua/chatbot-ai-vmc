@@ -147,11 +147,12 @@ export default function ConversationDetailPage() {
   return (
     // Mobile y desktop comparten el mismo esqueleto: la <section> del hilo llena su alto
     // (acotado por <main>) y el ÚNICO scroll es el de los mensajes. Así la cabecera y la
-    // barra de acción quedan fijas —el botón "Tomar" siempre abajo— sin `position:fixed`.
-    // El panel de contexto es un <aside> a la derecha en desktop; en mobile no existe, su
-    // contenido va como bloque plegable al inicio del hilo.
-    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
+    // barra de acción quedan fijas —el botón "Tomar" pegado al borde inferior— sin
+    // `position:fixed`. En mobile la tarjeta sangra hasta los bordes de <main> (bleed con
+    // margen negativo) para que la barra de acción quede a ras de la pantalla. El panel de
+    // contexto es un <aside> en desktop; en mobile va como bloque plegable al inicio del hilo.
+    <div className="flex min-h-0 flex-1 flex-col gap-4 max-lg:-mx-4 max-lg:-mb-4 sm:max-lg:-mx-6 sm:max-lg:-mb-6 lg:flex-row">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm max-lg:rounded-b-none max-lg:shadow-none">
         <header className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-black/5 px-4 py-3.5 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -232,7 +233,7 @@ export default function ConversationDetailPage() {
           </div>
         </div>
 
-        <footer className="flex-shrink-0 border-t border-black/5 bg-white px-4 py-3 sm:px-5">
+        <footer className="flex-shrink-0 border-t border-black/5 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 lg:pb-3">
           {isPendingUnassigned ? (
             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <p className="text-xs text-neutral-500 sm:flex-1 sm:text-sm">
