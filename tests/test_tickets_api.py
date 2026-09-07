@@ -72,6 +72,8 @@ def test_el_caso_del_autenticado_abre_un_ticket_clasificado(client, limpiar):
     assert ticket["title"] == FORMULARIO["subject"]
     assert ticket["description"] == FORMULARIO["detail"]
     assert ticket["user_email"] == "jorge@example.test" and ticket["user_type"] == "AUTHENTICATED"
+    # D-010: el CUU viaja del JWT a la conversacion, y de ahi al ticket.
+    assert ticket["user_cuu"] == "ZEEJ7K"
     assert ticket["handoff_reason"] == "user_form"
 
 

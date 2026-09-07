@@ -157,6 +157,10 @@ El JWT lo firma el backend de VMC con **HS256** y el secreto compartido `VMC_IDE
 | `exp` | sí | caducidad (recomendado: la de la sesión de VMC o menos) |
 | `name` | no | saludo por nombre en el widget y nombre para el asesor |
 | `email` | no | contacto para el asesor (copia mínima, RF-051) |
+| `cuu` | no | código de usuario que VMC le muestra a la persona (`ZEEJ7K`). El asesor lo ve para ubicarla en VMC; **solo se muestra**, no se busca ni se autentica por él (D-010) |
+
+`sub` puede venir como texto o como número (el JWT real de VMC manda `sub: "215011"` y
+`user_id: 215011`); los claims que Subastín no conoce se ignoran.
 
 Ejemplo en PHP (Laravel, `firebase/php-jwt`) y en Node:
 

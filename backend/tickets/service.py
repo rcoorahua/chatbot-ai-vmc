@@ -111,6 +111,7 @@ def open_ticket(conversation: Conversation, *, description: str | None = None) -
         user_type=str(conversation.user_type),
         user_id=conversation.user_id,
         user_email=conversation.user_email,
+        user_cuu=conversation.user_cuu,
         status=TicketStatus.PENDING,
         problem_type=suggestion.problem_type,
         category=spec.category,

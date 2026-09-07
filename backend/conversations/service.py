@@ -117,6 +117,7 @@ def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]
             user_id=identity.user_id,
             user_name=identity.name,
             user_email=identity.email,
+            user_cuu=identity.cuu,
             last_message_at=now,
             created_at=now,
             updated_at=now,
@@ -129,12 +130,17 @@ def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]
 
     if _profile_changed(existing, identity):
         repository.update_user_profile(
-            conversation_id, user_name=identity.name, user_email=identity.email, updated_at=now
+            conversation_id,
+            user_name=identity.name,
+            user_email=identity.email,
+            user_cuu=identity.cuu,
+            updated_at=now,
         )
         existing = existing.model_copy(
             update={
                 "user_name": identity.name or existing.user_name,
                 "user_email": identity.email or existing.user_email,
+                "user_cuu": identity.cuu or existing.user_cuu,
                 "updated_at": now,
             }
         )
@@ -143,8 +149,13 @@ def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]
 
 def _profile_changed(conversation: Conversation, identity: VmcIdentity) -> bool:
     """VMC manda; si el usuario cambio de nombre o correo, la copia local se actualiza."""
-    return (identity.name is not None and identity.name != conversation.user_name) or (
-        identity.email is not None and identity.email != conversation.user_email
+    return any(
+        nuevo is not None and nuevo != actual
+        for nuevo, actual in (
+            (identity.name, conversation.user_name),
+            (identity.email, conversation.user_email),
+            (identity.cuu, conversation.user_cuu),
+        )
     )
 
 
@@ -406,6 +417,7 @@ def request_handoff(
         user_id=thread.user_id,
         user_name=thread.user_name,
         user_email=thread.user_email or clean.email,
+        user_cuu=thread.user_cuu,
         user_company=thread.user_company,
         title=clean.subject,
         source_conversation_id=thread.conversation_id,

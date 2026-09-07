@@ -409,6 +409,22 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   `tests/test_ai_worker_related.py` (clic del asesor), `tests/test_advisor_api.py` (toma
   del anónimo), `tests/test_forms.py`.
 
+- **D-010 Campos de usuario que llegan de VMC (2026-09-07, Aaron)**: el JWT de identidad trae
+  `sub` (texto) y `user_id` (número) con el id VMC, `email` y **`cuu`** — el código que la
+  plataforma le muestra a la persona (`ZEEJ7K`) y que dice por teléfono. Se guardan **CUU,
+  user_id y correo** en `Conversation` y en `Ticket` (`user_cuu`), y el asesor los ve en la
+  ficha de la conversación. **El nombre NO viene del JWT** (el payload real no lo manda): es
+  algo que el KAM asigna en la conversación si quiere, así que `user_name` sigue existiendo
+  pero vacío mientras VMC no mande `name`. El CUU es **solo para mostrar**: no hay GSI ni
+  búsqueda por él, y nunca es credencial — es visible para el usuario y no prueba nada; quien
+  identifica es `user_id`, que sale del JWT firmado. **Sin cambio de esquema en DynamoDB**:
+  son atributos que no son clave, así que ni el stack ni `local_setup.py` se tocan. Código:
+  `core/auth.py` (`VmcIdentity.cuu`, `_clean_id` acepta el claim numérico),
+  `conversations/{models,service,repository}.py`, `tickets/{models,service}.py`,
+  `api/schemas.py`, `frontend/src/lib/types.ts` y la ficha del asesor. Contrato para VMC en
+  `widget/README.md`. Tests: `tests/test_core_auth.py`, `tests/test_chat_conversations.py`,
+  `tests/test_tickets_api.py`.
+
 ## Decisiones de NEGOCIO abiertas (D-xxx) — responsables: Silvana + Julio
 
 Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
@@ -417,7 +433,6 @@ Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
 |---|---|---|---|
 | D-008 | Taxonomía de problemas/tickets y campos | Alta | Campos definitivos y SLA por tipo. **Propuesta de Aaron IMPLEMENTADA** (2026-09-02) en `backend/tickets/taxonomy.py`: 12 `problem_type` del corpus con categoría, prioridad y datos mínimos (MAPEO.md §8). El módulo Tickets ya corre con ella; cerrar la decisión = editar ESE archivo. **Sigue abierta**: la validan Silvana + Julio contra los motivos reales de Intercom |
 | D-009 | Tags de negocio | Media | Tickets |
-| D-010 | Campos de usuario VMC visibles/usables | Alta | F5, vista asesor |
 | D-011 | Contrato HERALD (endpoints, auth, filtros) | Alta | F4 |
 | D-012 | Fallback cuando HERALD caído | Media | F4 |
 | D-013 | Métricas exactas del dashboard | Media | F7 |
@@ -425,7 +440,7 @@ Detalle en [REQUERIMENTS.md](docs/REQUERIMENTS.md) §6 y PLAN.md §9.
 | D-015 | Procesamiento de imágenes para IA (modelo, resize) | Media | F6 |
 | D-016 | Canal Slack y formato de notificación | Baja | worker-notify |
 
-D-001…D-007, D-017, D-019, D-020, D-021…D-031 **cerradas** (arriba); D-018 provisional.
+D-001…D-007, D-010, D-017, D-019, D-020, D-021…D-031 **cerradas** (arriba); D-018 provisional.
 D-027 quedó **implementada** el 2026-09-01 (T-09 hecho) con los topes **apagados en dev**
 (`AI_QUOTA_* = 0`); en stage/prod se encienden por variables de entorno.
 
@@ -469,7 +484,7 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Estado por fase: **F1 (chat + identidad + persistencia) implementada** —
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
-  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
+  `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008).
   **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` (la entrada; desde 2026-09-07 las piezas viven en `workers/ai/`: `trace`, `state`, `window`, `accounting`, `replies`, `faq`, `guided`, con dependencias en un sentido) compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:

@@ -39,6 +39,9 @@ class Ticket(DynamoModel):
     user_type: UserType = UserType.AUTHENTICATED
     user_id: str | None = None
     user_email: str | None = None
+    # D-010: copia del CUU de la conversacion, para que el asesor identifique al usuario en VMC
+    # sin salir del ticket. Solo para mostrar (sin GSI); ver Conversation.user_cuu.
+    user_cuu: str | None = None
 
     status: TicketStatus = TicketStatus.PENDING
     # Defaults permisivos a propósito: las filas anteriores a esta taxonomía (dataset de

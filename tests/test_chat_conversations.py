@@ -76,6 +76,31 @@ def test_si_vmc_cambia_el_nombre_la_copia_local_se_actualiza(limpiar):
     assert repository.get_conversation(actualizada.conversation_id).user_name == "Ana Maria"
 
 
+def test_el_cuu_del_jwt_queda_en_la_conversacion(limpiar, tablas):
+    # D-010: el asesor necesita el codigo que el usuario ve en VMC ("ZEEJ7K").
+    identity = _identidad(email="usuario@example.test", cuu="ZEEJ7K")
+
+    conversation, _ = _abrir(limpiar, identity)
+
+    assert conversation.user_cuu == "ZEEJ7K"
+    item = tablas["conversations"].get_item(
+        Key={"conversation_id": conversation.conversation_id}
+    )["Item"]
+    assert item["user_cuu"] == "ZEEJ7K"
+
+
+def test_un_jwt_sin_cuu_no_borra_el_que_ya_estaba(limpiar):
+    # VMC podria dejar de mandarlo en un token puntual; olvidar el dato seria peor que
+    # conservarlo, y `update_user_profile` solo escribe lo que llega.
+    identity = _identidad(cuu="ZEEJ7K")
+    _abrir(limpiar, identity)
+
+    despues, _ = _abrir(limpiar, VmcIdentity(user_id=identity.user_id, name="Ana"))
+
+    assert despues.user_cuu == "ZEEJ7K"
+    assert repository.get_conversation(despues.conversation_id).user_cuu == "ZEEJ7K"
+
+
 # ─────────────────────── AC-C2: el anonimo no conserva ni recupera nada ───────────────────────
 
 
@@ -95,7 +120,7 @@ def test_la_conversacion_anonima_no_guarda_identidad(limpiar, tablas):
         Key={"conversation_id": conversation.conversation_id}
     )["Item"]
 
-    for campo in ("user_id", "user_name", "user_email"):
+    for campo in ("user_id", "user_name", "user_email", "user_cuu"):
         assert campo not in item, f"RF-002/RF-004: el anonimo no entrega {campo}"
 
 
