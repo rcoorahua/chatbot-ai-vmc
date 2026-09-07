@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.agent import usage
-from backend.conversations import repository
+from backend.conversations import service
 from backend.core import auth, jobs
 from backend.core.aws import dynamodb_resource, sqs_client
 from backend.core.config import get_settings
@@ -112,9 +112,9 @@ def ai_usage(
 ) -> AIUsageOut:
     if conversation_id != session.conversation_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conversacion no es de tu sesion")
-    conversation = repository.get_conversation(conversation_id)
+    conversation = service.get_conversation(conversation_id)
     if conversation is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada")
+        raise service.ConversationNotFound(conversation_id)
 
     executions = [ExecutionOut(**item) for item in usage.list_executions(conversation_id, limit)]
     ai_calls = [e for e in executions if e.provider != usage.NO_PROVIDER]

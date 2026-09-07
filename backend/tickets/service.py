@@ -67,6 +67,10 @@ class TicketAlreadyClosed(RuntimeError):
     """El ticket ya está cerrado: no se reabre ni se vuelve a cerrar (se responde 409)."""
 
 
+def get_ticket(ticket_id: str) -> Ticket | None:
+    return repository.get_ticket(ticket_id)
+
+
 def for_conversation(conversation_id: str) -> Ticket | None:
     """El ticket de una conversación: por PK (id determinista, lectura fuertemente
     consistente) y, de respaldo, por el GSI para tickets con id propio (datos sembrados a
