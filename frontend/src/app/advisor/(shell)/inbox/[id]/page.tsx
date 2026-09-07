@@ -145,9 +145,12 @@ export default function ConversationDetailPage() {
   const canReply = !assignedToOther && conversation.status === "IN_ATTENTION";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl bg-white shadow-sm">
-        <header className="flex items-center justify-between gap-3 border-b border-black/5 px-5 py-4">
+    // Mobile: una sola columna que scrollea con <main> (nada de scroll interno anidado, que
+    // en pantallas cortas colapsaba el hilo y dejaba el botón de acción flotando sobre la
+    // tarjeta de contexto). Desktop (lg): vuelve el cockpit de alto fijo con scroll propio.
+    <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:flex-row">
+      <section className="flex min-w-0 flex-col rounded-2xl bg-white shadow-sm lg:min-h-0 lg:flex-1">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-black/5 bg-white px-5 py-4 lg:static">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/advisor/inbox"
@@ -184,7 +187,7 @@ export default function ConversationDetailPage() {
           )}
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto px-5 py-4">
+        <div className="flex flex-col gap-3 px-5 py-4 lg:min-h-0 lg:flex-1 lg:justify-end lg:overflow-y-auto">
           {actionError && <p className="text-center text-xs text-[#9A4A0F]">{actionError}</p>}
           {messages.map((message, i) => {
             const prev = messages[i - 1];
@@ -220,12 +223,27 @@ export default function ConversationDetailPage() {
           )}
         </div>
 
-        <footer className="border-t border-black/5 px-5 py-4">
+        <footer className="sticky bottom-0 z-20 border-t border-black/5 bg-white px-5 py-4 lg:static">
           {isPendingUnassigned ? (
             <div className="flex flex-col gap-3 rounded-2xl bg-[color:var(--vmc-color-orange-600)]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-[#9A4A0F]">
-                Nadie ha tomado este caso todavía. Tómalo para poder responder (RF-029).
-              </p>
+              <div className="min-w-0">
+                {/* En mobile el contexto de la derivación queda fuera de vista (aside abajo);
+                    se repite acá, junto a la decisión de tomar el caso. */}
+                {conversation.handoff_reason && (
+                  <p className="text-sm font-semibold text-[#9A4A0F] lg:hidden">
+                    {handoffReasonLabel(conversation.handoff_reason)}
+                    {conversation.handoff_requested_at && (
+                      <span className="font-normal">
+                        {" "}
+                        · esperando {formatWaitTime(conversation.handoff_requested_at, now)}
+                      </span>
+                    )}
+                  </p>
+                )}
+                <p className="text-sm text-[#9A4A0F]">
+                  Nadie ha tomado este caso todavía. Tómalo para poder responder (RF-029).
+                </p>
+              </div>
               <Button variant="secondary-sm" onClick={() => void handleTake()} disabled={taking}>
                 {taking ? "Tomando…" : "Tomar conversación"}
               </Button>
