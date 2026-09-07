@@ -7,8 +7,8 @@ services:
     # -sharedDb es obligatorio: sin el, DynamoDB Local crea una base distinta
     # por par de credenciales y las tablas "desaparecen" entre ejecuciones.
     # -inMemory evita el volumen: los datos de dev se pierden al reiniciar el
-    # contenedor, que es lo que queremos aqui (el script que crea las 5 tablas
-    # del MVP llega en F1). Un volumen montado se crea como root y el
+    # contenedor, que es lo que queremos aqui (scripts/local_setup.py crea las 6
+    # tablas cada vez). Un volumen montado se crea como root y el
     # proceso, que corre como uid 1000, no puede escribir su archivo SQLite.
     command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
     working_dir: /home/dynamodblocal

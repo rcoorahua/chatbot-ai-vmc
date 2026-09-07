@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# Un push nuevo a la misma rama cancela la corrida anterior (antes PR + push a develop corrian
+# el CI dos veces por el mismo commit).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -19,8 +25,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ruff
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      # Misma version que requirements-lock.txt: un ruff mas nuevo en CI estrenaba reglas que
+      # el lint local no veia.
+      - run: pip install ruff==0.16.5
       - run: ruff check .
+      # El widget no tiene tests (JS plano sin build): la sintaxis es lo minimo que CI verifica.
+      - run: node --check widget/subastin.js
 
   test:
     runs-on: ubuntu-latest
@@ -48,7 +61,38 @@ jobs:
           cache: pip
       - run: pip install -r requirements-lock.txt
       - run: pip install -e . --no-deps
+      # Los `services` no tienen healthcheck (dynamodb-local no trae curl): se espera desde el
+      # runner a que ambos acepten conexiones, si no `conftest` falla duro en CI por un arranque
+      # lento y no por una regresion.
+      - name: Esperar a dynamodb-local y localstack
+        run: |
+          for i in $(seq 1 30); do
+            # Sin -f: dynamodb-local responde 400 a un GET / y `curl -f` lo trata como
+            # fallo, asi que el bucle no terminaba nunca. Lo que se comprueba aqui es que
+            # el puerto acepte conexiones, no el codigo HTTP.
+            curl -s -o /dev/null http://localhost:8001 && curl -sf http://localhost:4566/_localstack/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "los servicios no respondieron a tiempo" && exit 1
       - run: python -m pytest -q
+
+  # CLAUDE.md ("Comandos"): `npm run lint` y `npm run build` son parte de lo que se exige antes
+  # de mergear en frontend/; sin este job solo se corrian a mano.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
 
   # infra/tests corre primero (aws_cdk.assertions, sin Docker) y luego valida la infra sin
   # desplegar. Docker está disponible en el runner para el bundling de PythonFunction. No usa

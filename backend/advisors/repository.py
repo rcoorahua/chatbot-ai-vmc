@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from backend.advisors.models import Advisor
 from backend.core.aws import dynamodb_resource
 from backend.core.config import get_settings
+from backend.core.dynamo import is_condition_failure
 
 
 def _table():
@@ -31,7 +32,7 @@ def create_advisor(advisor: Advisor) -> bool:
             Item=advisor.to_item(), ConditionExpression="attribute_not_exists(advisor_id)"
         )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+        if is_condition_failure(exc):
             return False
         raise
     return True

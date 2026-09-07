@@ -29,13 +29,14 @@ from backend.conversations.models import (
     MessageType,
 )
 from backend.core.clock import utc_now_iso
+from backend.core.ids import deterministic_id
+from backend.core.metadata import FORM_RESPONSE
 from backend.tickets import repository
 from backend.tickets.models import ClassificationSource, Ticket
 from backend.tickets.taxonomy import (
     Category,
     Priority,
     ProblemType,
-    Tag,
     TicketStatus,
     missing_data,
     resolve_priority,
@@ -59,15 +60,25 @@ def ticket_id_for_conversation(conversation_id: str) -> str:
     de `create_ticket` es la exclusion mutua real: dos intentos calculan el MISMO id y solo uno
     gana la escritura.
     """
-    return str(uuid.uuid5(_TICKET_NAMESPACE, f"conversation:{conversation_id}"))
+    return deterministic_id(_TICKET_NAMESPACE, f"conversation:{conversation_id}")
 
 
 class TicketAlreadyClosed(RuntimeError):
     """El ticket ya está cerrado: no se reabre ni se vuelve a cerrar (se responde 409)."""
 
 
+def get_ticket(ticket_id: str) -> Ticket | None:
+    return repository.get_ticket(ticket_id)
+
+
 def for_conversation(conversation_id: str) -> Ticket | None:
-    return repository.find_by_conversation(conversation_id)
+    """El ticket de una conversación: por PK (id determinista, lectura fuertemente
+    consistente) y, de respaldo, por el GSI para tickets con id propio (datos sembrados a
+    mano). Cerrar el caso leía solo el GSI, eventualmente consistente: un ticket recién
+    creado podía no aparecer y quedar abierto para siempre (auditoría 2026-09-06)."""
+    return repository.get_ticket(
+        ticket_id_for_conversation(conversation_id)
+    ) or repository.find_by_conversation(conversation_id)
 
 
 def open_ticket(conversation: Conversation, *, description: str | None = None) -> Ticket:
@@ -146,7 +157,7 @@ def _form_detail(conversation: Conversation) -> str | None:
         conversations_repository.list_recent_messages(conversation.conversation_id, limit=20)
     ):
         if message.message_type == MessageType.FORM_RESPONSE:
-            values = (message.metadata or {}).get("form_response", {}).get("values", {})
+            values = (message.metadata or {}).get(FORM_RESPONSE, {}).get("values", {})
             return values.get("detail") or message.content
     return None
 
@@ -156,10 +167,12 @@ def list_inbox(
 ) -> list[Ticket]:
     """Bandeja de tickets (RF-032 aplicado a tickets): por estado, o los de un asesor."""
     if advisor_id:
-        mios = repository.find_by_advisor(advisor_id, limit=limit)
-        if status is not None:
-            return [t for t in mios if t.status == status]
-        return [t for t in mios if t.status != TicketStatus.CLOSED]
+        return repository.find_by_advisor(
+            advisor_id,
+            limit=limit,
+            status=str(status) if status is not None else None,
+            exclude_closed=status is None,
+        )
     return repository.list_inbox(str(status) if status else None, limit=limit)
 
 
@@ -171,14 +184,29 @@ def assign(conversation: Conversation, *, advisor_id: str) -> Ticket | None:
     conversación, y el ticket solo refleja lo que allí quedó decidido.
     """
     ticket = ensure_ticket(conversation)
-    if ticket is None or ticket.status == TicketStatus.CLOSED:
-        return ticket
+    if ticket is None:
+        return None
     now = utc_now_iso()
-    changes = {
+    changes: dict = {
         "status": str(TicketStatus.IN_PROGRESS),
         "assigned_advisor_id": advisor_id,
         "updated_at": now,
     }
+    if ticket.status == TicketStatus.CLOSED:
+        # Un hilo tomado por segunda vez (D-022/D-023: se tomó, se cerró, volvió al bot y se
+        # vuelve a tomar) REABRE su ticket: el id es determinista por conversación, así que
+        # no hay otro registro donde anotar la nueva atención. Antes quedaba un ticket CLOSED
+        # colgando de una conversación IN_ATTENTION y el asesor no podía tocarlo (auditoría
+        # 2026-09-06). Condicional sobre CLOSED: si otro request ya lo reabrió, no se pisa.
+        changes.update({"assigned_at": now, "resolution": None, "closed_by": None,
+                        "closed_at": None})
+        return (
+            repository.update_ticket(
+                ticket.ticket_id, changes, expected_status=str(TicketStatus.CLOSED)
+            )
+            or repository.get_ticket(ticket.ticket_id)
+            or ticket
+        )
     if ticket.assigned_at is None:
         changes["assigned_at"] = now
     return repository.update_ticket(ticket.ticket_id, changes) or ticket
@@ -246,15 +274,3 @@ def close(ticket: Ticket, *, advisor_id: str, resolution: str | None = None) -> 
         raise TicketAlreadyClosed(ticket.ticket_id)
     return updated
 
-
-__all__ = [
-    "Tag",
-    "TicketAlreadyClosed",
-    "assign",
-    "close",
-    "ensure_ticket",
-    "for_conversation",
-    "list_inbox",
-    "open_ticket",
-    "reclassify",
-]

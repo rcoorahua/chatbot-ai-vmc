@@ -170,7 +170,7 @@ def test_health_y_el_preflight_no_se_registran(client, caplog):
 # ───────────────────────── Integración con la app real ─────────────────────────
 
 
-def test_la_app_real_registra_el_403_de_una_conversacion_ajena(caplog):
+def test_la_app_real_registra_el_401_de_un_hilo_pedido_sin_token(caplog):
     """La pregunta que motivó esto: "¿por qué el widget no carga el hilo?" ahora tiene
     respuesta en el log sin reproducir nada."""
     from backend.api.main import app as app_real

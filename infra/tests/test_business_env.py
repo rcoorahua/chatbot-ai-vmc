@@ -39,9 +39,30 @@ def test_anon_session_limit_matches_paso_11_no_es_cero():
     assert int(BUSINESS_ENV["ANON_SESSIONS_PER_IP_PER_DAY"]) > 0
 
 
+def _env_example() -> dict[str, str]:
+    """`.env.example` (raiz del repo) como dict: es la fuente de los valores de dev."""
+    values = {}
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    for line in example.read_text("utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+def test_rag_calibration_matches_env_example():
+    # CLAUDE.md "RAG": el umbral y el margen estan calibrados contra el indice real; si se
+    # recalibran en .env.example, stage tiene que recibir el mismo numero (auditoria 2026-09-06).
+    example = _env_example()
+    for key in ("RAG_TOP_K", "RAG_MIN_SCORE", "RAG_SIBLING_MARGIN", "PINECONE_INDEX_NAME",
+                "PINECONE_NAMESPACE"):
+        assert BUSINESS_ENV[key] == example[key], key
+
+
 if __name__ == "__main__":
     test_message_length_matches_d005()
     test_ai_quota_matches_d027_business_numbers()
     test_every_value_is_a_string()
     test_anon_session_limit_matches_paso_11_no_es_cero()
+    test_rag_calibration_matches_env_example()
     print("ok")

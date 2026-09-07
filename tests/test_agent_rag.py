@@ -15,27 +15,7 @@ import pytest
 
 from backend.agent import rag
 from backend.core.config import reset_settings
-
-
-class FakeIndex:
-    """Doble del indice: registra como se lo consulto y devuelve una respuesta fija."""
-
-    def __init__(self, hits=None, error=None):
-        self._hits = hits or []
-        self._error = error
-        self.calls = []
-
-    def search(self, **kwargs):
-        self.calls.append(kwargs)
-        if self._error:
-            raise self._error
-        return {"result": {"hits": self._hits}}
-
-
-def _hit(text, score, topic="Comision", url="https://ayuda.vmc.test/comision"):
-    """Forma que devuelve un indice con embedding integrado."""
-    return {"_id": "hc-1", "_score": score, "fields": {
-        "text": text, "topic": topic, "source_url": url}}
+from tests.helpers.fakes import FakeIndex, hit
 
 
 @pytest.fixture
@@ -53,7 +33,7 @@ def fake_index(monkeypatch):
 
 
 def test_la_busqueda_usa_namespace_top_k_y_campos(fake_index):
-    index = fake_index(hits=[_hit("La comision minima es 50 SubasCoins.", 0.9)])
+    index = fake_index(hits=[hit("La comision minima es 50 SubasCoins.", 0.9)])
 
     rag.search("cuanto es la comision")
 
@@ -77,7 +57,7 @@ def test_el_top_k_se_puede_acotar_por_llamada(fake_index):
 
 @pytest.mark.parametrize("question", ["", "   ", None])
 def test_pregunta_vacia_no_consulta(fake_index, question):
-    index = fake_index(hits=[_hit("texto", 0.9)])
+    index = fake_index(hits=[hit("texto", 0.9)])
 
     assert rag.search(question) == []
     assert index.calls == []
@@ -91,7 +71,7 @@ def test_lo_que_no_supera_el_umbral_no_es_evidencia(fake_index, monkeypatch):
     # Centro de Ayuda parece tener evidencia y el bot inventaria una respuesta.
     monkeypatch.setenv("RAG_MIN_SCORE", "0.75")
     reset_settings()
-    index_hits = [_hit("algo poco relacionado", 0.42), _hit("nada que ver", 0.31)]
+    index_hits = [hit("algo poco relacionado", 0.42), hit("nada que ver", 0.31)]
     fake_index(hits=index_hits)
     try:
         assert rag.search("como cambio la llanta de mi carro") == []
@@ -102,7 +82,7 @@ def test_lo_que_no_supera_el_umbral_no_es_evidencia(fake_index, monkeypatch):
 def test_lo_que_supera_el_umbral_se_devuelve_ordenado(fake_index, monkeypatch):
     monkeypatch.setenv("RAG_MIN_SCORE", "0.5")
     reset_settings()
-    fake_index(hits=[_hit("mejor", 0.91), _hit("peor", 0.55), _hit("descartado", 0.20)])
+    fake_index(hits=[hit("mejor", 0.91), hit("peor", 0.55), hit("descartado", 0.20)])
     try:
         fragments = rag.search("cuanto es la comision")
     finally:
@@ -117,7 +97,7 @@ def test_retrieve_separa_lo_relevante_de_lo_descartado(fake_index, monkeypatch):
     supera el umbral cuenta como evidencia."""
     monkeypatch.setenv("RAG_MIN_SCORE", "0.5")
     reset_settings()
-    fake_index(hits=[_hit("mejor", 0.91), _hit("bajo el umbral", 0.20)])
+    fake_index(hits=[hit("mejor", 0.91), hit("bajo el umbral", 0.20)])
     try:
         resultado = rag.retrieve("cuanto es la comision")
     finally:
@@ -140,7 +120,7 @@ def test_un_fallo_del_proveedor_tampoco_rompe_retrieve(fake_index):
 def test_el_umbral_se_puede_desactivar_para_calibrar(fake_index, monkeypatch):
     monkeypatch.setenv("RAG_MIN_SCORE", "0.9")
     reset_settings()
-    fake_index(hits=[_hit("bajo", 0.2)])
+    fake_index(hits=[hit("bajo", 0.2)])
     try:
         assert len(rag.search("x", min_score=0.0)) == 1
     finally:
@@ -159,7 +139,7 @@ def test_un_fallo_del_proveedor_se_trata_como_falta_de_evidencia(fake_index):
 
 
 def test_un_hit_sin_texto_se_ignora(fake_index):
-    fake_index(hits=[{"_id": "x", "_score": 0.99, "fields": {"text": "   "}}, _hit("bueno", 0.99)])
+    fake_index(hits=[{"_id": "x", "_score": 0.99, "fields": {"text": "   "}}, hit("bueno", 0.99)])
 
     assert [f.text for f in rag.search("x")] == ["bueno"]
 
@@ -183,7 +163,7 @@ def test_acepta_la_forma_clasica_de_la_api_de_vectores(monkeypatch):
 def test_el_fragmento_conserva_su_fuente_y_el_contexto_no_la_incluye(fake_index):
     """D-030: la fuente viaja en el Fragment (para el chip, `agent/related.py`) pero NO en
     el texto que ve el redactor: el modelo ya no escribe enlaces, el widget los dibuja."""
-    fake_index(hits=[_hit("La comision minima es 50 SubasCoins.", 0.95)])
+    fake_index(hits=[hit("La comision minima es 50 SubasCoins.", 0.95)])
 
     fragments = rag.search("cuanto es la comision")
 

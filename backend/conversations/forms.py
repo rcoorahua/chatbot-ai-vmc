@@ -19,8 +19,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from backend.core.metadata import InteractionType, with_interaction
+
 # Tipo de interaccion que el widget sabe dibujar como formulario.
-HANDOFF_FORM = "HANDOFF_FORM"
+HANDOFF_FORM = str(InteractionType.HANDOFF_FORM)
 HANDOFF_FORM_VERSION = 2
 
 MAX_EMAIL_CHARS = 254
@@ -57,14 +59,9 @@ def handoff_form_spec(*, needs_email: bool) -> dict:
         fields.append(_field("email", "Correo", "email", max=MAX_EMAIL_CHARS))
     fields.append(_field("subject", "Asunto", "text", max=MAX_SUBJECT_CHARS))
     fields.append(_field("detail", "Cuéntanos qué pasó", "textarea", max=None))
-    return {
-        "interaction": {
-            "type": HANDOFF_FORM,
-            "version": HANDOFF_FORM_VERSION,
-            "fields": fields,
-            "submit": "Contactar",
-        }
-    }
+    return with_interaction(
+        HANDOFF_FORM, version=HANDOFF_FORM_VERSION, fields=fields, submit="Contactar"
+    )
 
 
 def _field(name: str, label: str, kind: str, *, max: int | None) -> dict:

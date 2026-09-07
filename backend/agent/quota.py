@@ -15,7 +15,8 @@ Reglas (todas configurables; 0 = sin tope, y ASI QUEDA EN DEV por ahora):
 - Autenticado: el doble de cuota, por user_id.
 - Ventanas deslizantes por hora natural y por dia natural (UTC), en la tabla RateLimits
   (PK `USER#…`/`SESSION#…`/`IP#…`, SK `H#2026-09-01T19` / `D#2026-09-01`), con TTL de 48 h
-  en AWS para que DynamoDB borre los contadores solos.
+  en AWS para que DynamoDB borre los contadores solos. La forma de la fila y la tabla viven
+  en `core/counters.py`, compartidos con el tope de casos abiertos (conversations).
 - La IP se guarda SOLO hasheada (HMAC-SHA256 con `IP_HASH_SECRET`, o `SESSION_SIGNING_KEY`
   si no hay): es dato personal y para contar da igual el valor real.
 - Este modulo NUNCA lanza hacia el pipeline: si la tabla falla, el bot responde igual —
@@ -29,20 +30,11 @@ import hmac
 import logging
 from datetime import timedelta
 
-from backend.core.aws import dynamodb_resource
+from backend.core import counters
 from backend.core.clock import epoch_seconds, utc_now, utc_now_iso
 from backend.core.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# TTL de los contadores: la ventana mas larga es un dia; 48 h da margen de sobra para
-# depurar sin acumular filas para siempre.
-_TTL_SECONDS = 48 * 3600
-
-
-def _table():
-    return dynamodb_resource().Table(get_settings().table_rate_limits)
-
 
 def hash_ip(ip: str | None) -> str | None:
     """HMAC de la IP, troncado a 32 hex. None entra, None sale (sin IP no hay contador IP)."""
@@ -70,10 +62,10 @@ def _keys(*, anonymous: bool, user_id: str | None, conversation_id: str,
     """Los contadores que aplican a este actor. Autenticado: solo user_id (preciso y no se
     comparte). Anonimo: sesion + IP hasheada — se agota la primera (D-027)."""
     if not anonymous and user_id:
-        return [f"USER#{user_id}"]
-    keys = [f"SESSION#{conversation_id}"]
+        return [counters.key("USER", user_id)]
+    keys = [counters.key("SESSION", conversation_id)]
     if ip_hash:
-        keys.append(f"IP#{ip_hash}")
+        keys.append(counters.key("IP", ip_hash))
     return keys
 
 
@@ -113,7 +105,7 @@ def exhausted(*, anonymous: bool, user_id: str | None, conversation_id: str,
     limits = _limits(anonymous)
     if limits[0] <= 0 and limits[1] <= 0:
         return False
-    table = _table()
+    table = counters.table()
     try:
         for key in _keys(anonymous=anonymous, user_id=user_id,
                          conversation_id=conversation_id, ip_hash=ip_hash):
@@ -147,10 +139,10 @@ def take_daily_slot(key: str, *, limit: int) -> bool:
         return True
     window = _windows()[1][0]  # la ventana diaria
     try:
-        response = _table().update_item(
+        response = counters.table().update_item(
             Key={"limit_key": key, "window": window},
             UpdateExpression="ADD calls :one SET expires_at = :ttl",
-            ExpressionAttributeValues={":one": 1, ":ttl": epoch_seconds() + _TTL_SECONDS},
+            ExpressionAttributeValues={":one": 1, ":ttl": epoch_seconds() + counters.TTL_SECONDS},
             ReturnValues="UPDATED_NEW",
         )
     except Exception:  # noqa: BLE001 — el contador nunca bloquea (docstring del modulo)
@@ -168,8 +160,8 @@ def spend(*, anonymous: bool, user_id: str | None, conversation_id: str,
     """Registra UNA ejecucion de IA en todas las ventanas del actor (ADD atomico)."""
     if not enabled(anonymous=anonymous):
         return
-    table = _table()
-    expires_at = epoch_seconds() + _TTL_SECONDS
+    table = counters.table()
+    expires_at = epoch_seconds() + counters.TTL_SECONDS
     try:
         for key in _keys(anonymous=anonymous, user_id=user_id,
                          conversation_id=conversation_id, ip_hash=ip_hash):

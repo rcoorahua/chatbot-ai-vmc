@@ -18,82 +18,26 @@ import uuid
 
 import boto3
 import pytest
-from fastapi.testclient import TestClient
 
-from backend.api.main import app
 from backend.api.routers import chat as chat_router
 from backend.core import auth, jobs
 from backend.core.clock import epoch_seconds
 from backend.core.config import get_settings, reset_settings
+from tests.helpers.http import (
+    abrir_sesion,
+    auth_headers,
+    enviar,
+    jwt_vmc,
+)
 
 pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture
-def cola_falsa(monkeypatch):
-    """Registra los jobs que la API intenta encolar, sin SQS."""
-    enviados: list[jobs.AIJob] = []
-    monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", enviados.append)
-    return enviados
-
-
-@pytest.fixture
-def client(cola_falsa):
-    return TestClient(app)
-
-
-@pytest.fixture
-def limpiar(tablas):
-    from boto3.dynamodb.conditions import Key
-
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        for item in tablas["messages"].query(
-            KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-        )["Items"]:
-            tablas["messages"].delete_item(
-                Key={"conversation_id": conversation_id, "message_key": item["message_key"]}
-            )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-
-
-def _jwt_vmc(user_id: str, **claims) -> str:
-    payload = {"sub": user_id, "exp": epoch_seconds() + 600, **claims}
-    return auth.sign_jwt(payload, get_settings().vmc_identity_secret)
-
-
-def _sesion(client, limpiar, user_jwt: str | None = None) -> dict:
-    body = {"user_jwt": user_jwt} if user_jwt else {}
-    response = client.post("/chat/sessions", json=body)
-    assert response.status_code == 201, response.text
-    data = response.json()
-    limpiar(data["conversation"]["conversation_id"])
-    return data
-
-
-def _auth(sesion: dict) -> dict:
-    return {"Authorization": f"Bearer {sesion['token']}"}
-
-
-def _enviar(client, sesion, texto="hola", client_message_id=None) -> dict:
-    response = client.post(
-        f"/chat/conversations/{sesion['conversation']['conversation_id']}/messages",
-        json={
-            "client_message_id": client_message_id or "cli-" + uuid.uuid4().hex,
-            "content": texto,
-        },
-        headers=_auth(sesion),
-    )
-    assert response.status_code == 202, response.text
-    return response.json()
 
 
 # ───────────────────────────── AC-P1: anonimo sin login ─────────────────────────────
 
 
 def test_sesion_anonima_abre_sin_datos(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
 
     assert sesion["user"] == {"type": "ANONYMOUS", "name": None}
     assert sesion["conversation"]["user_type"] == "ANONYMOUS"
@@ -109,13 +53,13 @@ def test_la_sesion_informa_el_limite_de_caracteres(client, limpiar, monkeypatch)
     al widget cortando en el valor viejo sin que nada avisara: el usuario no podria escribir lo
     que el servidor si acepta. Por eso viaja en la sesion.
     """
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     assert sesion["limits"]["max_message_chars"] == get_settings().max_message_chars
 
     monkeypatch.setenv("MAX_MESSAGE_CHARS", "500")
     reset_settings()
     try:
-        assert _sesion(client, limpiar)["limits"]["max_message_chars"] == 500
+        assert abrir_sesion(client, limpiar)["limits"]["max_message_chars"] == 500
     finally:
         monkeypatch.delenv("MAX_MESSAGE_CHARS", raising=False)
         reset_settings()
@@ -127,15 +71,15 @@ def test_la_sesion_trae_el_enlace_para_iniciar_sesion(client, limpiar, monkeypat
     monkeypatch.setenv("VMC_LOGIN_URL", "https://vmc.example.test/login")
     reset_settings()
     try:
-        assert _sesion(client, limpiar)["links"]["login"] == "https://vmc.example.test/login"
+        assert abrir_sesion(client, limpiar)["links"]["login"] == "https://vmc.example.test/login"
     finally:
         monkeypatch.delenv("VMC_LOGIN_URL", raising=False)
         reset_settings()
 
 
 def test_dos_sesiones_anonimas_no_comparten_conversacion(client, limpiar):
-    una = _sesion(client, limpiar)
-    otra = _sesion(client, limpiar)
+    una = abrir_sesion(client, limpiar)
+    otra = abrir_sesion(client, limpiar)
 
     assert una["conversation"]["conversation_id"] != otra["conversation"]["conversation_id"]
 
@@ -146,8 +90,8 @@ def test_dos_sesiones_anonimas_no_comparten_conversacion(client, limpiar):
 def test_sesion_autenticada_queda_asociada_a_la_identidad_vmc(client, limpiar):
     user_id = "vmc_" + uuid.uuid4().hex[:8]
 
-    primera = _sesion(client, limpiar, _jwt_vmc(user_id, name="Aaron", email="a@example.test"))
-    segunda = _sesion(client, limpiar, _jwt_vmc(user_id, name="Aaron", email="a@example.test"))
+    primera = abrir_sesion(client, limpiar, jwt_vmc(user_id, name="Aaron", email="a@example.test"))
+    segunda = abrir_sesion(client, limpiar, jwt_vmc(user_id, name="Aaron", email="a@example.test"))
 
     assert primera["user"] == {"type": "AUTHENTICATED", "name": "Aaron"}, "saludo por nombre"
     assert primera["created"] is True and segunda["created"] is False
@@ -204,37 +148,40 @@ def test_sin_session_signing_key_responde_503_y_no_crea_conversacion(client, mon
 
 
 def test_sin_token_no_hay_acceso(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     conversation_id = sesion["conversation"]["conversation_id"]
 
     assert client.get(f"/chat/conversations/{conversation_id}").status_code == 401
 
 
 def test_una_sesion_no_ve_la_conversacion_de_otra(client, limpiar):
-    mia = _sesion(client, limpiar)
-    ajena = _sesion(client, limpiar)
+    mia = abrir_sesion(client, limpiar)
+    ajena = abrir_sesion(client, limpiar)
     ajena_id = ajena["conversation"]["conversation_id"]
 
-    assert client.get(f"/chat/conversations/{ajena_id}", headers=_auth(mia)).status_code == 403
+    ajena = client.get(f"/chat/conversations/{ajena_id}", headers=auth_headers(mia))
+    assert ajena.status_code == 403
     assert (
-        client.get(f"/chat/conversations/{ajena_id}/messages", headers=_auth(mia)).status_code
+        client.get(
+            f"/chat/conversations/{ajena_id}/messages", headers=auth_headers(mia)
+        ).status_code
         == 403
     )
     assert (
         client.post(
             f"/chat/conversations/{ajena_id}/messages",
             json={"client_message_id": "cli-12345678", "content": "hola"},
-            headers=_auth(mia),
+            headers=auth_headers(mia),
         ).status_code
         == 403
     )
 
 
 def test_la_sesion_ve_su_propia_conversacion(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     conversation_id = sesion["conversation"]["conversation_id"]
 
-    response = client.get(f"/chat/conversations/{conversation_id}", headers=_auth(sesion))
+    response = client.get(f"/chat/conversations/{conversation_id}", headers=auth_headers(sesion))
 
     assert response.status_code == 200
     assert response.json()["conversation_id"] == conversation_id
@@ -244,9 +191,9 @@ def test_la_sesion_ve_su_propia_conversacion(client, limpiar):
 
 
 def test_enviar_persiste_y_encola_un_job(client, limpiar, cola_falsa):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
 
-    aceptado = _enviar(client, sesion, "como participo en una subasta?")
+    aceptado = enviar(client, sesion, "como participo en una subasta?")
 
     assert aceptado["duplicate"] is False
     mensaje = aceptado["message"]
@@ -259,11 +206,11 @@ def test_enviar_persiste_y_encola_un_job(client, limpiar, cola_falsa):
 
 
 def test_el_reintento_no_duplica_ni_reencola(client, limpiar, cola_falsa):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     client_message_id = "cli-" + uuid.uuid4().hex
 
-    primero = _enviar(client, sesion, "hola", client_message_id)
-    segundo = _enviar(client, sesion, "hola", client_message_id)
+    primero = enviar(client, sesion, "hola", client_message_id=client_message_id)
+    segundo = enviar(client, sesion, "hola", client_message_id=client_message_id)
 
     assert segundo["duplicate"] is True
     assert segundo["message"]["message_id"] == primero["message"]["message_id"]
@@ -275,25 +222,27 @@ def test_si_la_cola_falla_el_mensaje_queda_marcado_no_perdido(client, limpiar, m
         raise RuntimeError("SQS no responde")
 
     monkeypatch.setattr(chat_router.jobs, "enqueue_ai_job", cola_caida)
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
 
-    aceptado = _enviar(client, sesion, "hola")
+    aceptado = enviar(client, sesion, "hola")
 
     assert aceptado["message"]["status"] == "QUEUE_FAILED"
     conversation_id = sesion["conversation"]["conversation_id"]
-    listado = client.get(f"/chat/conversations/{conversation_id}/messages", headers=_auth(sesion))
+    listado = client.get(
+        f"/chat/conversations/{conversation_id}/messages", headers=auth_headers(sesion)
+    )
     assert [m["status"] for m in listado.json()["messages"]] == ["QUEUE_FAILED"]
 
 
 def test_el_mensaje_demasiado_largo_es_422(client, limpiar, monkeypatch):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     monkeypatch.setenv("MAX_MESSAGE_CHARS", "5")
     reset_settings()
     try:
         response = client.post(
             f"/chat/conversations/{sesion['conversation']['conversation_id']}/messages",
             json={"client_message_id": "cli-12345678", "content": "demasiado largo"},
-            headers=_auth(sesion),
+            headers=auth_headers(sesion),
         )
     finally:
         reset_settings()
@@ -303,12 +252,12 @@ def test_el_mensaje_demasiado_largo_es_422(client, limpiar, monkeypatch):
 
 @pytest.mark.parametrize("client_message_id", ["corto", "con espacios 123", "x" * 65])
 def test_client_message_id_invalido_es_422(client, limpiar, client_message_id):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
 
     response = client.post(
         f"/chat/conversations/{sesion['conversation']['conversation_id']}/messages",
         json={"client_message_id": client_message_id, "content": "hola"},
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
 
     assert response.status_code == 422
@@ -318,26 +267,28 @@ def test_client_message_id_invalido_es_422(client, limpiar, client_message_id):
 
 
 def test_el_sondeo_con_after_entrega_solo_lo_nuevo(client, limpiar):
-    sesion = _sesion(client, limpiar)
+    sesion = abrir_sesion(client, limpiar)
     conversation_id = sesion["conversation"]["conversation_id"]
-    _enviar(client, sesion, "primero")
+    enviar(client, sesion, "primero")
 
-    todo = client.get(f"/chat/conversations/{conversation_id}/messages", headers=_auth(sesion))
+    todo = client.get(
+        f"/chat/conversations/{conversation_id}/messages", headers=auth_headers(sesion)
+    )
     assert [m["content"] for m in todo.json()["messages"]] == ["primero"]
     cursor = todo.json()["next_after"]
 
-    _enviar(client, sesion, "segundo")
+    enviar(client, sesion, "segundo")
     nuevos = client.get(
         f"/chat/conversations/{conversation_id}/messages",
         params={"after": cursor},
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
     assert [m["content"] for m in nuevos.json()["messages"]] == ["segundo"]
 
     nada = client.get(
         f"/chat/conversations/{conversation_id}/messages",
         params={"after": nuevos.json()["next_after"]},
-        headers=_auth(sesion),
+        headers=auth_headers(sesion),
     )
     assert nada.json()["messages"] == []
     assert nada.json()["next_after"] == nuevos.json()["next_after"], "el cursor no retrocede"

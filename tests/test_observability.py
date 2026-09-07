@@ -40,6 +40,14 @@ def entorno(monkeypatch):
     observability.configure_logging(force=True)
 
 
+def test_un_nivel_invalido_no_tumba_el_arranque(entorno):
+    """Auditoria 2026-09-06: `LOG_LEVEL=DEBUGG` reventaba `setLevel` al importar la API."""
+    entorno("prod", LOG_LEVEL="DEBUGG")
+    observability.reset_logging()
+    observability.configure_logging(force=True)
+    assert logging.getLogger().level == logging.INFO
+
+
 def test_dev_es_detallado_y_prod_sobrio(entorno):
     dev = entorno("dev")
     assert dev.effective_log_level == "DEBUG"

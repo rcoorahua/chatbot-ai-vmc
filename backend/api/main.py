@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
-from backend.api import dev_auth, request_log
+from backend.api import dev_auth, errors, request_log
 from backend.api.routers import advisor, chat, dashboard, dev
 from backend.core.config import get_settings
 from backend.core.observability import configure_logging
@@ -36,6 +36,8 @@ if dev_auth.should_install():
 # EXTERNO y ve todas las respuestas. Instalado antes quedaba por dentro del authorizer de dev y
 # sus 401 no dejaban rastro (se vio al probarlo: `/advisor/*` rechazado y ni una linea).
 request_log.install(app)
+# Excepciones de dominio → HTTP en un solo lugar (api/errors.py); los routers no las mapean.
+errors.install(app)
 
 app.include_router(chat.router)
 app.include_router(advisor.router)

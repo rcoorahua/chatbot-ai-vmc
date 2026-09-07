@@ -262,6 +262,7 @@ def _uso(conv: str, hora: str, eid: str, tipo: str, proveedor: str, modelo: str,
         "provider": proveedor,
         "model": modelo,
         "status": "SUCCESS",
+        "source": "model",  # usage.record_execution: que capa decidio (regla, trivial, modelo)
         "billing_month": MES_FACTURACION,
         "created_at": creado,
         "rag_used": False,
@@ -271,20 +272,24 @@ def _uso(conv: str, hora: str, eid: str, tipo: str, proveedor: str, modelo: str,
     return item
 
 
-# Costos como Decimal: DynamoDB no acepta float (perderia precision en dinero).
+# Costos como Decimal: DynamoDB no acepta float (perderia precision en dinero). Proveedor y
+# modelos como los escribe el worker hoy (TD-008: Gemini clasifica en tier FAST y redacta en
+# ANSWER); el seed traia Haiku y `gemini-2.5-flash`, que ya no existen en core/llm.py.
+CLASSIFIER = "gemini-3.5-flash-lite"
+WRITER = "gemini-3.6-flash"
 AI_USAGE = [
-    _uso("conv_001", "10:00:01", "exec_0101", "CLASSIFICATION", "ANTHROPIC", "claude-haiku-4-5",
+    _uso("conv_001", "10:00:01", "exec_0101", "CLASSIFICATION", "GOOGLE", CLASSIFIER,
          message_id="msg_0101", intent="FAQ", input_tokens=180, output_tokens=12,
          cached_tokens=150, estimated_cost_usd=Decimal("0.000234"), latency_ms=420),
-    _uso("conv_001", "10:00:04", "exec_0102", "RESPONSE", "GOOGLE", "gemini-2.5-flash",
+    _uso("conv_001", "10:00:04", "exec_0102", "RESPONSE", "GOOGLE", WRITER,
          message_id="msg_0101", intent="FAQ", input_tokens=1450, output_tokens=68,
          estimated_cost_usd=Decimal("0.001120"), latency_ms=1830,
          rag_used=True, rag_results_count=3),
-    _uso("conv_002", "11:00:02", "exec_0201", "CLASSIFICATION", "ANTHROPIC", "claude-haiku-4-5",
+    _uso("conv_002", "11:00:02", "exec_0201", "CLASSIFICATION", "GOOGLE", CLASSIFIER,
          message_id="msg_0201", intent="ADVISOR", input_tokens=165, output_tokens=10,
          cached_tokens=150, estimated_cost_usd=Decimal("0.000210"), latency_ms=390,
          handoff_triggered=True),
-    _uso("conv_003", "09:20:03", "exec_0301", "CLASSIFICATION", "ANTHROPIC", "claude-haiku-4-5",
+    _uso("conv_003", "09:20:03", "exec_0301", "CLASSIFICATION", "GOOGLE", CLASSIFIER,
          message_id="msg_0301", intent="OTHER", input_tokens=190, output_tokens=11,
          estimated_cost_usd=Decimal("0.000245"), latency_ms=410, handoff_triggered=True),
 ]

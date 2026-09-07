@@ -15,16 +15,31 @@ import os
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError
+
+from backend.core.config import get_settings
 
 # Timeout corto: si los contenedores no estan arriba, queremos fallar rapido y no colgarnos.
 _CFG = Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 1})
 
 STRING = "S"
 
+# Tablas con TTL sobre `expires_at`, ESPEJO de infra/stacks/subastin_stack.py: la conversacion
+# anonima y sus mensajes caducan solos (D-029/D-031) y los contadores de cuota a las 48 h
+# (D-027). dynamodb-local tambien lo aplica; sin activarlo aqui, ese camino nunca se ejercitaba
+# en dev (auditoria 2026-09-06).
+TABLAS_CON_TTL = ("conversations", "messages", "rate_limits")
+TTL_ATTRIBUTE = "expires_at"
+
 
 def _env(nombre: str, defecto: str) -> str:
-    return os.environ.get(nombre) or defecto
+    """Variable de entorno, o el valor que `Settings` leyo de `.env`, o el default. Antes solo
+    se miraba `os.environ` y un override en `.env` (que el backend SI honra) creaba las tablas
+    con otro nombre del que la API consultaba."""
+    if os.environ.get(nombre):
+        return os.environ[nombre]
+    de_settings = getattr(get_settings(), nombre.lower(), None)
+    return str(de_settings) if de_settings else defecto
 
 
 def nombres_de_tabla() -> dict[str, str]:
@@ -166,8 +181,11 @@ def recurso_dynamo():
 
 
 def crear_tablas(verbose: bool = True) -> None:
-    """Crea las 6 tablas si no existen. Ignora las que ya estan."""
+    """Crea las 6 tablas si no existen (ignora las que ya estan) y activa el TTL donde AWS lo
+    tiene."""
     cliente = cliente_dynamo()
+    nombres = nombres_de_tabla()
+    con_ttl = {nombres[logico] for logico in TABLAS_CON_TTL}
     for definicion in definiciones_de_tabla():
         nombre = definicion["TableName"]
         try:
@@ -181,6 +199,20 @@ def crear_tablas(verbose: bool = True) -> None:
                     print(f"  tabla ya existia: {nombre}")
             else:
                 raise
+        if nombre in con_ttl:
+            _activar_ttl(cliente, nombre)
+
+
+def _activar_ttl(cliente, nombre: str) -> None:
+    """Idempotente: dynamodb-local responde ValidationException si ya estaba activo."""
+    try:
+        cliente.update_time_to_live(
+            TableName=nombre,
+            TimeToLiveSpecification={"Enabled": True, "AttributeName": TTL_ATTRIBUTE},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ValidationException":
+            raise
 
 
 def cliente_sqs():
@@ -214,6 +246,12 @@ def crear_colas_y_bucket(verbose: bool = True) -> None:
             sqs.create_queue(QueueName=cola)
             if verbose:
                 print(f"  cola lista: {cola}")
+                if cola.endswith("ai-jobs"):
+                    # Sin esta variable el mensaje queda QUEUE_FAILED y el bot nunca responde
+                    # (CLAUDE.md "Comandos"): se imprime lista para pegar en .env. Con el
+                    # endpoint de .env y no con la URL que devuelve LocalStack, que usa un
+                    # hostname *.localhost.localstack.cloud que exige DNS de internet.
+                    print(f"    -> en .env: AI_JOBS_QUEUE_URL={endpoint}/000000000000/{cola}")
 
         s3 = boto3.client("s3", endpoint_url=_env("S3_ENDPOINT_URL", endpoint), **comunes)
         bucket = _env("IMAGES_BUCKET", "subastin-dev-images")
@@ -225,7 +263,10 @@ def crear_colas_y_bucket(verbose: bool = True) -> None:
                 raise
         if verbose:
             print(f"  bucket listo: {bucket}")
-    except Exception as e:  # noqa: BLE001 — LocalStack es opcional para las pruebas de Dynamo
+    except (EndpointConnectionError, ConnectTimeoutError) as e:
+        # LocalStack es opcional para las pruebas de Dynamo: solo "no responde" se tolera.
+        # Cualquier OTRO error (permisos, nombre invalido) se propaga: antes se tragaba todo
+        # y el sintoma aparecia despues, en run_ai_worker, con otro mensaje.
         if verbose:
             print(f"  AVISO: LocalStack no disponible ({type(e).__name__}); se omiten SQS y S3")
 
