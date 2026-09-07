@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiErrorMessage, getConversations } from "@/lib/api";
+import { apiErrorMessage, getConversations, getTickets } from "@/lib/api";
 import { STATUS_COLOR, STATUS_DEEP_COLOR } from "@/lib/status-colors";
 import { useAdvisor } from "@/lib/advisor-context";
-import type { Conversation, ConversationStatus } from "@/lib/types";
+import type { Conversation, ConversationStatus, Ticket } from "@/lib/types";
 
 /**
  * Dashboard del KAM (RF-047/048). Dos cards gemelas —mismo ancho, mismo alto, misma lista de
@@ -14,14 +14,17 @@ import type { Conversation, ConversationStatus } from "@/lib/types";
  * etiqueta + valor a la derecha) y la paleta compartida `lib/status-colors`.
  *
  *  - "Resumen del turno": estado de la cola de todo el equipo. Cada fila enlaza a su recorte.
- *  - "Mi rendimiento": lo del asesor logueado, SOLO del día. `GET /advisor/conversations`
- *    capa a 100 por estado y no hace rango de fechas → semana/mes necesitan un endpoint de
- *    métricas (D-013).
+ *  - "Mi rendimiento": lo del asesor logueado, SOLO del día.
  *
- * ponytail: sin ese endpoint, `GET /advisor/conversations` es LA BANDEJA (`service.list_inbox`):
- * sin `status` solo trae PENDING_ADVISOR + IN_ATTENTION, así que se piden los 4 estados por
- * separado (100 c/u) y se mezclan. "Quién cerró" se aproxima con `assigned_advisor_id` porque
- * `closed_by` solo distingue ADVISOR de AUTO, no a la persona.
+ * Fuentes: `GET /advisor/conversations` (los 4 estados) + `GET /advisor/tickets` (abiertos y
+ * cerrados). De los tickets salen prioridad, `classification_source` (indicador de D-008),
+ * `missing_data` (RF-024) y el `closed_by` REAL del asesor. Semana/mes y el tiempo de primera
+ * respuesta siguen necesitando un endpoint de agregación (D-013).
+ *
+ * ponytail: `GET /advisor/tickets` sin filtro solo trae abiertos (PENDING + IN_PROGRESS); los
+ * cerrados se piden aparte (`status=CLOSED`, 100, recientes primero → "cerrados hoy" es
+ * honesto). `GET /advisor/conversations` sin `status` es la bandeja (PENDING_ADVISOR +
+ * IN_ATTENTION), por eso se piden los 4 estados por separado y se mezclan.
  */
 
 const STATUSES: ConversationStatus[] = ["PENDING_ADVISOR", "IN_ATTENTION", "BOT_ATTENDING", "CLOSED"];
@@ -117,13 +120,18 @@ function Card({
 export default function DashboardPage() {
   const { advisor } = useAdvisor();
   const [now] = useState(() => Date.now());
-  const [result, setResult] = useState<{ conversations: Conversation[] } | { error: string } | null>(null);
+  type Loaded = { conversations: Conversation[]; openTickets: Ticket[]; closedTickets: Ticket[] };
+  const [result, setResult] = useState<Loaded | { error: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all(STATUSES.map((status) => getConversations({ status, limit: 100 })))
-      .then((byStatus) => {
-        if (!cancelled) setResult({ conversations: byStatus.flat() });
+    Promise.all([
+      Promise.all(STATUSES.map((status) => getConversations({ status, limit: 100 }))),
+      getTickets({ limit: 100 }),
+      getTickets({ status: "CLOSED", limit: 100 }),
+    ])
+      .then(([byStatus, openTickets, closedTickets]) => {
+        if (!cancelled) setResult({ conversations: byStatus.flat(), openTickets, closedTickets });
       })
       .catch((err: unknown) => {
         if (!cancelled) setResult({ error: apiErrorMessage(err) });
@@ -150,7 +158,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { conversations } = result;
+  const { conversations, openTickets, closedTickets } = result;
   const total = conversations.length;
 
   const handoffs = conversations.filter((c) => c.handoff_requested_at !== null);
@@ -174,14 +182,26 @@ export default function DashboardPage() {
   }
   const repeatUsers = [...convsByUser.values()].filter((n) => n > 1).length;
 
+  // Tickets abiertos (PENDING + IN_PROGRESS): prioridad y clasificación no están en la
+  // conversación. `classification_source === "RULES"` = la propuesta que nadie confirmó (D-008).
+  const openHigh = openTickets.filter((t) => t.priority === "HIGH").length;
+  const unconfirmed = openTickets.filter((t) => t.classification_source === "RULES").length;
+
   // ── Mi rendimiento (hoy) — solo del asesor logueado ──────────────────────────
+  const meId = advisor?.advisor_id;
   const today = new Date(now).toDateString();
   const isToday = (iso: string | null | undefined): boolean => !!iso && new Date(iso).toDateString() === today;
-  const mine = (c: Conversation): boolean => c.assigned_advisor_id === advisor?.advisor_id;
+  const mine = (c: Conversation): boolean => c.assigned_advisor_id === meId;
 
-  const closedToday = conversations.filter((c) => c.status === "CLOSED" && mine(c) && isToday(c.closed_at)).length;
+  // `closed_by` del ticket SÍ es el advisor_id real (a diferencia del de la conversación).
+  const myClosedToday = closedTickets.filter((t) => t.closed_by === meId && isToday(t.closed_at));
+  const closedToday = myClosedToday.length;
+  const closedNoResolution = myClosedToday.filter((t) => !t.resolution).length;
   const inAttention = conversations.filter((c) => c.status === "IN_ATTENTION" && mine(c)).length;
   const receivedToday = conversations.filter((c) => mine(c) && isToday(c.handoff_requested_at)).length;
+  const myMissingData = openTickets.filter(
+    (t) => t.assigned_advisor_id === meId && t.missing_data.length > 0,
+  ).length;
   const myUnread = conversations.filter(
     (c) => c.status === "IN_ATTENTION" && mine(c) && c.unread_count > 0,
   ).length;
@@ -202,6 +222,20 @@ export default function DashboardPage() {
       href: "/advisor/inbox?estado=asesor&sub=pendientes",
     },
     {
+      value: String(openTickets.length),
+      label: "Tickets abiertos",
+      hint: openHigh > 0 ? `${openHigh} de prioridad alta` : "Sin prioridad alta",
+      alert: openHigh > 0,
+      href: "/advisor/inbox?estado=asesor",
+    },
+    {
+      value: String(unconfirmed),
+      label: "Sin confirmar",
+      hint: "Clasificación sugerida sin revisar",
+      alert: unconfirmed > 0,
+      href: "/advisor/inbox?estado=asesor",
+    },
+    {
       value: String(unattended.length),
       label: "Sin leer",
       hint: "Nadie abrió el último mensaje",
@@ -219,9 +253,22 @@ export default function DashboardPage() {
   ];
 
   const rendimiento: RowData[] = [
-    { value: String(closedToday), label: "Cerrados hoy", hint: "Que estaban asignados a ti", alert: false, ok: closedToday > 0 },
+    { value: String(closedToday), label: "Cerrados hoy", hint: "Los cerraste tú", alert: false, ok: closedToday > 0 },
     { value: String(inAttention), label: "En atención", hint: "Asignados a ti ahora", alert: false, ok: inAttention > 0 },
     { value: String(receivedToday), label: "Recibidos hoy", hint: "Te llegaron por derivación", alert: false, ok: receivedToday > 0 },
+    {
+      value: String(myMissingData),
+      label: "Datos pendientes",
+      hint: "Info que aún debes pedir al usuario",
+      alert: myMissingData > 0,
+      href: "/advisor/inbox?estado=asesor&sub=atencion",
+    },
+    {
+      value: String(closedNoResolution),
+      label: "Sin resolución",
+      hint: "Cerrados hoy sin anotar cómo",
+      alert: closedNoResolution > 0,
+    },
     { value: String(myUnread), label: "Sin abrir", hint: "Mensajes en tus casos que no abriste", alert: myUnread > 0 },
   ];
 
@@ -231,7 +278,7 @@ export default function DashboardPage() {
         title="Resumen del turno"
         subtitle="Estado de la cola ahora · todo el equipo"
         rows={turno}
-        note="Sobre lo visible en la bandeja · máx. 100 por estado"
+        note="Bandeja + tickets abiertos · máx. 100 por consulta · taxonomía provisional (D-008)"
       />
       <Card
         title="Mi rendimiento"
