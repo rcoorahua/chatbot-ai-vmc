@@ -67,7 +67,10 @@ jobs:
       - name: Esperar a dynamodb-local y localstack
         run: |
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8001 >/dev/null 2>&1 && curl -sf http://localhost:4566/_localstack/health >/dev/null 2>&1 && exit 0
+            # Sin -f: dynamodb-local responde 400 a un GET / y `curl -f` lo trata como
+            # fallo, asi que el bucle no terminaba nunca. Lo que se comprueba aqui es que
+            # el puerto acepte conexiones, no el codigo HTTP.
+            curl -s -o /dev/null http://localhost:8001 && curl -sf http://localhost:4566/_localstack/health >/dev/null 2>&1 && exit 0
             sleep 2
           done
           echo "los servicios no respondieron a tiempo" && exit 1
