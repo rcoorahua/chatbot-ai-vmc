@@ -16,11 +16,17 @@ ninguna llamada:
   el siguiente paso?" que el redactor prometia y que costaba una llamada de ~1.900 tokens de
   entrada por 30 de salida en cada "si" (medido 2026-09-03, conversacion real).
 
-Lo que NO hace (y se probo): decidir cuando ofrecer un asesor. La primera version ponia un
-boton "Contactar con un asesor" si la respuesta o su evidencia decian "contactanos", y salio
-en "¿como me registro?" porque un fragmento vecino del articulo lo decia. Aaron lo cambio por
-un badge PERMANENTE junto al compositor del widget ("Asesor humano"), que abre el formulario
-de D-029 sin pasar por ningun modelo (`GET /chat/conversations/{id}/handoff/form`).
+Lo que NO hace (y se probo): decidir POR CONTEXTO cuando ofrecer un asesor. La primera
+version ponia un boton "Contactar con un asesor" si la respuesta o su evidencia decian
+"contactanos", y salio en "¿como me registro?" porque un fragmento vecino del articulo lo
+decia. Despues hubo un badge permanente en el compositor del widget que abria el formulario
+sin pasar por el bot; D-031 (2026-09-05, Aaron) lo retiro: el asesor se llega SOLO por la
+conversacion. Por eso, debajo de toda respuesta con evidencia, el ULTIMO boton sugerido es
+siempre "Contactar asesor" (`ADVISOR_OPTION_LABEL`). Su clic se reconoce por ESTRUCTURA
+(`is_advisor_click`: el evento apunta a esa opcion del ultimo mensaje del bot), sin
+clasificador ni modelo — autenticado: formulario (D-029); anonimo: invitacion a iniciar
+sesion. Un "quiero un asesor" escrito de la nada si pasa por el orquestador (reglas o
+modelo), que termina en el mismo sitio.
 
 Modulo puro (regla de `backend/__init__.py`): definiciones y funciones sin I/O. Quien compone
 esto con el repositorio y el widget es `workers/ai_worker.py`.
@@ -43,8 +49,13 @@ from backend.agent.rag import Fragment
 RELATED_QUESTIONS = "RELATED_QUESTIONS"
 # `action_id` del evento del clic (el API lo exige en mayusculas, `InteractionIn`).
 RELATED_ACTION_ID = "RELATED_QUESTION"
-# Cuantos botones como maximo: mas de tres ya no es una sugerencia, es un menu.
+# Cuantas preguntas hermanas como maximo: mas de tres ya no es una sugerencia, es un menu.
 MAX_RELATED = 3
+# El mensaje sugerido de asesor que cierra la lista (D-031). El clic se reconoce por su
+# `value` contra el ultimo mensaje del bot (`is_advisor_click`), no por el texto: asi no
+# toca ningun modelo aunque la etiqueta no caiga en una regla.
+ADVISOR_OPTION_LABEL = "Contactar asesor"
+ADVISOR_OPTION_VALUE = "ADVISOR"
 
 _TRAILING_DECORATION = frozenset({"So", "Sk", "Sm", "Mn", "Cf", "Zs", "Po"})
 
@@ -173,33 +184,34 @@ def related_questions(
     return result
 
 
-def related_metadata(questions: list[str]) -> dict | None:
+def related_metadata(questions: list[str]) -> dict:
     """La metadata del mensaje del bot que el widget dibuja como botones (MAPEO.md §3.1).
 
-    Cada opcion lleva su `query`: es lo que va al RAG al hacer clic, y el servidor lo lee de
+    Cada pregunta lleva su `query`: es lo que va al RAG al hacer clic, y el servidor lo lee de
     AQUI (del mensaje persistido), no del payload del clic — editar el HTML no inventa
-    consultas. Sin `flow_version`: no hay estado que versionar.
+    consultas. Sin `flow_version`: no hay estado que versionar. La ultima opcion es siempre
+    el mensaje sugerido de asesor (D-031), sin `query`: su clic sigue el pipeline como texto.
     """
-    if not questions:
-        return None
+    options = [
+        {"label": question, "value": f"Q{index}", "query": question}
+        for index, question in enumerate(questions, start=1)
+    ]
+    options.append(
+        {"label": ADVISOR_OPTION_LABEL, "value": ADVISOR_OPTION_VALUE, "kind": "handoff"}
+    )
     return {
         "interaction": {
             "type": RELATED_QUESTIONS,
             "action_id": RELATED_ACTION_ID,
-            "options": [
-                {"label": question, "value": f"Q{index}", "query": question}
-                for index, question in enumerate(questions, start=1)
-            ],
+            "options": options,
         }
     }
 
 
-def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> str | None:
-    """La consulta canonica del boton pulsado, si el clic corresponde a los botones que el
-    bot dejo en su ULTIMO mensaje; None en cualquier otro caso (botones viejos, valor
-    inventado, payload malformado). Un clic invalido no es un error: el mensaje sigue el
-    pipeline como texto normal.
-    """
+def _clicked_option(interaction: dict | None, last_bot_metadata: dict | None) -> dict | None:
+    """La opcion pulsada, si el clic corresponde a los botones que el bot dejo en su ULTIMO
+    mensaje; None en cualquier otro caso (botones viejos, valor inventado, payload
+    malformado)."""
     if not isinstance(interaction, dict) or interaction.get("action_id") != RELATED_ACTION_ID:
         return None
     offered = (last_bot_metadata or {}).get("interaction")
@@ -208,6 +220,24 @@ def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> s
     value = interaction.get("value")
     for option in offered.get("options") or []:
         if isinstance(option, dict) and option.get("value") == value:
-            query = option.get("query")
-            return str(query) if query else None
+            return option
     return None
+
+
+def resolve_click(interaction: dict | None, last_bot_metadata: dict | None) -> str | None:
+    """La consulta canonica de la pregunta hermana pulsada, o None (botones viejos, valor
+    inventado, payload malformado, o el boton de asesor, que no tiene `query`). Un clic sin
+    consulta no es un error: el mensaje sigue el pipeline como texto normal.
+    """
+    option = _clicked_option(interaction, last_bot_metadata)
+    query = option.get("query") if option else None
+    return str(query) if query else None
+
+
+def is_advisor_click(interaction: dict | None, last_bot_metadata: dict | None) -> bool:
+    """El usuario pulso "Contactar asesor" bajo el ultimo mensaje del bot (D-031). Se decide
+    por el `value` del evento contra la metadata persistida, nunca por el texto: el camino
+    es gratis (sin clasificador ni modelo) y no depende de que la etiqueta caiga en una
+    regla. Un clic sobre botones viejos devuelve False y el texto sigue como mensaje normal."""
+    option = _clicked_option(interaction, last_bot_metadata)
+    return bool(option) and option.get("value") == ADVISOR_OPTION_VALUE

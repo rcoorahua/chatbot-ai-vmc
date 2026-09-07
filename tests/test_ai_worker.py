@@ -10,9 +10,11 @@ Criterios:
          encendido en todo el camino
   AC-W8  continuidad (2026-09-02): un mensaje que solo tiene sentido pegado al anterior ("ya
          estoy ahi") se busca en el indice CON la pregunta previa del usuario
-  AC-W4  pedir asesor ofrece el formulario (tarjeta HANDOFF_FORM): al anonimo le pide nombre
-         y correo (RF-003), al autenticado solo asunto y detalle (y correo si el JWT no lo
-         trajo). La derivacion real la hace POST /chat/.../handoff, no el worker
+  AC-W4  pedir asesor ofrece el formulario (tarjeta HANDOFF_FORM) al autenticado: asunto y
+         detalle (y correo si el JWT no lo trajo); la derivacion real la hace
+         POST /chat/.../handoff, no el worker. El anonimo (D-031) recibe en su lugar la
+         invitacion fija a iniciar sesion con el boton (interaction LINKS), sin modelo; sin
+         evidencia recibe la MISMA pregunta que el autenticado y su "si" lleva al login
   AC-W5  con el caso en espera, los mensajes se guardan, la IA no responde y el aviso de
          espera sale UNA sola vez (RF-026/RF-027 / AC-004)
   AC-W6  toda decision queda en AIUsage, tambien las gratuitas (llm-cost-optimizer)
@@ -32,7 +34,7 @@ from backend.conversations import forms, repository, service
 from backend.conversations.models import MessageStatus, SenderType
 from backend.core import llm
 from backend.core.auth import VmcIdentity
-from backend.core.config import reset_settings
+from backend.core.config import get_settings, reset_settings
 from backend.core.jobs import AIJob
 from backend.workers import ai_worker
 
@@ -333,6 +335,17 @@ def _confirmacion_ofrecida(conversation_id):
     return ultima, [o["value"] for o in interaction["options"]]
 
 
+def _enlace_de_login(conversation_id):
+    """La ultima respuesta del bot trae el boton "Iniciar sesión" (D-031) y nada mas."""
+    ultima = _respuestas_bot(conversation_id)[-1]
+    interaction = (ultima.metadata or {}).get("interaction") or {}
+    assert interaction.get("type") == "LINKS", ultima.metadata
+    assert interaction["options"] == [
+        {"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}
+    ]
+    return ultima
+
+
 def test_faq_sin_evidencia_pregunta_antes_de_derivar(limpiar, tablas, fake_llm, sin_rag):
     """AC-002 con D-029 revisada (2026-09-02): la recuperacion no trae nada → el bot lo
     reconoce y PREGUNTA si quiere un asesor. Nada de respuesta generada y nada de formulario
@@ -421,19 +434,27 @@ def test_ignorar_la_pregunta_la_descarta_en_vez_de_dejarla_viva(
     assert _respuestas_bot(conversation.conversation_id)[-1].content == fake_llm.answer
 
 
-def test_el_anonimo_tambien_decide_y_su_formulario_pide_contacto(
-    limpiar, fake_llm, sin_rag
+def test_el_anonimo_sin_evidencia_recibe_la_misma_pregunta_y_su_si_lleva_al_login(
+    limpiar, tablas, fake_llm, sin_rag
 ):
+    """D-031: el sistema no distingue al visitante al preguntar "¿deseas contactar a un
+    asesor?"; lo distingue al responder que si: iniciar sesion en vez del formulario."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "cuanto cuesta el tramite de placas en marte?"))
-    ultima, _valores = _confirmacion_ofrecida(conversation.conversation_id)
-    assert ultima.content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE
+    ultima, valores = _confirmacion_ofrecida(conversation.conversation_id)
+    assert ultima.content == prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE and valores == ["YES", "NO"]
 
     conversation = repository.get_conversation(conversation.conversation_id)
     _atiende(_escribe(conversation, "si"))
 
-    _ultima, campos = _formulario_ofrecido(conversation.conversation_id)
-    assert campos == ["name", "email", "phone", "subject", "detail"], "RF-003: contacto"
+    ultima = _enlace_de_login(conversation.conversation_id)
+    assert ultima.content == prompts.ANON_LOGIN_RESPONSE
+    actual = repository.get_conversation(conversation.conversation_id)
+    assert actual.active_flow is None, "la pregunta ya se contesto"
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
+    assert not any(c["tier"] == llm.ModelTier.ANSWER for c in fake_llm.calls)
+    fuentes = {u["source"]: u for u in _usos(tablas, conversation.conversation_id)}
+    assert fuentes["login:faq_no_evidence"]["provider"] == "NONE"
 
 
 # ───────────────────────────── AC-W4: pedir asesor ─────────────────────────────
@@ -459,15 +480,15 @@ def test_pedir_asesor_ofrece_el_formulario_por_regla_sin_modelo(
     assert clasificacion["provider"] == "NONE", "lo resolvio la regla, no el modelo"
 
 
-def test_el_anonimo_que_pide_asesor_recibe_el_formulario_con_correo(limpiar, sin_llm, sin_rag):
+def test_el_anonimo_que_pide_asesor_recibe_el_boton_de_iniciar_sesion(limpiar, sin_llm, sin_rag):
+    """D-031: sin formulario ni datos de contacto; la salida es iniciar sesion en VMC."""
     conversation = _conversacion(limpiar, autenticada=False)
     _atiende(_escribe(conversation, "quiero hablar con un asesor"))
 
     actual = repository.get_conversation(conversation.conversation_id)
-    assert actual.status == "BOT_ATTENDING"
-    ultima, campos = _formulario_ofrecido(conversation.conversation_id)
-    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
-    assert "email" in campos and "name" in campos
+    assert actual.status == "BOT_ATTENDING" and actual.bot_enabled is True
+    ultima = _enlace_de_login(conversation.conversation_id)
+    assert ultima.content == prompts.ANON_LOGIN_RESPONSE
 
 
 def test_catalogo_responde_fijo_mientras_herald_no_exista(limpiar, sin_llm, sin_rag):

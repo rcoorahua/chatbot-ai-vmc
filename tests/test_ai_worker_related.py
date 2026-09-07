@@ -32,7 +32,7 @@ from backend.conversations import repository, service
 from backend.conversations.models import SenderType
 from backend.core import llm
 from backend.core.auth import VmcIdentity
-from backend.core.config import reset_settings
+from backend.core.config import get_settings, reset_settings
 from backend.core.jobs import AIJob
 from backend.workers import ai_worker
 
@@ -45,6 +45,8 @@ PJ = "¿Puedo registrarme como persona jurídica?"
 CLAVE = "He olvidado mi contraseña, ¿cómo puedo recuperar el ingreso a mi cuenta?"
 FORM_Q = "Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?"
 RESPUESTA = "Para registrarte entra a vmcsubastas.com y dale a Regístrate 🙂"
+# D-031: el mensaje sugerido que cierra toda lista de hermanas.
+ASESOR = related.ADVISOR_OPTION_LABEL
 
 
 def _frag(topic, question, score, url=REG_URL, sibling=False):
@@ -185,11 +187,78 @@ def test_la_respuesta_lleva_fuente_y_preguntas_hermanas(limpiar, modelo, indice)
     assert respuesta.metadata["sources"] == [{"title": REG, "url": REG_URL}]
     interaction = respuesta.metadata["interaction"]
     assert interaction["type"] == related.RELATED_QUESTIONS
-    assert [o["label"] for o in interaction["options"]] == [PJ, CLAVE], (
-        "sin la respondida, sin la introduccion, sin el articulo de comision"
+    assert [o["label"] for o in interaction["options"]] == [PJ, CLAVE, ASESOR], (
+        "sin la respondida, sin la introduccion, sin el articulo de comision; el asesor al final"
     )
-    assert all(o["query"] == o["label"] for o in interaction["options"])
+    assert all(o["query"] == o["label"] for o in interaction["options"][:-1])
     assert respuesta.metadata["rag_query"] == "¿Cómo me registro en VMC?"
+
+
+# ───────────── D-031: el ultimo mensaje sugerido es el asesor y su clic va por reglas ─────────────
+
+
+def _clic_de_asesor(conversation):
+    botones = _bot(conversation.conversation_id)[-1].metadata["interaction"]
+    asesor = botones["options"][-1]
+    assert asesor == {"label": ASESOR, "value": related.ADVISOR_OPTION_VALUE, "kind": "handoff"}
+    return _escribe(_fresca(conversation), asesor["label"], interaction={
+        "action_id": botones["action_id"], "value": asesor["value"],
+    })
+
+
+def test_el_clic_en_el_boton_de_asesor_ofrece_el_formulario_sin_modelo(
+    limpiar, modelo, indice, tablas
+):
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    antes = len(modelo.classify_calls())
+
+    click = _clic_de_asesor(conversation)
+    _atiende(click)
+
+    ultima = _bot(conversation.conversation_id)[-1]
+    assert ultima.content == prompts.HANDOFF_OFFER_RESPONSE
+    assert ultima.metadata["interaction"]["type"] == "HANDOFF_FORM"
+    assert len(modelo.classify_calls()) == antes, "se reconoce por estructura, sin modelo"
+    assert [u["source"] for u in _usos(tablas, click.message_id)] == [
+        "handoff_offer:advisor_button"
+    ], "una sola fila, gratis, sin clasificacion"
+
+
+def test_el_visitante_que_pulsa_el_boton_de_asesor_recibe_el_login(
+    limpiar, modelo, indice, tablas
+):
+    conversation = _conversacion(limpiar, anonymous=True)
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    antes = len(modelo.classify_calls())
+
+    click = _clic_de_asesor(conversation)
+    _atiende(click)
+
+    ultima = _bot(conversation.conversation_id)[-1]
+    assert ultima.content == prompts.ANON_LOGIN_RESPONSE
+    assert ultima.metadata["interaction"] == {
+        "type": "LINKS",
+        "options": [{"label": prompts.LOGIN_LINK_LABEL, "url": get_settings().vmc_login_url}],
+    }
+    assert len(modelo.classify_calls()) == antes, "el anonimo tampoco toca ningun modelo"
+    assert [u["source"] for u in _usos(tablas, click.message_id)] == ["login:advisor_button"]
+
+
+def test_un_clic_de_asesor_sobre_botones_viejos_sigue_como_texto(limpiar, modelo, indice):
+    """El usuario dejo los botones atras: el clic ya no corresponde al ultimo mensaje del
+    bot, asi que "Contactar asesor" se atiende como texto (orquestador), nunca como error."""
+    conversation = _conversacion(limpiar)
+    _atiende(_escribe(conversation, "¿Cómo me registro en VMC?"))
+    viejos = _bot(conversation.conversation_id)[-1].metadata["interaction"]
+    _atiende(_escribe(_fresca(conversation), "¿cuánto está el dólar?"))  # sin evidencia
+    llamadas = len(modelo.classify_calls())
+
+    _atiende(_escribe(_fresca(conversation), related.ADVISOR_OPTION_LABEL, interaction={
+        "action_id": viejos["action_id"], "value": related.ADVISOR_OPTION_VALUE,
+    }))
+
+    assert len(modelo.classify_calls()) == llamadas + 1, "sin boton vigente, el texto se clasifica"
 
 
 def test_sin_evidencia_no_hay_fuente_ni_botones_de_hermanas(limpiar, modelo, indice):
@@ -342,4 +411,4 @@ def test_una_pregunta_del_articulo_mas_alla_de_top_k_sale_como_boton(
     labels = [o["label"] for o in
               _bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
     # Por score del indice (el orden real de esa prueba): persona juridica entra tercera.
-    assert labels == [FORM_Q, CLAVE, PJ]
+    assert labels == [FORM_Q, CLAVE, PJ, ASESOR]

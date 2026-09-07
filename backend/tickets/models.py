@@ -38,11 +38,6 @@ class Ticket(DynamoModel):
     user_type: str = "AUTHENTICATED"
     user_id: str | None = None
     user_email: str | None = None
-    # Contacto que dejó el anónimo en el formulario (D-029 / RF-003): es la única forma de
-    # ubicarlo si cerró la pestaña. Dato personal: solo lo ve el asesor, nunca va a logs.
-    contact_name: str | None = None
-    contact_email: str | None = None
-    contact_phone: str | None = None
 
     status: TicketStatus = TicketStatus.PENDING
     # Defaults permisivos a propósito: las filas anteriores a esta taxonomía (dataset de

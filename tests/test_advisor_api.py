@@ -257,6 +257,21 @@ def test_tomar_apaga_el_bot_asigna_y_deja_la_nota_en_el_hilo(client, limpiar):
     assert del_usuario[-1]["content"] == "ADVISOR_ASSIGNED"
 
 
+def test_la_conversacion_de_un_visitante_no_se_toma(client, limpiar):
+    """D-031: al visitante lo atiende SOLO el bot. Ni la toma proactiva (D-022) aplica: el
+    409 devuelve el estado, que sigue con el bot encendido."""
+    _, headers = _asesor_nuevo(client, limpiar, name="Ana Prueba")
+    sesion = _conversacion_de_usuario(client, limpiar, autenticado=False)
+    conv_id = sesion["conversation"]["conversation_id"]
+
+    response = client.post(f"/advisor/conversations/{conv_id}/take", headers=headers)
+
+    assert response.status_code == 409, response.text
+    estado = response.json()["detail"]["conversation"]
+    assert estado["status"] == "BOT_ATTENDING" and estado["bot_enabled"] is True
+    assert estado["assigned_advisor_id"] is None
+
+
 def test_solo_un_asesor_gana_la_toma_y_el_otro_recibe_el_estado_actual(client, limpiar):
     primero, h1 = _asesor_nuevo(client, limpiar)
     segundo, h2 = _asesor_nuevo(client, limpiar)

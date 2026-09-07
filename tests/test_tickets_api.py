@@ -82,7 +82,6 @@ FORMULARIO = {
     "subject": "Ya pagué y no se refleja",
     "detail": "Hice el pago ayer con el código de Pacífico y mi cuenta sigue sin saldo.",
 }
-CONTACTO = {"name": "Ana Torres", "email": "ana@example.test"}
 
 
 def _sesion(client, limpiar, *, autenticado=True) -> dict:
@@ -160,19 +159,6 @@ def test_el_caso_del_autenticado_abre_un_ticket_clasificado(client, limpiar):
     assert ticket["description"] == FORMULARIO["detail"]
     assert ticket["user_email"] == "jorge@example.test" and ticket["user_type"] == "AUTHENTICATED"
     assert ticket["handoff_reason"] == "user_form"
-
-
-def test_el_ticket_del_anonimo_lleva_el_contacto_del_formulario(client, limpiar):
-    sesion = _sesion(client, limpiar, autenticado=False)
-    _handoff(client, sesion, limpiar, **CONTACTO, phone="+51 999 888 777")
-    _, headers = _asesor_nuevo(client, limpiar)
-
-    ticket = _ticket(client, headers, sesion["conversation"]["conversation_id"])
-
-    assert ticket["user_type"] == "ANONYMOUS"
-    assert ticket["contact_name"] == "Ana Torres"
-    assert ticket["contact_email"] == "ana@example.test"
-    assert ticket["contact_phone"] == "+51 999 888 777"
 
 
 def test_un_caso_abre_un_solo_ticket(client, limpiar, tablas):

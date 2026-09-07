@@ -185,8 +185,8 @@ el estado de SU cuenta, esos datos no los ves: ofrece un asesor.
 7. Sin relleno: lo que la pregunta necesita y nada mas. Lo normal son dos o tres frases, o
    una lista corta cuando hay pasos.
 8. Si el contexto manda a "contactarnos", al "chat en linea" o a hablar con el equipo, dilo
-   como "puedes pedir un asesor humano con el boton que esta junto al cuadro de escritura".
-   No inventes correos, telefonos ni horarios de atencion.
+   como "puedes pedir un asesor humano con el boton Contactar asesor que aparece debajo de
+   esta respuesta". No inventes correos, telefonos ni horarios de atencion.
 </conversacion>
 
 <formato>
@@ -302,8 +302,8 @@ CATALOG_FALLBACK_RESPONSE = (
 )
 
 # D-029 (2026-09-02): pedir asesor ya no deriva de inmediato — el bot OFRECE el formulario
-# (tarjeta con asunto y detalle; nombre, correo y telefono si es anonimo, RF-003) y la
-# derivacion ocurre cuando el usuario lo envia. Mientras tanto el bot sigue atendiendo.
+# (tarjeta con asunto y detalle; correo solo si el JWT no lo trajo) y la derivacion ocurre
+# cuando el usuario lo envia. Mientras tanto el bot sigue atendiendo. Solo autenticados.
 HANDOFF_OFFER_RESPONSE = (
     "Claro, te conecto con un asesor del equipo 🙌 "
     "Completa estos datos para que pueda revisar tu caso."
@@ -312,9 +312,10 @@ HANDOFF_OFFER_RESPONSE = (
 # AC-002 (FAQ sin evidencia). Revisado el 2026-09-02: antes esto venia con el formulario
 # pegado y el usuario se encontraba pidiendo asesor sin haberlo pedido. Ahora PREGUNTA, con
 # botones de si/no (flujo HANDOFF_CONFIRM); el formulario sale solo si contesta que si.
+# Mismo texto para el anonimo (D-031): su "si" lleva a iniciar sesion.
 FAQ_NO_EVIDENCE_CONFIRM_RESPONSE = (
-    "No tengo ese dato a la mano y prefiero no darte información incorrecta 🙏 "
-    "¿Quieres que te conecte con un asesor del equipo?"
+    "No te puedo responder eso con seguridad y prefiero no darte información incorrecta 🙏 "
+    "¿Deseas contactar a un asesor del equipo?"
 )
 
 # El modelo NO respondio (cuota, timeout, caida) pero el RAG SI tenia evidencia (2026-09-03,
@@ -339,13 +340,14 @@ HANDOFF_CASE_CONFIRMATION = (
     "Mientras tanto puedes dejar más detalles en este hilo; el asesor los verá todos."
 )
 
-# Handoff del anonimo (en su unica conversacion): se le dice como lo van a contactar y se le
-# invita a crear cuenta, porque sin cuenta esta conversacion no se conserva (RF-004 / D-018).
-HANDOFF_ANON_CONFIRMATION = (
-    "Listo, un asesor se comunicará contigo por aquí o al correo que dejaste 🙌 "
-    "Si cierras esta pestaña la conversación no se conserva: crea tu cuenta en VMC Subastas "
-    "para guardar tus conversaciones y hablar con un asesor cuando quieras."
+# D-031 (2026-09-05, Aaron): el anonimo NO deriva. Cuando pide asesor (o dice que si a la
+# pregunta de asesor) se le invita a iniciar sesion en VMC. El enlace no va en el texto
+# (D-025/D-030): viaja como boton en `metadata.interaction` (tipo LINKS, ai_worker).
+ANON_LOGIN_RESPONSE = (
+    "Para hablar con un asesor primero inicia sesión en VMC Subastas 🙂 Así el equipo puede "
+    "ver tu cuenta y ayudarte mejor. Te espero por aquí cuando vuelvas."
 )
+LOGIN_LINK_LABEL = "Iniciar sesión"
 
 # RF-027 / AC-004: el usuario insiste mientras espera. Se envia UNA sola vez por periodo de
 # espera (flag `wait_message_sent`); los mensajes siguientes se guardan sin respuesta.
@@ -359,8 +361,8 @@ HANDOFF_WAIT_RESPONSE = (
 # funciona incluso agotado, porque esa ruta la deciden las reglas, sin llamar a ningún modelo.
 QUOTA_EXHAUSTED_ANON_RESPONSE = (
     "Ya respondí varias consultas seguidas en esta sesión y llegué a mi límite por ahora 🙏 "
-    "Crea tu cuenta en VMC Subastas o inicia sesión para seguir conversando y poder "
-    "conectarte con un asesor. También puedes volver a escribirme en un rato."
+    "Inicia sesión en VMC Subastas para seguir conversando y poder contactar a un asesor. "
+    "También puedes volver a escribirme en un rato."
 )
 QUOTA_EXHAUSTED_AUTH_RESPONSE = (
     "Llegué a mi límite de respuestas automáticas por ahora 🙏 Si es urgente, dime que "

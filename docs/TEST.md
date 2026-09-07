@@ -5,7 +5,7 @@ Cómo levantar el entorno, resetearlo, y dos baterías de prueba contra el widge
 - **§2 · 50 mensajes sueltos** — cada uno se juzga solo: ¿qué capa lo resolvió y con qué evidencia?
 - **§3 · 30 conversaciones** — secuencias de varios turnos. Aquí viven los bugs que un mensaje
   suelto **no puede** encontrar: continuidad, cambio de tema, flujos interrumpidos, pedir asesor
-  a mitad de camino y el formulario de dos pasos.
+  a mitad de camino y el formulario de asesor.
 
 Para la disciplina de tests automatizados (pytest, cobertura, CI) ver la skill `testing` y
 [CLAUDE.md](../CLAUDE.md); esto es la prueba **a mano**.
@@ -108,8 +108,8 @@ Deben responderse con evidencia del RAG o, en los marcados, por flujo o regla. D
 (D-030) una respuesta con evidencia se ve así: **la respuesta completa** en una burbuja (todos
 los pasos, sin "¿te explico el siguiente?"), **sin URL en el texto**, con **negritas** en los
 nombres de botón y cada paso en su línea, la línea **Fuente: <título del artículo>** debajo
-de la burbuja, y hasta **tres botones** con las otras preguntas del mismo artículo (más el
-botón sólido **Contactar con un asesor** cuando la respuesta manda a contactar al equipo).
+de la burbuja, y hasta **tres botones** con las otras preguntas del mismo artículo más,
+**siempre al final**, el botón sólido **Contactar asesor** (D-031).
 Un solo turno = **una** llamada al redactor en la Consola IA.
 
 | # | Mensaje | Qué esperar |
@@ -206,8 +206,8 @@ artículo correcto entre los descartados.
 | C1 | `Hola como me registro` | **Una sola respuesta con los 4 pasos**, cada uno en su línea con el número resaltado, **negritas** en los nombres de botón ("**Ingresar**", "**Regístrate**") y aire entre bloques; sin "¿te explico el siguiente paso?" y sin URL en el texto. Debajo de la burbuja, la línea **Fuente: ¡Registrarte es fácil y rápido!** (título subrayado, no un botón). Luego los botones **¿Puedo registrarme como persona jurídica?**, **He olvidado mi contraseña…** y **…el formulario me impide realizarlo…** — **nunca** "¿Cómo me registro?" (la respondida), aunque el índice haya puesto persona jurídica primero. Consola IA: 1 clasificación + **1** llamada al redactor (antes eran 4) |
 | C1b | *(tras C1)* pulsar **¿Puedo registrarme como persona jurídica?** | Responde con la **advertencia de la factura** incluida. Consola IA: el turno sale como `related:model`, **sin fila de clasificación**; en el detalle, la consulta del RAG es la pregunta del botón |
 | C1c | *(tras C1)* escribir `¿cuánto es la comisión?` *(sin tocar los botones)* | Tema nuevo: responde de comisión con su propia fuente y sus propias hermanas. Los botones del registro quedan atrás sin más |
-| C1g | `Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?` | La respuesta dice que puede pedir un asesor humano **con el botón junto al cuadro de escritura** (no "contáctanos por el chat en línea" a secas). Los botones de abajo son solo preguntas hermanas: **nunca** un botón de asesor por contexto |
-| C1h | *(en cualquier momento)* pulsar el badge **Asesor humano** junto al emoji | El compositor **se retira hacia abajo** y el formulario de asesor **entra con un fade desde arriba**, al ancho de una burbuja. Consola IA: **cero ejecuciones** (no pasa por el bot ni por ningún modelo); en la pestaña Cola no aparece ningún job. Con la **x** el formulario se va suave y el compositor vuelve subiendo; lo escrito se conserva si lo vuelves a abrir. En un caso con asesor o una conversación derivada, el badge está apagado |
+| C1g | `Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?` | La respuesta dice que puede pedir un asesor humano **con el botón "Contactar asesor" de abajo** (no "contáctanos por el chat en línea" a secas). Los botones son las preguntas hermanas más ese último, siempre: **nunca** uno de asesor por contexto ni un badge en el compositor |
+| C1h | *(tras cualquier respuesta)* pulsar **Contactar asesor** | Sale como mensaje tuyo; Consola IA: **una sola fila** `handoff_offer:advisor_button` (autenticado) o `login:advisor_button` (anónimo), **sin clasificación y sin modelo**. Autenticado: el compositor **se retira hacia abajo** y el formulario **entra con un fade desde arriba**; con la **x** se va suave y el compositor vuelve subiendo. Anónimo: mensaje fijo "primero inicia sesión…" con el botón **Iniciar sesión** |
 | C2 | `¿Cómo me registro en VMC?` → `y luego?` | Red de seguridad: se busca con `metadata.rag_query` de la respuesta anterior (no deriva). El bot puede decir que ya te dio todos los pasos y qué sigue |
 | C3 | `¿Cómo consigno un vehículo?` → `listo` → `y ahora?` | Dos continuaciones seguidas: las dos siguen anclando al tema de la consignación |
 | C4 | `¿Cómo me registro?` → `ok` → `¿cuánto es la comisión?` | "ok" tras una respuesta completa es el **cierre trivial** ("¡Con gusto!", coste 0: la respuesta ya no termina preguntando). La tercera es una pregunta nueva y responde de comisión |
@@ -225,7 +225,9 @@ El bot **nunca pregunta "¿ya tienes cuenta?"**: lo sabe la sesión.
 |---|---|---|
 | C1d | *(anónimo)* `¿cómo participo en una subasta?` → `en vivo` | Asume que **no tiene cuenta**: menciona en una frase que primero debe registrarse (o iniciar sesión si ya la tiene) y sigue con lo que preguntó. No pregunta si tiene cuenta |
 | C1e | *(autenticado)* la misma pregunta | Va directo a participar: **no** menciona el registro ni pregunta por la cuenta |
-| C1f | *(anónimo)* abrir el chat | Franja violeta bajo la cabecera: "Estás como visitante. Inicia sesión en VMC para guardar tu conversación…" con **Entendido**. Al cerrarla no vuelve en esa pestaña (sí en una pestaña nueva). Como autenticado no aparece |
+| C1f | *(anónimo)* abrir el chat | Franja violeta bajo la cabecera: "Estás como visitante: tu conversación dura mientras esta pestaña esté abierta. Para hablar con un asesor, inicia sesión en VMC." con el enlace **Iniciar sesión** y **Entendido**. Al cerrarla no vuelve en esa pestaña (sí en una pestaña nueva). Como autenticado no aparece |
+| C1g | *(anónimo)* `quiero hablar con un asesor` escrito de la nada | Pasa por el orquestador (aquí lo resuelven las reglas; una frase menos obvia iría al clasificador) y, como es anónimo, mensaje fijo "Para hablar con un asesor primero inicia sesión…" con el botón **Iniciar sesión** (abre la URL mock en otra pestaña). El botón **Contactar asesor** da lo mismo pero **sin** clasificar. Sin evidencia: la misma pregunta "¿Deseas contactar a un asesor?" con sí/no; el **sí** (botón o escrito) da el mismo mensaje de iniciar sesión |
+| C1i | *(anónimo, desde la app del asesor)* tomar esa conversación | **409** "las conversaciones de visitantes las atiende solo el bot": la conversación sigue `BOT_ATTENDING` con el bot encendido |
 
 ### 3.2 · Cambio de tema
 
@@ -263,17 +265,16 @@ Regla que se está probando: si el usuario **pide** el asesor, sale el formulari
 | C23 | *(tras C19)* `si` *(escrito, no clic)* | El sí/no también se entiende escrito |
 | C24 | *(tras enviar el formulario)* `una cosa más: ¿me llaman hoy?` | Con el caso esperando asesor, el mensaje **se guarda** y el aviso de espera sale **una sola vez** (RF-027) |
 
-### 3.5 · El formulario, en dos pasos
+### 3.5 · El formulario de asesor (solo autenticado, un paso)
 
 | # | Turnos | Qué esperar |
 |---|---|---|
-| C25 | *(visitante)* `quiero un asesor` | **Paso 1 de 2**: nombre, correo, teléfono (opcional). Botón **Siguiente** en gris. La tarjeta va **centrada** |
-| C26 | *(en el paso 1)* dejar nombre y correo vacíos y pulsar **Siguiente** | No avanza: **los dos** campos ganan a la vez el asterisco rojo y el aviso "Falta llenar este campo" (antes de pulsar no hay asteriscos). Al escribir en uno, su marca se va. El teléfono nunca se marca. La cabecera dice **Datos de contacto · 1/2** |
-| C26b | *(al abrir el formulario, desde el badge o porque el bot lo ofreció)* | Transición con movimiento: los botones de pregunta se **desvanecen**, el compositor **se pliega hacia abajo** (baja su altura, no desaparece de golpe) y el formulario entra con un fade desde arriba **a todo el ancho** del hilo. Con la **x** o al **Contactar**, el compositor **vuelve subiendo** y los botones de pregunta reaparecen con fade |
-| C27 | *(paso 1)* correo `ana-arroba` → Siguiente → completar el paso 2 → Enviar | El servidor rechaza el correo y el widget **vuelve al paso 1** a mostrarlo (no deja un error sobre un campo invisible) |
-| C28 | *(paso 2)* pulsar **Atrás** | Vuelve al paso 1 **con lo escrito intacto** |
-| C29 | *(autenticado)* `quiero un asesor` | **Un solo paso** (el correo ya vino en el JWT): cabecera **Motivo de la consulta** sin "1/2", asunto y mensaje, botón **Contactar** en color primario (ya no "Enviar al asesor"). Pulsarlo vacío marca los dos campos con asterisco y aviso. Mientras el formulario está a la vista **no hay compositor ni botones de pregunta**; la **x** lo cierra y el compositor vuelve subiendo |
-| C30 | *(a mitad del formulario)* minimizar el chat y volver a abrirlo | El formulario sigue ahí, en su paso, con lo escrito |
+| C25 | *(visitante)* `quiero un asesor` | **Sin formulario** (D-031): mensaje fijo "Para hablar con un asesor primero inicia sesión…" y el botón **Iniciar sesión** debajo, que abre la URL mock en otra pestaña. Consola IA: `login:…`, sin modelo, $0 |
+| C26 | *(autenticado)* pulsar **Contactar** con asunto y detalle vacíos | No envía: **los dos** campos ganan a la vez el asterisco rojo y el aviso "Falta llenar este campo" (antes de pulsar no hay asteriscos). Al escribir en uno, su marca se va |
+| C26b | *(cuando el bot ofrece el formulario)* | Transición con movimiento: los botones de pregunta se **desvanecen**, el compositor **se pliega hacia abajo** (baja su altura, no desaparece de golpe) y el formulario entra con un fade desde arriba **a todo el ancho** del hilo. Con la **x** o al **Contactar**, el compositor **vuelve subiendo** y los botones de pregunta reaparecen con fade |
+| C27 | *(autenticado cuyo JWT no trajo correo)* correo `ana-arroba` → Contactar | El campo **Correo** va primero en el mismo paso; el servidor lo rechaza y el aviso sale **debajo de ese campo** |
+| C29 | *(autenticado)* `quiero un asesor` | **Un solo paso**: cabecera **Motivo de la consulta**, asunto y mensaje (y correo si el JWT no lo trajo), botón **Contactar** en color primario. Mientras el formulario está a la vista **no hay compositor ni botones de pregunta**; la **x** lo cierra y el compositor vuelve subiendo |
+| C30 | *(a mitad del formulario)* minimizar el chat y volver a abrirlo | El formulario sigue ahí, con lo escrito |
 | C32 | *(pestaña nueva)* abrir el chat por primera vez | Durante la fracción de segundo antes del "¡Hola! 👋" se ve un **spinner pequeño centrado** en el hilo, no un hilo vacío; el saludo lo reemplaza. Como autenticado con historial, el spinner dura hasta que llegan los mensajes. El orbe de "escribiendo" (al esperar una respuesta) debe verse **vault** de base y de banda, con el magenta y el rosa "live" como acento y borde, no magenta de punta a punta |
 | C31 | *(hilo largo)* enviar `¿Cómo me registro?` y esperar la respuesta | Al llegar, la vista **se desliza suave** hasta dejar el **inicio** del mensaje del bot en la parte de arriba del hilo (se lee desde el principio, no desde el final). Lo propio y la primera apertura siguen aterrizando abajo. Si el usuario había subido a leer, no se mueve y aparece la píldora de "nuevos abajo" |
 
@@ -329,9 +330,7 @@ y usar ese Bearer contra `/advisor/*` (o `http://localhost:8000/docs`).
   ahí (D-007: no se re-enciende solo; para el autenticado el apagado es del **caso**, no del hilo).
 - **Cuota de IA** (T-09/D-027): **apagada en dev** (`AI_QUOTA_* = 0`). Para probarla, pon
   `AI_QUOTA_ANON_PER_HOUR=2` en `.env`, reinicia la API y el worker, y manda 3 preguntas: la
-  tercera recibe el mensaje fijo que invita a crear cuenta.
-- **Tope de handoffs anónimos por IP** (D-029): también apagado en dev
-  (`ANON_HANDOFFS_PER_IP_PER_DAY=`). Ponlo en 1 para ver el 429 del segundo formulario.
+  tercera recibe el mensaje fijo que invita a iniciar sesión (con el botón, D-031).
 
 ## 5. Si el bot no responde
 

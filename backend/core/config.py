@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     # 0 = sin tope, y ASI QUEDA EN DEV (decision de Aaron 2026-09-01: apagado por ahora).
     # Valores decididos para prod: anonimo 10/hora y 20/dia (por sesion Y por hash de IP, se
     # agota la primera); autenticado el doble (20/hora y 40/dia) por user_id. Al agotarse:
-    # respuesta fija que orienta a crear cuenta (anonimo) o pedir asesor (autenticado) — pedir
+    # respuesta fija que orienta a iniciar sesion (anonimo) o pedir asesor (autenticado) — pedir
     # asesor sale por reglas, sin modelo, asi que funciona incluso sin cuota.
     ai_quota_anon_per_hour: int = 0
     ai_quota_anon_per_day: int = 0
@@ -155,14 +155,14 @@ class Settings(BaseSettings):
     # IN_ATTENTION) a la vez. Al llegar al tope, el formulario responde 409 y el widget invita
     # a seguir en un caso abierto. 0 = sin tope.
     max_open_cases_per_user: int = 5
-    # Anonimo: cuantos handoffs por dia acepta una misma IP (hasheada). Frena al que abre
-    # pestañas para inundar la bandeja con correos falsos. 0 = sin tope, y asi queda en dev
-    # (misma politica que AI_QUOTA_*); en stage/prod se enciende por variable de entorno.
-    anon_handoffs_per_ip_per_day: int = 0
+    # D-031 (2026-09-05): el anonimo no deriva; para hablar con un asesor se le manda a
+    # iniciar sesion en VMC. La URL es un MOCK hasta que VMC confirme la real: viaja en la
+    # sesion del widget (franja del visitante) y como boton en la respuesta fija del bot.
+    vmc_login_url: str = "https://www.vmcsubastas.com/login"
     # DETAILS.md §4.9: sin esto, un script puede llamar POST /chat/sessions sin limite y cada
     # llamada crea una fila Conversation nueva (`service.open_conversation`, sin dedup para el
-    # anonimo) retenida 30 dias. Mismo mecanismo y politica que la linea de arriba (0 = sin
-    # tope en dev, se enciende por variable de entorno en stage/prod).
+    # anonimo) retenida 30 dias. 0 = sin tope, y asi queda en dev (misma politica que
+    # AI_QUOTA_*); en stage/prod se enciende por variable de entorno.
     anon_sessions_per_ip_per_day: int = 0
     # La conversacion anonima (y sus mensajes) caduca sola por TTL de DynamoDB: sin cuenta no
     # hay forma de volver a ella, asi que conservarla mas alla de un margen operativo solo

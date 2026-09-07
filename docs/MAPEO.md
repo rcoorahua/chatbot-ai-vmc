@@ -137,12 +137,15 @@ repetía "¿Cómo me registro?". Los candidatos son **todo** lo que trajo el ín
 (`RagResult.candidates`, incluidos los hits más allá de `top_k`): en la segunda prueba real
 persona jurídica era el quinto hit y se perdía.
 
-**El asesor no se ofrece por contexto.** Se probó un botón "Contactar con un asesor" cuando la
-respuesta o su evidencia decían "contáctanos", y salió en "¿cómo me registro?" porque lo decía
-un fragmento vecino del artículo. En su lugar el widget lleva un **badge permanente "Asesor
-humano"** junto al compositor: pide la tarjeta a `GET /chat/conversations/{id}/handoff/form`
-(la misma spec que deja el bot; 409 con la misma regla que `POST /handoff`) y la muestra en el
-hilo sin mensaje, sin bot y sin modelo. El envío sigue siendo `POST /handoff`.
+**El asesor no se ofrece por contexto, y solo dentro de la conversación (D-031).** Se probó
+un botón "Contactar con un asesor" cuando la respuesta o su evidencia decían "contáctanos", y
+salió en "¿cómo me registro?" porque lo decía un fragmento vecino del artículo. Después hubo
+un badge permanente en el compositor que abría el formulario sin pasar por el bot; D-031 lo
+retiró. Hoy la **última opción** de `RELATED_QUESTIONS` es siempre `{"label": "Contactar
+asesor", "value": "ADVISOR", "kind": "handoff"}`, sin `query`: el worker reconoce el clic por
+su `value` contra el último mensaje del bot (`related.is_advisor_click`), sin clasificador ni
+modelo. Autenticado: formulario (`HANDOFF_FORM`); anónimo: invitación a iniciar sesión con
+botón (`LINKS`). "Quiero un asesor" escrito de la nada sí pasa por el orquestador.
 
 ## 4. El mapeo completo del corpus
 
@@ -230,8 +233,9 @@ corpus, y todas sus preguntas empiezan igual: candidato natural a desambiguar co
 Lo que SÍ limpia el flujo: resolver el paso, handoff, cierre del ticket, guardrail de
 seguridad, o el vencimiento de 24 h.
 
-**Anónimos:** los flujos funcionan igual (son FAQ guiadas, no requieren identidad). El
-handoff sigue las reglas de D-002.
+**Anónimos:** los flujos funcionan igual (son FAQ guiadas, no requieren identidad). Sin
+evidencia al resolver un paso recibe la misma pregunta de asesor; su "sí" lo manda a iniciar
+sesión (D-031).
 
 ## 5. Qué NO es esto
 
