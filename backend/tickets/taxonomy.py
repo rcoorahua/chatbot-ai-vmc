@@ -26,10 +26,10 @@ palabra "reclamo" suelta, que aparece en cualquier queja de pago.
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+from backend.core.text import normalize, phrases
 
 # ───────────────────────────────── Enums de la taxonomía ─────────────────────────────────
 
@@ -311,21 +311,6 @@ def as_catalog() -> dict:
 
 # ───────────────────── Reglas por palabras clave (sugerencia, sin IA) ─────────────────────
 
-_WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(text: str) -> str:
-    """Minúsculas, sin tildes, espacios comprimidos. Misma técnica que `agent/heuristics.py`
-    (no se importa: el dominio no depende de una integración)."""
-    decomposed = unicodedata.normalize("NFKD", text.lower().strip())
-    without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return _WHITESPACE.sub(" ", without_marks)
-
-
-def _any(*items: str) -> tuple[str, ...]:
-    return tuple(normalize(item) for item in items)
-
-
 # Orden = precedencia. Lo legal y lo que tiene plazo va primero; lo genérico, al final. Cada
 # entrada es (regla, tipo, frases); basta que UNA frase aparezca en el texto.
 _RULES: tuple[tuple[str, ProblemType, tuple[str, ...]], ...] = (
@@ -333,69 +318,69 @@ _RULES: tuple[tuple[str, ProblemType, tuple[str, ...]], ...] = (
     (
         "libro_de_reclamaciones",
         ProblemType.FORMAL_COMPLAINT,
-        _any("libro de reclamaciones", "reclamo formal", "presentar un reclamo",
+        phrases("libro de reclamaciones", "reclamo formal", "presentar un reclamo",
              "poner un reclamo", "indecopi", "denuncia formal"),
     ),
     (
         "sancion",
         ProblemType.SANCTION_APPEAL,
-        _any("sancion", "sancionado", "sancionaron", "me penalizaron", "penalidad",
+        phrases("sancion", "sancionado", "sancionaron", "me penalizaron", "penalidad",
              "apelar", "apelacion", "me bloquearon por no pagar", "no pude entrar a la sala"),
     ),
     (
         "falla_plataforma",
         ProblemType.PLATFORM_BUG,
-        _any("no carga", "no me carga", "se cuelga", "se colgo", "error al pujar",
+        phrases("no carga", "no me carga", "se cuelga", "se colgo", "error al pujar",
              "no me deja ofertar", "no me deja pujar", "no entran mis bids", "la sala no",
              "sale error", "me saca de la sala", "pagina caida", "no funciona la sala"),
     ),
     (
         "habilitacion",
         ProblemType.ENABLEMENT_ISSUE,
-        _any("habilitacion", "habilitar", "mis documentos", "subi los documentos",
+        phrases("habilitacion", "habilitar", "mis documentos", "subi los documentos",
              "documentos rechazados", "rechazaron mis documentos", "ya gane y",
              "gane la oferta y", "plazo para pagar", "vence el plazo"),
     ),
     (
         "devolucion",
         ProblemType.REFUND_REQUEST,
-        _any("devolucion", "devuelvan", "devuelvanme", "reembolso", "me devuelven",
+        phrases("devolucion", "devuelvan", "devuelvanme", "reembolso", "me devuelven",
              "quiero mi saldo de vuelta", "retirar mi saldo", "liberar mi consignacion"),
     ),
     (
         "pago",
         ProblemType.PAYMENT_ISSUE,
-        _any("ya pague", "hice el pago", "pague y no", "no se refleja", "no se ha reflejado",
+        phrases("ya pague", "hice el pago", "pague y no", "no se refleja", "no se ha reflejado",
              "codigo de pago", "cobro duplicado", "me cobraron dos veces", "cobraron de mas",
              "mi pago no aparece"),
     ),
     (
         "deuda",
         ProblemType.DEBT_DISPUTE,
-        _any("deuda", "debo", "me sale que debo", "regularizar mi cuenta", "estado de cuenta"),
+        phrases("deuda", "debo", "me sale que debo", "regularizar mi cuenta", "estado de cuenta"),
     ),
     (
         "comprobante",
         ProblemType.RECEIPT_REQUEST,
-        _any("boleta", "factura", "comprobante", "recibo de pago"),
+        phrases("boleta", "factura", "comprobante", "recibo de pago"),
     ),
     (
         "visita",
         ProblemType.VISIT_ISSUE,
-        _any("agendar una visita", "agendar visita", "quiero visitar", "ver el vehiculo",
+        phrases("agendar una visita", "agendar visita", "quiero visitar", "ver el vehiculo",
              "inspeccion mecanica", "peritaje", "no puedo agendar"),
     ),
     (
         "acceso",
         ProblemType.ACCOUNT_ACCESS,
-        _any("no puedo registrarme", "no me deja registrarme", "no puedo entrar a mi cuenta",
+        phrases("no puedo registrarme", "no me deja registrarme", "no puedo entrar a mi cuenta",
              "recuperar mi contraseña", "recuperar contraseña", "no me llega el correo",
              "olvide mi contraseña", "mi usuario no", "persona juridica"),
     ),
     (
         "riesgo_puntos",
         ProblemType.RISK_CATEGORY_DISPUTE,
-        _any("riesgo usuario", "mi riesgo", "puntos vmc", "mis puntos", "canje",
+        phrases("riesgo usuario", "mi riesgo", "puntos vmc", "mis puntos", "canje",
              "categoria de riesgo"),
     ),
 )
@@ -412,12 +397,12 @@ class Suggestion:
 
 
 _TAG_RULES: tuple[tuple[Tag, tuple[str, ...]], ...] = (
-    (Tag.EN_VIVO, _any("en vivo", "envivo", "la sala", "sala de subasta", "remate en vivo")),
-    (Tag.NEGOCIABLE, _any("negociable", "oferta negociable")),
-    (Tag.GANADOR, _any("gane", "ganador", "me adjudicaron", "adjudicado", "ya gane")),
+    (Tag.EN_VIVO, phrases("en vivo", "envivo", "la sala", "sala de subasta", "remate en vivo")),
+    (Tag.NEGOCIABLE, phrases("negociable", "oferta negociable")),
+    (Tag.GANADOR, phrases("gane", "ganador", "me adjudicaron", "adjudicado", "ya gane")),
     (
         Tag.PLAZO_CORRIENDO,
-        _any("plazo", "vence", "se vence", "ultimo dia", "tengo hasta", "me queda poco tiempo"),
+        phrases("plazo", "vence", "se vence", "ultimo dia", "tengo hasta", "me queda poco tiempo"),
     ),
 )
 
@@ -430,8 +415,8 @@ def suggest(text: str) -> Suggestion:
     D-008 sirve. `RECURRENTE` no se detecta aquí (ver `Tag`).
     """
     normalized = normalize(text)
-    tags = tuple(tag for tag, phrases in _TAG_RULES if any(p in normalized for p in phrases))
-    for rule, problem_type, phrases in _RULES:
-        if any(phrase in normalized for phrase in phrases):
+    tags = tuple(tag for tag, lexico in _TAG_RULES if any(p in normalized for p in lexico))
+    for rule, problem_type, lexico in _RULES:
+        if any(phrase in normalized for phrase in lexico):
             return Suggestion(problem_type=problem_type, rule=rule, tags=tags)
     return Suggestion(problem_type=ProblemType.OTHER, rule=None, tags=tags)

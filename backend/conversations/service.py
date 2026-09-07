@@ -35,6 +35,8 @@ from backend.conversations.models import (
 from backend.core.auth import ChatSession, VmcIdentity
 from backend.core.clock import epoch_seconds, minutes_ago_iso, to_iso, utc_now, utc_now_iso
 from backend.core.config import get_settings
+from backend.core.ids import deterministic_id
+from backend.core.metadata import FORM_RESPONSE, SENDER_NAME, TRANSCRIPT
 
 # Namespace fijo para derivar el id de la conversacion del usuario autenticado. Cambiarlo
 # "perderia" todas las conversaciones existentes (seguirian en la tabla, pero nadie las
@@ -86,7 +88,7 @@ def conversation_id_for_user(user_id: str) -> str:
     deja pasar solo a una. Si D-002 cambiara a N conversaciones, esto vuelve a ser aleatorio y
     la busqueda pasa a GSI1.
     """
-    return str(uuid.uuid5(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}"))
+    return deterministic_id(_USER_CONVERSATION_NAMESPACE, f"vmc-user:{user_id}")
 
 
 def open_conversation(identity: VmcIdentity | None) -> tuple[Conversation, bool]:
@@ -149,6 +151,59 @@ def _profile_changed(conversation: Conversation, identity: VmcIdentity) -> bool:
 def _anonymous_ttl() -> int | None:
     days = get_settings().anonymous_conversation_ttl_days
     return epoch_seconds() + days * 86400 if days > 0 else None
+
+
+# La entrada la traduce a 404 sin importar el repository (regla: los routers hablan con el
+# service; el repository es detalle de esta capa).
+ConversationNotFound = repository.ConversationNotFound
+
+
+def get_conversation(conversation_id: str) -> Conversation | None:
+    return repository.get_conversation(conversation_id)
+
+
+def mark_queue_failed(message: Message) -> None:
+    """RNF-003: el mensaje ya es durable; si la cola de IA fallo se marca QUEUE_FAILED para
+    que un barrido lo re-encole (alarma pendiente en RNF-006), nunca un 500 al usuario."""
+    repository.update_message_status(
+        message.conversation_id, message.message_key, MessageStatus.QUEUE_FAILED
+    )
+    message.status = MessageStatus.QUEUE_FAILED  # la respuesta al widget refleja el estado real
+
+
+def get_message(conversation_id: str, message_key: str) -> Message | None:
+    return repository.get_message(conversation_id, message_key)
+
+
+def set_message_status(message: Message, status: MessageStatus) -> None:
+    """Estado tecnico del mensaje (RF-008): el worker lo lleva a PROCESSED o FAILED."""
+    repository.update_message_status(message.conversation_id, message.message_key, status)
+    message.status = status
+
+
+def start_flow(
+    conversation: Conversation, *, flow: str, step: str, expires_at: str
+) -> int | None:
+    """Abre (o mueve) el flujo guiado de la conversacion (D-028): transicion atomica sobre
+    `flow_version`. Devuelve la version nueva, o None si otro proceso movio el flujo antes
+    (rafaga D-020): ese publico los botones, este calla."""
+    return repository.set_flow_state(
+        conversation.conversation_id,
+        flow=flow,
+        step=step,
+        slots={},
+        expires_at=expires_at,
+        expected_version=conversation.flow_version,
+    )
+
+
+def clear_flow(conversation: Conversation) -> bool:
+    """Cierra el flujo guiado (paso resuelto, handoff, guardrail o vencimiento). Sube la
+    version: los botones emitidos para la version cerrada quedan invalidos. False si otro
+    proceso lo movio primero."""
+    return repository.clear_flow_state(
+        conversation.conversation_id, expected_version=conversation.flow_version
+    )
 
 
 def owns(session: ChatSession, conversation: Conversation) -> bool:
@@ -366,14 +421,14 @@ def _form_response_message(
         if v
     }
     metadata: dict = {
-        "form_response": {
+        FORM_RESPONSE: {
             "form": forms.HANDOFF_FORM,
             "version": forms.HANDOFF_FORM_VERSION,
             "values": values,
         }
     }
     if transcript:
-        metadata["transcript"] = transcript
+        metadata[TRANSCRIPT] = transcript
     return Message(
         conversation_id=conversation_id,
         message_key=message_key_for(created_at, message_id),
@@ -441,7 +496,12 @@ class ConversationAlreadyTaken(RuntimeError):
 
 class AnonymousConversation(RuntimeError):
     """D-031: la conversacion de un visitante la atiende SOLO el bot; ningun asesor la toma
-    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion."""
+    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion.
+    Trae la conversacion para que el 409 lleve su estado (como `ConversationAlreadyTaken`)."""
+
+    def __init__(self, conversation: Conversation) -> None:
+        super().__init__("la conversacion de un visitante la atiende solo el bot")
+        self.conversation = conversation
 
 
 def list_inbox(
@@ -472,10 +532,11 @@ def open_thread(
     before: str | None = None,
     after: str | None = None,
     limit: int | None = None,
-) -> tuple[list[Message], bool]:
+) -> tuple[Conversation, list[Message], bool]:
     """El hilo como lo ve el asesor: los ultimos N (RF-033), paginas anteriores con `before`
-    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(mensajes, hay_mas_atras)`.
-    Abrirlo consume los no leidos (RF-035)."""
+    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(conversacion, mensajes,
+    hay_mas_atras)`; abrirlo consume los no leidos (RF-035) y la conversacion devuelta ya lo
+    refleja, para que el router no tenga que rederivarlo."""
     page = limit or get_settings().advisor_thread_page_size
     if after:
         messages = repository.list_messages(conversation.conversation_id, after=after, limit=page)
@@ -486,7 +547,8 @@ def open_thread(
         )
     if conversation.unread_count > 0:
         repository.reset_unread(conversation.conversation_id)
-    return messages, has_more
+        conversation = conversation.model_copy(update={"unread_count": 0})
+    return conversation, messages, has_more
 
 
 def _system_note(
@@ -520,7 +582,7 @@ def take_conversation(
     el estado actual para que la app se actualice sin duplicar atencion. La conversacion de
     un visitante no se toma (D-031)."""
     if conversation.user_type == UserType.ANONYMOUS:
-        raise AnonymousConversation(conversation.conversation_id)
+        raise AnonymousConversation(conversation)
     if conversation.assigned_advisor_id == advisor_id:
         return conversation
     note = _system_note(
@@ -574,7 +636,7 @@ def post_advisor_message(
         content=text,
         client_message_id=client_message_id,
         # El widget muestra el nombre del asesor (como Intercom firma cada respuesta).
-        metadata={"sender_name": advisor_name} if advisor_name else None,
+        metadata={SENDER_NAME: advisor_name} if advisor_name else None,
         created_at=now,
     )
     # Guardas atomicas: sigue asignada a ESTE asesor y no esta cerrada. El chequeo en memoria

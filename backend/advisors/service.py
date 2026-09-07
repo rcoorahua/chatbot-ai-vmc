@@ -13,6 +13,7 @@ from backend.advisors import repository
 from backend.advisors.models import Advisor, AdvisorStatus
 from backend.core.auth import CognitoClaims
 from backend.core.clock import minutes_ago_iso, utc_now_iso
+from backend.core.ids import deterministic_id
 
 # Ventana en la que un asesor ya visto no vuelve a escribir `last_login_at` (ver resolve_advisor).
 _LOGIN_TOUCH_MINUTES = 5
@@ -32,7 +33,7 @@ def advisor_id_for_cognito_sub(cognito_sub: str) -> str:
     `attribute_not_exists(advisor_id)` de `create_advisor` nunca chocaba porque cada intento
     tenia un id distinto. Con el id derivado, chocan de verdad: gana uno solo.
     """
-    return str(uuid.uuid5(_ADVISOR_NAMESPACE, f"cognito-sub:{cognito_sub}"))
+    return deterministic_id(_ADVISOR_NAMESPACE, f"cognito-sub:{cognito_sub}")
 
 
 class AdvisorDisabled(PermissionError):

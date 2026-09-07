@@ -21,17 +21,18 @@ suelta en el body — solo dentro del JWT firmado por VMC (RNF-005, core/auth.py
 """
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from backend.agent import prompts, quota
-from backend.conversations import forms, repository, service
-from backend.conversations.models import Conversation, Message, MessageStatus
+from backend.api.schemas import ConversationOut, MessageAccepted, MessageOut, page_cursors
+from backend.conversations import forms, service
+from backend.conversations.models import Conversation, Message
 from backend.core import auth, jobs
 from backend.core.clock import utc_now_iso
 from backend.core.config import get_settings
+from backend.core.metadata import INTERACTION
 from backend.tickets import service as tickets
 
 logger = logging.getLogger(__name__)
@@ -40,43 +41,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 # ───────────────────────────────── Modelos de entrada/salida ─────────────────────────────────
-
-
-class ConversationOut(BaseModel):
-    conversation_id: str
-    user_type: str
-    kind: str
-    status: str
-    bot_enabled: bool
-    title: str | None = None
-    message_count: int
-    last_message_preview: str | None = None
-    last_message_at: str
-    created_at: str
-    updated_at: str
-    closed_at: str | None = None
-
-    @classmethod
-    def from_model(cls, conversation: Conversation) -> "ConversationOut":
-        return cls(**conversation.model_dump(include=set(cls.model_fields)))
-
-
-class MessageOut(BaseModel):
-    message_id: str
-    message_key: str
-    sender_type: str
-    sender_id: str | None = None
-    message_type: str
-    status: str
-    content: str | None = None
-    client_message_id: str | None = None
-    attachment: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-    created_at: str
-
-    @classmethod
-    def from_model(cls, message: Message) -> "MessageOut":
-        return cls(**message.model_dump(include=set(cls.model_fields)))
 
 
 class SessionIn(BaseModel):
@@ -144,11 +108,6 @@ class MessageIn(BaseModel):
     interaction: InteractionIn | None = None
 
 
-class MessageAccepted(BaseModel):
-    message: MessageOut
-    duplicate: bool
-
-
 class MessagesOut(BaseModel):
     # Estado vigente de la conversacion en cada sondeo: el widget decide con esto la cadencia,
     # el indicador de "escribiendo" y si el compositor sigue abierto (D-029).
@@ -184,28 +143,15 @@ class HandoffOut(BaseModel):
 
 @router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def create_session(body: SessionIn, request: Request) -> SessionOut:
-    identity: auth.VmcIdentity | None = None
-    if body.user_jwt:
-        try:
-            identity = auth.verify_vmc_identity(body.user_jwt)
-        except auth.IdentityError as exc:
-            # Un JWT invalido NO degrada a anonimo en silencio: el widget debe enterarse de que
-            # la identidad no paso, porque un usuario logueado tratado como anonimo perderia
-            # su historial sin explicacion.
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED, f"Identidad VMC invalida: {exc}"
-            ) from exc
-        except auth.IdentityConfigurationError as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    # Un JWT invalido es 401 (api/errors.py): NO degrada a anonimo en silencio, porque un
+    # usuario logueado tratado como anonimo perderia su historial sin explicacion.
+    identity = auth.verify_vmc_identity(body.user_jwt) if body.user_jwt else None
 
     # DETAILS.md §4.2: falla ANTES de abrir la conversacion si falta la clave de sesion — si no,
     # un anonimo sin SESSION_SIGNING_KEY dejaba una fila huerfana en cada intento (el 503 llegaba
     # recien al firmar el token, con la conversacion ya creada). Y antes del tope por IP: un
     # servidor mal configurado no debe gastar el cupo diario del visitante en cada 503.
-    try:
-        auth.ensure_session_signing_configured()
-    except auth.IdentityConfigurationError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    auth.ensure_session_signing_configured()
 
     # DETAILS.md §4.9/Paso 11: cada sesion anonima crea una fila Conversation NUEVA (sin dedup,
     # a diferencia del autenticado con id determinista) retenida 30 dias — un script en bucle
@@ -245,9 +191,9 @@ def _owned_conversation(session: auth.ChatSession, conversation_id: str) -> Conv
     # anonimo es 403, no 404: no se confirma que exista lo que no es suyo.
     if not session.is_authenticated and conversation_id != session.conversation_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conversacion no es de tu sesion")
-    conversation = repository.get_conversation(conversation_id)
+    conversation = service.get_conversation(conversation_id)
     if conversation is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada")
+        raise service.ConversationNotFound(conversation_id)
     if not service.owns(session, conversation):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta conversacion no es de tu sesion")
     return conversation
@@ -281,11 +227,12 @@ def list_messages(
         has_more = False
     else:
         messages, has_more = service.latest_messages(conversation_id, before=before, limit=limit)
+    next_before, next_after = page_cursors(messages, before=before, after=after)
     return MessagesOut(
         conversation=ConversationOut.from_model(conversation),
         messages=[MessageOut.from_model(message) for message in messages],
-        next_after=messages[-1].message_key if messages else after,
-        next_before=messages[0].message_key if messages else before,
+        next_after=next_after,
+        next_before=next_before,
         has_more=has_more,
     )
 
@@ -300,25 +247,12 @@ def request_handoff(
 ) -> HandoffOut:
     """El usuario autenticado envio el formulario de asesor (D-029): 201 con el CASO nuevo.
     409 si no se puede derivar desde aqui (anonimo —D-031—, ya derivada, cerrada, o tope de
-    casos); 422 con `field` si un dato no pasa."""
+    casos); 422 con `field` si un dato no pasa (api/errors.py)."""
     conversation = _owned_conversation(session, conversation_id)
     form = forms.HandoffForm(subject=body.subject, detail=body.detail, email=body.email)
-    try:
-        waiting = service.request_handoff(
-            conversation, form, confirmation=prompts.HANDOFF_CASE_CONFIRMATION
-        )
-    except forms.FormValidationError as exc:
-        raise HTTPException(422, {"detail": str(exc), "field": exc.field}) from exc
-    except service.TooManyOpenCases as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Ya tienes {exc.limit} casos abiertos. Continua en uno de ellos o espera a que "
-            "un asesor lo cierre.",
-        ) from exc
-    except service.HandoffNotAllowed as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Desde esta conversacion no se puede pedir un asesor"
-        ) from exc
+    waiting = service.request_handoff(
+        conversation, form, confirmation=prompts.HANDOFF_CASE_CONFIRMATION
+    )
     # RF-023: el trabajo humano se registra como ticket. Va DESPUES de derivar y fuera de la
     # transaccion a proposito: la conversacion ya es durable y el usuario ya vio su
     # confirmacion, asi que un fallo aqui no puede convertirse en un error para el. La red de
@@ -351,35 +285,19 @@ def post_message(
     conversation_id: str, body: MessageIn, session: auth.CurrentSession, request: Request
 ) -> MessageAccepted:
     conversation = _owned_conversation(session, conversation_id)
-    try:
-        message, created = service.post_user_message(
-            conversation,
-            client_message_id=body.client_message_id,
-            content=body.content,
-            sender_id=session.user_id,
-            metadata=(
-                {"interaction": body.interaction.model_dump(exclude_none=True)}
-                if body.interaction
-                else None
-            ),
-        )
-    except service.MessageTooLong as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except service.EmptyMessage as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except service.ConversationClosed as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Esta conversacion esta cerrada. Abre una nueva."
-        ) from exc
-    except service.RateLimited as exc:
-        # `Retry-After` es el estandar de 429: el widget lo respeta en vez de reintentar solo.
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            "Estas enviando mensajes muy rapido. Espera un momento.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
-    except repository.ConversationNotFound as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversacion no encontrada") from exc
+    # 422 (vacio o muy largo), 409 (cerrada), 429 (rafaga, con Retry-After) y 404 salen de
+    # api/errors.py a partir de las excepciones del servicio.
+    message, created = service.post_user_message(
+        conversation,
+        client_message_id=body.client_message_id,
+        content=body.content,
+        sender_id=session.user_id,
+        metadata=(
+            {INTERACTION: body.interaction.model_dump(exclude_none=True)}
+            if body.interaction
+            else None
+        ),
+    )
 
     # Un reintento no vuelve a encolar: el job del mensaje original ya esta en camino.
     if created:
@@ -435,7 +353,4 @@ def _enqueue_or_mark_failed(message: Message, *, ip_hash: str | None = None) -> 
         logger.exception(
             "No se pudo encolar el job IA", extra={"message_id": message.message_id}
         )
-        repository.update_message_status(
-            message.conversation_id, message.message_key, MessageStatus.QUEUE_FAILED
-        )
-        message.status = MessageStatus.QUEUE_FAILED
+        service.mark_queue_failed(message)

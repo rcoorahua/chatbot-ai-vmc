@@ -462,7 +462,7 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
   `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
-  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
+  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` (la entrada; desde 2026-09-07 las piezas viven en `workers/ai/`: `trace`, `state`, `window`, `accounting`, `replies`, `faq`, `guided`, con dependencias en un sentido) compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
   `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:
@@ -503,6 +503,13 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 - Los nombres de variable de entorno son el contrato entre los tres entornos: `common_env` del
   stack, `nombres_de_tabla()` de `local_setup.py` y `.env.example` usan **los mismos**
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
+- **`api/` (desde 2026-09-07)**: las excepciones de dominio se traducen a HTTP en UN solo
+  sitio, `api/errors.py` (`RESPONDERS`, instalado en `main.py`); los routers llaman al
+  service y dejan subir la excepción, sin `try/except`. Los modelos de salida (`*Out`,
+  `ProjectionModel.from_model`, `page_cursors`) viven en `api/schemas.py`; los de entrada,
+  en cada router. Ningún router importa un `repository` (lo verifica
+  `tests/test_architecture.py`, junto con la regla de dependencias, `os.environ` solo en
+  `core/config.py` y "lo que vive en `core` no se vuelve a definir").
 - `backend/api/main.py`: `Mangum(app, lifespan="off")` — con lifespan activo la Lambda se cuelga
   en el startup. Los routers `advisor`/`dashboard` **no** validan JWT en código: lo hace el
   authorizer de Cognito en el API Gateway (T1); el backend solo lee los claims que Mangum deja en

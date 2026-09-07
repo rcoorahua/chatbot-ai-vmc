@@ -1,18 +1,53 @@
-"""Ayudas de DynamoDB que comparten todos los repositories.
+"""Lo que comparten todos los repositories de DynamoDB: el modelo base y las ayudas de
+escritura condicional / transacciones.
 
 Vive en `core` porque la regla de dependencias (backend/__init__.py) prohibe que un dominio
 importe a otro, y cada repository (conversations, tickets, advisors, y las tablas de agent)
-repetia estas mismas lineas. Aqui va SOLO lo que no sabe de ninguna tabla en particular:
-claves, GSIs y condiciones siguen siendo de cada repository.
+repetia estas mismas lineas (auditoria 2026-09-06). Aqui va SOLO lo que no sabe de ninguna
+tabla en particular: claves, GSIs y condiciones siguen siendo de cada repository.
+
+`DynamoModel.to_item()` omite los None a proposito: un atributo ausente no entra a los GSI
+(una conversacion anonima sin `user_id` no aparece en `gsi1_user`), mientras que un NULL
+explicito si ocuparia espacio y confundiria a las consultas.
 """
 
+from decimal import Decimal
 from typing import Any
 
 from botocore.exceptions import ClientError
+from pydantic import BaseModel, ConfigDict
 
 CONDITION_FAILED = "ConditionalCheckFailedException"
 TRANSACTION_CANCELED = "TransactionCanceledException"
 CONDITION_FAILED_REASON = "ConditionalCheckFailed"
+
+
+# ───────────────────────────────── Modelo base ─────────────────────────────────
+
+
+def from_dynamo(value: Any) -> Any:
+    """boto3 devuelve todos los numeros como Decimal; los modelos quieren int/float."""
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, dict):
+        return {key: from_dynamo(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_dynamo(item) for item in value]
+    return value
+
+
+class DynamoModel(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    def to_item(self) -> dict[str, Any]:
+        return self.model_dump(exclude_none=True)
+
+    @classmethod
+    def from_item(cls, item: dict[str, Any]):
+        return cls.model_validate(from_dynamo(item))
+
+
+# ────────────────────────── Escrituras condicionales y transacciones ──────────────────────────
 
 
 def is_condition_failure(exc: ClientError) -> bool:

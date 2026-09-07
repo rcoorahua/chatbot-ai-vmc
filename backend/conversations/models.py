@@ -4,14 +4,14 @@ Atributos segun REQUERIMENTS.md §1.3-1.4 mas los ajustes 1-3 de §1.11 (`unread
 `wait_message_sent`, `expires_at` en Messages) y el ajuste 6 que introduce esta fase: `status`
 en Messages, el "estado tecnico" que RF-008 exige por mensaje. Estados y tipos en ingles (T7).
 
-Los modelos se convierten a item DynamoDB con `to_item()` (core/dynamo_model.py), que omite los
+Los modelos se convierten a item DynamoDB con `to_item()` (core/dynamo.py), que omite los
 None a proposito: un atributo ausente no entra a los GSI.
 """
 
 from enum import StrEnum
 from typing import Any
 
-from backend.core.dynamo_model import DynamoModel
+from backend.core.dynamo import DynamoModel
 
 
 class ConversationStatus(StrEnum):
