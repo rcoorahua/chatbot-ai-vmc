@@ -236,6 +236,53 @@ def list_conversations(session: ChatSession) -> list[Conversation]:
     return threads + cases
 
 
+def _new_message(
+    conversation_id: str,
+    *,
+    sender_type: SenderType,
+    content: str | None,
+    message_type: MessageType = MessageType.TEXT,
+    status: MessageStatus = MessageStatus.DELIVERED,
+    sender_id: str | None = None,
+    client_message_id: str | None = None,
+    metadata: dict | None = None,
+    created_at: str | None = None,
+    expires_at: int | None = None,
+) -> Message:
+    """La UNICA forma de construir un `Message` nuevo en el dominio: id, SK
+    (`created_at#message_id`, PLAN.md §4) y timestamp salen de aqui. Antes cinco funciones
+    repetian estas mismas lineas (usuario, formulario, nota SYSTEM, asesor y bot; auditoria
+    2026-09-06) y un cambio en la SK habia que hacerlo cinco veces."""
+    now = created_at or utc_now_iso()
+    message_id = str(uuid.uuid4())
+    return Message(
+        conversation_id=conversation_id,
+        message_key=message_key_for(now, message_id),
+        message_id=message_id,
+        sender_type=sender_type,
+        sender_id=sender_id,
+        message_type=message_type,
+        status=status,
+        content=content,
+        client_message_id=client_message_id,
+        metadata=metadata,
+        created_at=now,
+        expires_at=expires_at,
+    )
+
+
+def _clean_text(content: str) -> str:
+    """El texto de un mensaje de persona (usuario o asesor): sin bordes, no vacio y dentro
+    del tope de RF-014 / D-005."""
+    text = content.strip()
+    if not text:
+        raise EmptyMessage("el mensaje esta vacio")
+    limit = get_settings().max_message_chars
+    if len(text) > limit:
+        raise MessageTooLong(limit)
+    return text
+
+
 def post_user_message(
     conversation: Conversation,
     *,
@@ -246,32 +293,21 @@ def post_user_message(
 ) -> tuple[Message, bool]:
     """Persiste el mensaje del usuario. `(mensaje, True)` si es nuevo; `(original, False)` si
     es un reintento con el mismo `client_message_id` (RF-038)."""
-    settings = get_settings()
     if conversation.status == ConversationStatus.CLOSED:
         raise ConversationClosed(conversation.conversation_id)
-    text = content.strip()
-    if not text:
-        raise EmptyMessage("el mensaje esta vacio")
-    if len(text) > settings.max_message_chars:
-        raise MessageTooLong(settings.max_message_chars)
+    text = _clean_text(content)
     _check_rate_limit(conversation.conversation_id)
 
-    now = utc_now_iso()
-    message_id = str(uuid.uuid4())
-    message = Message(
-        conversation_id=conversation.conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    message = _new_message(
+        conversation.conversation_id,
         sender_type=SenderType.USER,
         sender_id=sender_id,
-        message_type=MessageType.TEXT,
         status=MessageStatus.RECEIVED,
         content=text,
         client_message_id=client_message_id,
         # El evento estructurado de un quick reply (D-028) viaja aqui; el worker lo valida
         # contra el paso vigente del flujo — nunca se confia en el cliente (security-guidance).
         metadata=metadata,
-        created_at=now,
         expires_at=conversation.expires_at,
     )
     # Solo cuenta como "no leido" para el asesor si el bot ya no atiende (RF-035): mientras la
@@ -360,7 +396,7 @@ def request_handoff(
                           {"source_conversation_id": thread.conversation_id}, created_at=t0)
     response = _form_response_message(case_id, clean, created_at=t1,
                                       transcript=_transcript(thread))
-    confirm = _bot_message(case_id, confirmation, created_at=t2)
+    confirm = _new_message(case_id, sender_type=SenderType.BOT, content=confirmation, created_at=t2)
     case = Conversation(
         conversation_id=case_id,
         user_type=UserType.AUTHENTICATED,
@@ -414,7 +450,6 @@ def _transcript(thread: Conversation) -> list[dict]:
 def _form_response_message(
     conversation_id: str, clean: forms.HandoffForm, *, created_at: str, transcript: list[dict]
 ) -> Message:
-    message_id = str(uuid.uuid4())
     values = {
         k: v
         for k, v in (("subject", clean.subject), ("detail", clean.detail), ("email", clean.email))
@@ -429,10 +464,8 @@ def _form_response_message(
     }
     if transcript:
         metadata[TRANSCRIPT] = transcript
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(created_at, message_id),
-        message_id=message_id,
+    return _new_message(
+        conversation_id,
         sender_type=SenderType.USER,
         message_type=MessageType.FORM_RESPONSE,
         # No pasa por el worker (no hay nada que la IA deba hacer): nace atendido.
@@ -559,18 +592,13 @@ def _system_note(
     created_at: str | None = None,
     expires_at: int | None = None,
 ) -> Message:
-    now = created_at or utc_now_iso()
-    message_id = str(uuid.uuid4())
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    return _new_message(
+        conversation_id,
         sender_type=SenderType.SYSTEM,
         message_type=MessageType.SYSTEM,
-        status=MessageStatus.DELIVERED,
         content=str(event),
         metadata=metadata,
-        created_at=now,
+        created_at=created_at,
         expires_at=expires_at,
     )
 
@@ -616,28 +644,15 @@ def post_advisor_message(
     Nace DELIVERED: persistir es entregar; el widget la recoge en el siguiente sondeo."""
     if conversation.assigned_advisor_id != advisor_id:
         raise NotAssignedToAdvisor(conversation.conversation_id)
-    text = content.strip()
-    if not text:
-        raise EmptyMessage("el mensaje esta vacio")
-    limit = get_settings().max_message_chars
-    if len(text) > limit:
-        raise MessageTooLong(limit)
-
-    now = utc_now_iso()
-    message_id = str(uuid.uuid4())
-    message = Message(
-        conversation_id=conversation.conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
+    text = _clean_text(content)
+    message = _new_message(
+        conversation.conversation_id,
         sender_type=SenderType.ADVISOR,
         sender_id=advisor_id,
-        message_type=MessageType.TEXT,
-        status=MessageStatus.DELIVERED,
         content=text,
         client_message_id=client_message_id,
         # El widget muestra el nombre del asesor (como Intercom firma cada respuesta).
         metadata={SENDER_NAME: advisor_name} if advisor_name else None,
-        created_at=now,
     )
     # Guardas atomicas: sigue asignada a ESTE asesor y no esta cerrada. El chequeo en memoria
     # de arriba es solo el camino rapido (otra pestaña pudo cerrarla o soltarla entre medio).
@@ -654,30 +669,6 @@ def post_advisor_message(
 # ───────────────────────────── Lado del bot (RF-020..027, worker IA) ─────────────────────────────
 
 
-def _bot_message(
-    conversation_id: str,
-    text: str,
-    *,
-    metadata: dict | None = None,
-    created_at: str | None = None,
-    expires_at: int | None = None,
-) -> Message:
-    now = created_at or utc_now_iso()
-    message_id = str(uuid.uuid4())
-    return Message(
-        conversation_id=conversation_id,
-        message_key=message_key_for(now, message_id),
-        message_id=message_id,
-        sender_type=SenderType.BOT,
-        message_type=MessageType.TEXT,
-        status=MessageStatus.DELIVERED,
-        content=text,
-        metadata=metadata,
-        created_at=now,
-        expires_at=expires_at,
-    )
-
-
 def post_bot_message(
     conversation_id: str,
     text: str,
@@ -689,8 +680,13 @@ def post_bot_message(
     """Respuesta del bot en el hilo. Nace DELIVERED (persistir es entregar; el widget la
     recoge en el sondeo) y no cuenta como no leida: los no leidos son del asesor (RF-035).
     `expires_at` acompaña al TTL de la conversacion anonima (D-029)."""
-    message = _bot_message(
-        conversation_id, text, metadata=metadata, created_at=created_at, expires_at=expires_at
+    message = _new_message(
+        conversation_id,
+        sender_type=SenderType.BOT,
+        content=text,
+        metadata=metadata,
+        created_at=created_at,
+        expires_at=expires_at,
     )
     repository.put_message(message, count_as_unread=False)
     return message
