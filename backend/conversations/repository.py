@@ -236,6 +236,30 @@ def reset_unread(conversation_id: str) -> None:
             raise
 
 
+def _transition(
+    conversation_id: str,
+    note: Message,
+    *,
+    set_fields: str,
+    condition: str,
+    values: dict[str, Any],
+    remove_fields: str | None = None,
+    extra_items: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Un cambio de estado de la conversacion + su nota SYSTEM, todo o nada (`_transact_note`)
+    y sobre el update que ya toca los campos desnormalizados. Cada transicion de abajo solo
+    dice QUE cambia y BAJO QUE condicion; antes cada una armaba el mismo dict a mano
+    (auditoria 2026-09-06). `#status` siempre esta disponible como placeholder."""
+    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
+    update["UpdateExpression"] += ", " + set_fields
+    if remove_fields:
+        update["UpdateExpression"] += " REMOVE " + remove_fields
+    update["ConditionExpression"] = condition
+    update["ExpressionAttributeNames"] = {"#status": "status"}
+    update["ExpressionAttributeValues"].update(values)
+    return _transact_note(update, note, extra_items=extra_items)
+
+
 def assign_advisor(
     conversation_id: str, advisor_id: str, *, allowed_statuses: list[str], note: Message
 ) -> bool:
@@ -243,47 +267,44 @@ def assign_advisor(
     y el estado lo permite; en la misma transaccion deja la nota SYSTEM en el hilo. Devuelve
     False si otro asesor gano la carrera (o el estado ya no es tomable)."""
     placeholders = {f":s{i}": value for i, value in enumerate(allowed_statuses)}
-    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
-    update["UpdateExpression"] += (
-        ", assigned_advisor_id = :advisor, #status = :in_attention, bot_enabled = :off"
-    )
-    update["ConditionExpression"] = (
-        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
-        f"AND #status IN ({', '.join(placeholders)})"
-    )
-    update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(
-        {
+    return _transition(
+        conversation_id,
+        note,
+        set_fields="assigned_advisor_id = :advisor, #status = :in_attention, bot_enabled = :off",
+        condition=(
+            "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+            f"AND #status IN ({', '.join(placeholders)})"
+        ),
+        values={
             ":advisor": advisor_id,
             ":in_attention": str(ConversationStatus.IN_ATTENTION),
             ":off": False,
             **placeholders,
-        }
+        },
     )
-    return _transact_note(update, note)
 
 
 def release_advisor(conversation_id: str, advisor_id: str, *, note: Message) -> bool:
     """Cierre del caso (RF-031 con D-003): la conversacion NO se cierra, vuelve a BOT_ATTENDING
     con el bot encendido y sin asesor; la nota SYSTEM `TICKET_CLOSED` queda en el hilo. Solo el
     asesor asignado puede cerrar. Devuelve False si no es el asignado."""
-    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
-    update["UpdateExpression"] += (
-        ", #status = :bot_attending, bot_enabled = :on, wait_message_sent = :off, "
-        "unread_count = :zero REMOVE assigned_advisor_id, handoff_requested_at, handoff_reason"
-    )
-    update["ConditionExpression"] = "assigned_advisor_id = :advisor"
-    update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(
-        {
+    return _transition(
+        conversation_id,
+        note,
+        set_fields=(
+            "#status = :bot_attending, bot_enabled = :on, wait_message_sent = :off, "
+            "unread_count = :zero"
+        ),
+        remove_fields="assigned_advisor_id, handoff_requested_at, handoff_reason",
+        condition="assigned_advisor_id = :advisor",
+        values={
             ":advisor": advisor_id,
             ":bot_attending": str(ConversationStatus.BOT_ATTENDING),
             ":on": True,
             ":off": False,
             ":zero": 0,
-        }
+        },
     )
-    return _transact_note(update, note)
 
 
 def close_conversation(
@@ -301,26 +322,26 @@ def close_conversation(
 
     `release_case_slot_for_user` (Paso 6): el caso contaba para `OPEN_CASES#USER#<id>` (ver
     `create_conversation_with_messages`); se libera el cupo en la MISMA transaccion."""
-    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
-    update["UpdateExpression"] += (
-        ", #status = :closed, bot_enabled = :off, wait_message_sent = :off, "
-        "unread_count = :zero, closed_at = :at, closed_by = :closed_by"
-    )
-    update["ConditionExpression"] = "assigned_advisor_id = :advisor AND #status <> :closed"
-    update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(
-        {
+    extra_items = None
+    if release_case_slot_for_user:
+        extra_items = [counters.release_open_case_item(release_case_slot_for_user)]
+    return _transition(
+        conversation_id,
+        note,
+        set_fields=(
+            "#status = :closed, bot_enabled = :off, wait_message_sent = :off, "
+            "unread_count = :zero, closed_at = :at, closed_by = :closed_by"
+        ),
+        condition="assigned_advisor_id = :advisor AND #status <> :closed",
+        values={
             ":advisor": advisor_id,
             ":closed": str(ConversationStatus.CLOSED),
             ":off": False,
             ":zero": 0,
             ":closed_by": closed_by,
-        }
+        },
+        extra_items=extra_items,
     )
-    extra_items = None
-    if release_case_slot_for_user:
-        extra_items = [counters.release_open_case_item(release_case_slot_for_user)]
-    return _transact_note(update, note, extra_items=extra_items)
 
 
 def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) -> bool:
@@ -328,25 +349,25 @@ def start_handoff(conversation_id: str, *, reason: str, at: str, note: Message) 
     bot atendia y nadie la tiene; la nota SYSTEM `HANDOFF_REQUESTED` va en la misma
     transaccion. `wait_message_sent` arranca en False: el periodo de espera es nuevo (RF-027).
     Devuelve False si la conversacion ya estaba derivada o asignada (no se duplica)."""
-    update = _touch_conversation_update(conversation_id, note, count_as_unread=False)["Update"]
-    update["UpdateExpression"] += (
-        ", #status = :pending, bot_enabled = :off, wait_message_sent = :off, "
-        "handoff_requested_at = :requested_at, handoff_reason = :reason"
+    return _transition(
+        conversation_id,
+        note,
+        set_fields=(
+            "#status = :pending, bot_enabled = :off, wait_message_sent = :off, "
+            "handoff_requested_at = :requested_at, handoff_reason = :reason"
+        ),
+        condition=(
+            "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
+            "AND #status = :bot_attending"
+        ),
+        values={
+            ":pending": str(ConversationStatus.PENDING_ADVISOR),
+            ":bot_attending": str(ConversationStatus.BOT_ATTENDING),
+            ":off": False,
+            ":requested_at": at,
+            ":reason": reason,
+        },
     )
-    values: dict[str, Any] = {
-        ":pending": str(ConversationStatus.PENDING_ADVISOR),
-        ":bot_attending": str(ConversationStatus.BOT_ATTENDING),
-        ":off": False,
-        ":requested_at": at,
-        ":reason": reason,
-    }
-    update["ConditionExpression"] = (
-        "attribute_exists(conversation_id) AND attribute_not_exists(assigned_advisor_id) "
-        "AND #status = :bot_attending"
-    )
-    update["ExpressionAttributeNames"] = {"#status": "status"}
-    update["ExpressionAttributeValues"].update(values)
-    return _transact_note(update, note)
 
 
 def set_flow_state(
