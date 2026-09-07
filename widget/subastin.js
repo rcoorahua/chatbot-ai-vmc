@@ -28,8 +28,9 @@
  *   reconoce el clic por su `value`, sin modelo) y, sin evidencia, pregunta "¿deseas
  *   contactar a un asesor?". El visitante solo tiene FAQ: en vez del formulario recibe la
  *   invitacion a iniciar sesion con su boton.
- * - Entrega en tiempo real por sondeo (TD-001): 2,5 s con el panel abierto, 15 s cerrado para
- *   la burbuja de no leidos, pausado con la pestaña oculta.
+ * - Entrega en tiempo real por sondeo adaptativo (TD-001, ver CONFIG): 2 s esperando al bot,
+ *   5 s con asesor, 15 s en reposo y 60 s con el panel cerrado solo si hay casos abiertos;
+ *   pausado con la pestaña oculta y con backoff ante errores.
  * - Un mensaje se muestra como enviado SOLO cuando el backend confirma (RNF-003); si falla,
  *   queda en el navegador con "Reintentar" y el reintento reutiliza el mismo
  *   client_message_id para que el backend no lo duplique (RF-037/RF-038).
@@ -533,15 +534,20 @@
         orbGpu = { perdido: true };
       });
 
-      orbGpu = { canvas, device, ctx, pipeline, buffer, bind, values, fase: 0, ultimo: null, css: 0 };
-      render(); // el indicador puede estar ya montado con el canvas WebGL: esto hace el relevo
-
+      orbGpu = {
+        canvas, device, ctx, pipeline, buffer, bind, values,
+        fase: 0, ultimo: null, css: 0, activo: false, dibujar: null,
+      };
       const dibujar = (ahora) => {
         const o = orbGpu;
         if (!o || o.perdido) return;
         if (!o.canvas.isConnected) {
-          // Fuera de pantalla: pausa barata y se vuelve a mirar por si reaparece.
-          setTimeout(() => requestAnimationFrame(dibujar), 400);
+          // Fuera de pantalla (panel cerrado, respuesta llegada, widget desmontado): el bucle
+          // PARA. Lo rearma `liquidOrb` cuando un render vuelve a pedir el canvas. Antes se
+          // quedaba sondeando cada 400 ms por el resto de la vida de la pagina (auditoria
+          // 2026-09-06).
+          o.activo = false;
+          o.ultimo = null;
           return;
         }
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -575,7 +581,8 @@
         o.device.queue.submit([enc.finish()]);
         requestAnimationFrame(dibujar);
       };
-      requestAnimationFrame(dibujar);
+      orbGpu.dibujar = dibujar;
+      render(); // el indicador puede estar ya montado con el canvas WebGL: esto hace el relevo
     } catch (_) {
       // Cualquier fallo (sin soporte, driver, compilacion): WebGL toma el relevo, sin ruido.
       orbGpu = { perdido: true };
@@ -594,6 +601,11 @@
     if (orbGpu && !orbGpu.perdido) {
       orbGpu.css = size;
       orbGpu.canvas.style.width = orbGpu.canvas.style.height = size + "px";
+      if (!orbGpu.activo) {
+        // Arranca (o rearranca) el bucle: para solo cuando el canvas sale del DOM.
+        orbGpu.activo = true;
+        requestAnimationFrame(orbGpu.dibujar);
+      }
       return orbGpu.canvas;
     }
     return liquidOrbGl(size);
@@ -672,13 +684,16 @@
         gl,
         uT: gl.getUniformLocation(programa, "u_t"),
         uR: gl.getUniformLocation(programa, "u_r"),
+        activo: false,
+        dibujar: null,
       };
       const dibujar = () => {
         const orbe = orbShared;
         if (!orbe || orbe.perdido) return;
         if (!orbe.canvas.isConnected) {
-          // Fuera de pantalla: no se dibuja; se vuelve a mirar con calma por si reaparece.
-          setTimeout(dibujar, 400);
+          // Fuera de pantalla: el bucle PARA (mismo criterio que el orbe WebGPU); lo rearma
+          // `liquidOrbGl` cuando un render vuelve a pedir el canvas.
+          orbe.activo = false;
           return;
         }
         // Tiempo anclado al inicio de la espera: continuidad entre re-renders del sondeo.
@@ -687,7 +702,7 @@
         orbe.gl.drawArrays(orbe.gl.TRIANGLE_STRIP, 0, 4);
         requestAnimationFrame(dibujar);
       };
-      requestAnimationFrame(dibujar);
+      orbShared.dibujar = dibujar;
     }
     const orbe = orbShared;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -697,15 +712,30 @@
       orbe.gl.uniform1f(orbe.uR, size * dpr);
     }
     orbe.canvas.style.width = orbe.canvas.style.height = size + "px";
+    if (!orbe.activo) {
+      orbe.activo = true;
+      requestAnimationFrame(orbe.dibujar);
+    }
     return orbe.canvas;
+  }
+
+  /** El UNICO filtro de URLs del widget: solo http(s) llega a un href (fuentes, botones de
+   *  enlace, la franja del visitante). Un `javascript:` que viniera del servidor o del
+   *  storage no se convierte en enlace vivo. */
+  function isHttpUrl(value) {
+    return typeof value === "string" && /^https?:\/\//i.test(value);
   }
 
   // Enlaces como nodos <a> (nunca HTML crudo). Solo http(s), con rel="noopener".
   /** Texto de una linea con enlaces clicables y **negritas** (D-025 revisada con D-030: el
-   *  unico markdown que el bot puede usar). Todo va por textContent: nada se inyecta. */
+   *  unico markdown que el bot puede usar). Todo va por textContent: nada se inyecta.
+   *  El patron NO usa lookbehind a proposito: en Safari/iOS hasta 16.3 un `(?<=…)` dentro
+   *  de un literal es error de SINTAXIS al cargar el archivo, y el widget entero dejaba de
+   *  montarse ahi (auditoria 2026-09-06). Negrita = `**`, un no-espacio, lo que sea sin
+   *  asteriscos, un no-espacio, `**`. */
   function textWithLinks(text) {
     const fragment = document.createDocumentFragment();
-    const pattern = /(\*\*(?=\S)[^*]+?(?<=\S)\*\*)|(https?:\/\/[^\s<>"']+)/g;
+    const pattern = /(\*\*\S(?:[^*]*?\S)?\*\*)|(https?:\/\/[^\s<>"']+)/g;
     let last = 0;
     // SAFETY: es String.prototype.matchAll sobre texto para encontrar URLs y pares de
     // asteriscos; no ejecuta comandos ni codigo. Solo alimenta textContent y href.
@@ -937,8 +967,9 @@
       userName: data.user.name,
       userId: wantedUser,
       conversationId: data.conversation.conversation_id,
-      // D-031: a donde se manda al visitante a iniciar sesion (la URL la decide el servidor).
-      loginUrl: (data.links && data.links.login) || null,
+      // D-031: a donde se manda al visitante a iniciar sesion (la URL la decide el servidor;
+      // solo http(s), como cualquier otro enlace que el widget dibuja).
+      loginUrl: data.links && isHttpUrl(data.links.login) ? data.links.login : null,
       identity,
     };
     state.session = session;
@@ -995,6 +1026,15 @@
     state.identityError = false;
     state.greetingVisible = false;
     state.seen = new Set();
+    // Banderas de animacion y navegacion: un reset a mitad de un pliegue del compositor
+    // dejaba `formEntering` en true y los renders se posponian hasta que un temporizador
+    // ajeno lo soltara (auditoria 2026-09-06).
+    state.formEntering = false;
+    state.composerReturn = false;
+    state.repliesReturn = false;
+    state.helpArticle = null;
+    state.stickToBottom = true;
+    dibujandoFormulario = false;
     clearTimeout(bootTimer);
     bootTimer = null;
     dropSession();
@@ -1375,26 +1415,43 @@
     if (!draft) return;
     draft.status = "sending";
     render();
+    // El hilo de la sesion de AHORA. Si `withSession` la rehace tras un 404 (dynamodb-local
+    // reiniciado, sesion vencida), el visitante recibe un hilo con id NUEVO y el borrador que
+    // era del hilo viejo tiene que ir al nuevo. Antes reintentaba contra el id muerto (404
+    // otra vez) y, como `dropSession` ya habia vaciado `pending`, el fallo no dejaba burbuja
+    // ni "Reintentar": el mensaje se perdia en silencio (auditoria 2026-09-06).
+    const threadBefore = state.session ? state.session.conversationId : null;
+    let target = draft.conversationId;
     try {
-      const data = await withSession((session) =>
-        request(
+      const data = await withSession((session) => {
+        target =
+          !draft.conversationId || draft.conversationId === threadBefore
+            ? session.conversationId
+            : draft.conversationId;
+        return request(
           "POST",
-          `/chat/conversations/${draft.conversationId || session.conversationId}/messages`,
+          `/chat/conversations/${target}/messages`,
           Object.assign(
             { client_message_id: clientMessageId, content: draft.content },
             draft.interaction ? { interaction: draft.interaction } : null
           ),
           session.token
-        )
-      );
+        );
+      });
       state.pending.delete(clientMessageId);
-      if (draft.conversationId === state.activeId) upsertMessages([data.message]);
+      if (target === state.activeId) upsertMessages([data.message]);
       // El mensaje quedo durable (202): a partir de aqui se espera respuesta — del bot. Con
       // un asesor en el caso la espera es de una persona y no se promete "escribiendo".
       if (!state.conversation || state.conversation.bot_enabled) state.typingSince = Date.now();
       schedulePoll(); // cadencia rapida mientras se espera
     } catch (error) {
       if (isStale(error)) return; // el borrador era de otro usuario: ya se descarto
+      if (!state.pending.has(clientMessageId)) {
+        // La sesion se rehizo a mitad del envio: el borrador vuelve a la lista, en el hilo
+        // nuevo, para que se vea fallido y se pueda reintentar.
+        draft.conversationId = target;
+        state.pending.set(clientMessageId, draft);
+      }
       draft.status = "failed";
       draft.error = error.message;
       draft.rateLimited = error.status === 429;
@@ -1471,6 +1528,8 @@
       });
       return;
     }
+    // Se lee ANTES de dibujar: renderComposer consume esta bandera de un solo uso.
+    const composerReturning = state.composerReturn;
     const view =
       state.view === "messages"
         ? renderMessages()
@@ -1507,6 +1566,11 @@
     const previousComposer = current ? current.querySelector(".composer textarea") : null;
     const draft = previousComposer ? previousComposer.value : "";
     const caret = previousComposer ? previousComposer.selectionStart : 0;
+    // El foco va al compositor solo si YA lo tenia, al entrar a la vista de mensajes o cuando
+    // vuelve tras un formulario. Enfocarlo en CADA render —o sea, en cada sondeo que trae
+    // algo— le robaba el foco a la pagina de VMC y a un boton de pregunta recien tabulado, y
+    // en movil levantaba el teclado solo (auditoria 2026-09-06).
+    const composerHadFocus = previousComposer !== null && root.activeElement === previousComposer;
 
     if (changedView && current) crossfade(current, view, direction);
     else panelEl.replaceChildren(view);
@@ -1548,7 +1612,9 @@
         }
         autoGrow(composer);
       }
-      composer.focus({ preventScroll: true });
+      if (composerHadFocus || changedView || previousScroll === null || composerReturning) {
+        composer.focus({ preventScroll: true });
+      }
     }
   }
 
@@ -2003,7 +2069,7 @@
     const interaction = ultimo.metadata && ultimo.metadata.interaction;
     if (!interaction || interaction.type !== "HANDOFF_FORM" || !Array.isArray(interaction.fields)) return null;
     if (state.dismissedForm === ultimo.message_id) return null;
-    return { spec: interaction, key: "form:" + ultimo.message_id };
+    return { spec: interaction, key: "form:" + ultimo.message_id, messageId: ultimo.message_id };
   }
 
   /** Tarjeta del formulario (D-029, rediseño D-030; un solo paso desde D-031): a todo el
@@ -2163,9 +2229,12 @@
   /** La x del formulario: se va con suavidad y el compositor vuelve subiendo. Lo escrito se
    *  conserva en `formDraft` por si el bot vuelve a ofrecerlo. */
   function closeForm() {
+    // Se anota QUE formulario se cierra antes del fade: si en esos 300 ms llega un mensaje
+    // del bot, leer "el ultimo" despues descartaba el id equivocado y el formulario volvia a
+    // aparecer (auditoria 2026-09-06).
+    const form = visibleForm();
     fadeOutForm(() => {
-      const ultimo = state.messages[state.messages.length - 1];
-      if (ultimo) state.dismissedForm = ultimo.message_id;
+      if (form) state.dismissedForm = form.messageId;
       markFormGone();
       render();
     });
@@ -2270,7 +2339,7 @@
     if (message.sender_type !== "BOT" || !Array.isArray(sources) || !sources.length) return null;
     const links = [];
     for (const source of sources) {
-      if (!source || !source.url || !/^https?:\/\//.test(source.url)) continue;
+      if (!source || !isHttpUrl(source.url)) continue;
       const label = source.title || source.url;
       links.push(
         h(
@@ -2401,7 +2470,7 @@
     if (!interaction || interaction.type !== "LINKS" || message.sender_type !== "BOT") return null;
     const wrap = h("div", { class: "quick-replies" + (firstRenderOf("lk:" + message.message_id) ? " is-new" : "") });
     for (const option of Array.isArray(interaction.options) ? interaction.options : []) {
-      if (!option || !option.label || !/^https?:\/\//.test(option.url || "")) continue;
+      if (!option || !option.label || !isHttpUrl(option.url)) continue;
       wrap.appendChild(h("a", { class: "qr qr-solid", href: option.url, target: "_blank", rel: "noopener noreferrer", text: option.label }));
     }
     return wrap.childNodes.length ? wrap : null;
@@ -2418,7 +2487,8 @@
     } catch (_) {
       /* sin storage: se muestra igual y se cierra con el flag en memoria */
     }
-    const login = state.session && state.session.loginUrl;
+    // Se vuelve a filtrar aqui: la sesion puede venir de sessionStorage, no solo del servidor.
+    const login = state.session && isHttpUrl(state.session.loginUrl) ? state.session.loginUrl : null;
     return h(
       "div",
       { class: "banner banner-anon" },
@@ -3434,6 +3504,9 @@
    *  nodo. `Subastin.mount()` lo vuelve a montar; un segundo <script> tambien puede hacerlo. */
   function unmount() {
     if (!hostEl) return;
+    // Cerrado ANTES del reset: con el panel abierto, `reset()` programa el saludo (420 ms) y
+    // ese temporizador sobrevivia al desmontaje (auditoria 2026-09-06).
+    state.open = false;
     reset();
     document.removeEventListener("visibilitychange", onVisibilityChange);
     panelEl.removeEventListener("keydown", onPanelKeydown);
