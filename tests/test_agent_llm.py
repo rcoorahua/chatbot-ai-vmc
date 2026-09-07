@@ -18,39 +18,9 @@ import pytest
 from backend.agent import classifier, prompts, writer
 from backend.agent.intents import Intent
 from backend.core import llm
-from backend.core.llm import LLMClient, LLMError, LLMResponse, ModelTier
-
-
-class FakeLLM(LLMClient):
-    """Doble que registra como se lo invoco y devuelve una respuesta fija o un error."""
-
-    provider = "fake"
-
-    def __init__(self, text="", usage=None, error=None):
-        self._text = text
-        self._usage = usage or {"input": 100, "output": 10, "cached_read": 0, "cached_creation": 0}
-        self._error = error
-        self.calls = []
-
-    def generate(self, *, tier, system, messages, max_output_tokens, temperature=None):
-        self.calls.append(
-            {
-                "tier": tier,
-                "system": system,
-                "messages": messages,
-                "max_output_tokens": max_output_tokens,
-                "temperature": temperature,
-            }
-        )
-        if self._error:
-            raise self._error
-        return LLMResponse(
-            text=self._text,
-            model=llm.model_for(tier).name,
-            tier=tier,
-            usage=self._usage,
-            latency_ms=42,
-        )
+from backend.core.config import reset_settings
+from backend.core.llm import LLMError, LLMResponse, ModelTier
+from tests.helpers.fakes import FakeLLM, install_llm
 
 
 @pytest.fixture
@@ -58,11 +28,7 @@ def fake_llm(monkeypatch):
     """Instala un doble como cliente activo y lo entrega para inspeccionarlo."""
 
     def _install(**kwargs):
-        client = FakeLLM(**kwargs)
-        monkeypatch.setattr(llm, "get_client", lambda: client)
-        monkeypatch.setattr(classifier, "get_client", lambda: client)
-        monkeypatch.setattr(writer, "get_client", lambda: client)
-        return client
+        return install_llm(monkeypatch, FakeLLM(**kwargs))
 
     return _install
 
@@ -321,9 +287,16 @@ def test_sin_uso_el_costo_es_cero():
     assert LLMResponse(text="", model="x", tier=ModelTier.FAST).estimated_cost_usd() == 0.0
 
 
-def test_falta_de_credencial_es_un_error_fatal(monkeypatch):
-    from backend.core.config import reset_settings
+@pytest.fixture
+def cliente_llm_limpio():
+    """Deja el cliente memoizado y Settings limpios al terminar, aunque el assert falle:
+    antes el reset iba DESPUES del assert y un fallo contaminaba las pruebas siguientes."""
+    yield
+    llm.reset_client()
+    reset_settings()
 
+
+def test_falta_de_credencial_es_un_error_fatal(monkeypatch, cliente_llm_limpio):
     # Fatal significa "no reintentar": sin credencial, insistir solo agrega latencia.
     # Vacia (no ausente): la variable de entorno pisa a `.env`, asi que el test no depende de
     # que la maquina tenga o no una key configurada.
@@ -335,11 +308,9 @@ def test_falta_de_credencial_es_un_error_fatal(monkeypatch):
         llm.get_client()
 
     assert exc.value.is_fatal is True
-    llm.reset_client()
-    reset_settings()
 
 
-def test_la_credencial_se_lee_de_settings_y_no_solo_del_entorno(monkeypatch):
+def test_la_credencial_se_lee_de_settings_y_no_solo_del_entorno(monkeypatch, cliente_llm_limpio):
     """pydantic carga `.env` en Settings pero NO lo exporta al proceso: leer solo `os.environ`
     dejaba la key de `.env` invisible y el bot caia al fallback sin avisar."""
     from types import SimpleNamespace
@@ -353,7 +324,6 @@ def test_la_credencial_se_lee_de_settings_y_no_solo_del_entorno(monkeypatch):
     llm.get_client()
 
     assert construidos == ["de-env"]
-    llm.reset_client()
 
 
 # ─────────────────── AC-L7: guardrail de salida e higiene (D-024 / D-025) ───────────────────

@@ -19,25 +19,17 @@ import pytest
 from boto3.dynamodb.conditions import Key
 
 from backend.agent import prompts
-from backend.agent.rag import Fragment, RagResult
-from backend.conversations import repository, service
+from backend.conversations import repository
 from backend.conversations.models import SenderType
-from backend.core import llm
-from backend.core.auth import VmcIdentity
 from backend.core.config import reset_settings
-from backend.core.jobs import AIJob
-from backend.workers import ai_worker
+from tests.helpers.scenario import (
+    atiende,
+    conversacion,
+    escribe,
+    ultima_respuesta,
+)
 
-pytestmark = pytest.mark.usefixtures("entorno_dynamo")
-
-
-@pytest.fixture(autouse=True)
-def _sin_rate_limit(monkeypatch):
-    """Aqui se prueba la cuota diaria/horaria (D-027), no el limite por minuto (D-005)."""
-    monkeypatch.setenv("MAX_MESSAGES_PER_MINUTE", "0")
-    reset_settings()
-    yield
-    reset_settings()
+pytestmark = pytest.mark.usefixtures("entorno_dynamo", "sin_rate_limit")
 
 
 @pytest.fixture
@@ -55,84 +47,11 @@ def cuotas(monkeypatch):
     reset_settings()
 
 
-@pytest.fixture
-def limpiar(tablas):
-    ids: list[str] = []
-    yield ids.append
-    for conversation_id in ids:
-        for tabla, sk in (("messages", "message_key"), ("ai_usage", "execution_key")):
-            for item in tablas[tabla].query(
-                KeyConditionExpression=Key("conversation_id").eq(conversation_id)
-            )["Items"]:
-                tablas[tabla].delete_item(
-                    Key={"conversation_id": conversation_id, sk: item[sk]}
-                )
-        tablas["conversations"].delete_item(Key={"conversation_id": conversation_id})
-
-
-class FakeLLM:
-    def __init__(self):
-        self.calls: list[dict] = []
-
-    def generate(self, *, tier, system, messages, max_output_tokens, temperature=None):
-        self.calls.append({"tier": tier})
-        text = "<intent>FAQ</intent>" if tier == llm.ModelTier.FAST else "Respuesta con evidencia."
-        return llm.LLMResponse(
-            text=text, model=llm.model_for(tier).name, tier=tier,
-            usage={"input": 100, "output": 10, "cached_read": 0, "cached_creation": 0},
-            latency_ms=10,
-        )
-
-
-@pytest.fixture
-def fake_llm(monkeypatch):
-    fake = FakeLLM()
-    monkeypatch.setattr("backend.agent.classifier.get_client", lambda: fake)
-    monkeypatch.setattr("backend.agent.writer.get_client", lambda: fake)
-    return fake
-
-
-@pytest.fixture
-def con_rag(monkeypatch):
-    fragmento = Fragment(text="La comision es 3.9%.", topic="Comision", score=0.9)
-    monkeypatch.setattr(
-        ai_worker.rag, "retrieve",
-        lambda text, **kwargs: RagResult(relevant=[fragmento], discarded=[], threshold=0.84),
-    )
-    return fragmento
-
-
-def _conversacion(limpiar, *, autenticada=False):
-    identity = (
-        VmcIdentity(user_id="vmc_" + uuid.uuid4().hex[:8], name="Aaron") if autenticada else None
-    )
-    conversation, _ = service.open_conversation(identity)
-    limpiar(conversation.conversation_id)
-    return conversation
-
-
-def _atiende(conversation, texto, ip_hash=None):
-    message, _ = service.post_user_message(
-        conversation, client_message_id="cli-" + uuid.uuid4().hex, content=texto
-    )
-    ai_worker._process(
-        AIJob(
-            conversation_id=conversation.conversation_id,
-            message_id=message.message_id,
-            message_key=message.message_key,
-            requested_at=message.created_at,
-            ip_hash=ip_hash,
-        ).model_dump_json()
-    )
+def preguntar(conversation, texto, ip_hash=None):
+    """Escribe y atiende en un paso; devuelve el mensaje del usuario."""
+    message = escribe(conversation, texto)
+    atiende(message, ip_hash=ip_hash)
     return message
-
-
-def _ultima_respuesta(conversation_id):
-    bots = [
-        m for m in repository.list_messages(conversation_id)
-        if m.sender_type == SenderType.BOT
-    ]
-    return bots[-1].content if bots else None
 
 
 # Preguntas FAQ distintas entre si: repetir el mismo texto activaria el aviso de repetido
@@ -149,11 +68,11 @@ _PREGUNTAS = [
 
 
 def test_con_topes_en_cero_nada_se_frena_ni_se_escribe(limpiar, tablas, fake_llm, con_rag):
-    conversation = _conversacion(limpiar)
+    conversation = conversacion(limpiar, autenticada=False)
     for pregunta in _PREGUNTAS[:3]:
-        _atiende(conversation, pregunta, ip_hash="hash-apagado")
+        preguntar(conversation, pregunta, ip_hash="hash-apagado")
 
-    assert _ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
+    assert ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
     # Ni un contador escrito: en dev el pipeline no debe pagar latencia de una tabla extra.
     filas = tablas["rate_limits"].query(
         KeyConditionExpression=Key("limit_key").eq(
@@ -175,14 +94,14 @@ def test_el_anonimo_se_agota_en_la_ventana_que_caiga_primero(
     limpiar, tablas, fake_llm, con_rag, cuotas, anon_hour, anon_day
 ):
     cuotas(anon_hour=anon_hour, anon_day=anon_day)
-    conversation = _conversacion(limpiar)
+    conversation = conversacion(limpiar, autenticada=False)
 
-    _atiende(conversation, _PREGUNTAS[0], ip_hash="hash-" + uuid.uuid4().hex[:8])
-    _atiende(conversation, _PREGUNTAS[1], ip_hash="hash-" + uuid.uuid4().hex[:8])
+    preguntar(conversation, _PREGUNTAS[0], ip_hash="hash-" + uuid.uuid4().hex[:8])
+    preguntar(conversation, _PREGUNTAS[1], ip_hash="hash-" + uuid.uuid4().hex[:8])
     llamadas_antes = len(fake_llm.calls)
-    _atiende(conversation, _PREGUNTAS[2], ip_hash="hash-" + uuid.uuid4().hex[:8])
+    preguntar(conversation, _PREGUNTAS[2], ip_hash="hash-" + uuid.uuid4().hex[:8])
 
-    assert _ultima_respuesta(conversation.conversation_id) == (
+    assert ultima_respuesta(conversation.conversation_id) == (
         prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
     )
     assert len(fake_llm.calls) == llamadas_antes, "agotado no debe llamar a ningun modelo"
@@ -200,14 +119,14 @@ def test_el_anonimo_se_agota_en_la_ventana_que_caiga_primero(
 def test_el_autenticado_usa_su_cuota_y_su_mensaje(limpiar, fake_llm, con_rag, cuotas):
     # Anonimo agotaria con 1; el autenticado tiene 2 (el doble, D-027 revisada).
     cuotas(anon_day=1, auth_day=2)
-    conversation = _conversacion(limpiar, autenticada=True)
+    conversation = conversacion(limpiar, autenticada=True)
 
-    _atiende(conversation, _PREGUNTAS[0])
-    _atiende(conversation, _PREGUNTAS[1])
-    assert _ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
+    preguntar(conversation, _PREGUNTAS[0])
+    preguntar(conversation, _PREGUNTAS[1])
+    assert ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
 
-    _atiende(conversation, _PREGUNTAS[2])
-    assert _ultima_respuesta(conversation.conversation_id) == (
+    preguntar(conversation, _PREGUNTAS[2])
+    assert ultima_respuesta(conversation.conversation_id) == (
         prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE
     )
 
@@ -220,10 +139,10 @@ def test_pedir_asesor_ofrece_el_formulario_incluso_agotado(limpiar, fake_llm, co
     reglas (sin modelo), asi que no puede quedar detras del tope. Con D-029 "funciona"
     significa que el bot ofrece la tarjeta de formulario."""
     cuotas(auth_day=1)
-    conversation = _conversacion(limpiar, autenticada=True)
-    _atiende(conversation, _PREGUNTAS[0])  # gasta la unica ejecucion
+    conversation = conversacion(limpiar, autenticada=True)
+    preguntar(conversation, _PREGUNTAS[0])  # gasta la unica ejecucion
 
-    _atiende(conversation, "quiero hablar con un asesor")
+    preguntar(conversation, "quiero hablar con un asesor")
 
     del_bot = [
         m for m in repository.list_messages(conversation.conversation_id)
@@ -235,12 +154,12 @@ def test_pedir_asesor_ofrece_el_formulario_incluso_agotado(limpiar, fake_llm, co
 
 def test_un_trivial_no_gasta_cuota(limpiar, fake_llm, con_rag, cuotas):
     cuotas(anon_day=1)
-    conversation = _conversacion(limpiar)
+    conversation = conversacion(limpiar, autenticada=False)
 
-    _atiende(conversation, "hola")  # trivial: fijo, sin modelo, sin gasto
-    _atiende(conversation, _PREGUNTAS[0])
+    preguntar(conversation, "hola")  # trivial: fijo, sin modelo, sin gasto
+    preguntar(conversation, _PREGUNTAS[0])
 
-    assert _ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
+    assert ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
 
 
 # ─────────────── AC-Q5: flujos — ofrecer gratis, resolver paga, agotado espera ───────────────
@@ -248,14 +167,14 @@ def test_un_trivial_no_gasta_cuota(limpiar, fake_llm, con_rag, cuotas):
 
 def test_ofrecer_botones_es_gratis_y_resolver_gasta(limpiar, fake_llm, con_rag, cuotas):
     cuotas(anon_day=1)
-    conversation = _conversacion(limpiar)
+    conversation = conversacion(limpiar, autenticada=False)
 
-    _atiende(conversation, "quiero participar")  # botones: gratis
-    _atiende(conversation, "en vivo")  # resuelve: gasta la unica ejecucion
-    assert _ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
+    preguntar(conversation, "quiero participar")  # botones: gratis
+    preguntar(conversation, "en vivo")  # resuelve: gasta la unica ejecucion
+    assert ultima_respuesta(conversation.conversation_id) == "Respuesta con evidencia."
 
-    _atiende(conversation, _PREGUNTAS[0])
-    assert _ultima_respuesta(conversation.conversation_id) == (
+    preguntar(conversation, _PREGUNTAS[0])
+    assert ultima_respuesta(conversation.conversation_id) == (
         prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
     )
 
@@ -264,15 +183,15 @@ def test_agotado_el_flujo_queda_esperando(limpiar, fake_llm, con_rag, cuotas):
     """Resolver el paso llama al redactor (pagado): agotado, sale el mensaje fijo pero el
     flujo NO se pierde — al renovarse la cuota, "en vivo" escrito lo resuelve igual."""
     cuotas(anon_day=1)
-    conversation = _conversacion(limpiar)
-    _atiende(conversation, _PREGUNTAS[0])  # gasta la unica ejecucion
+    conversation = conversacion(limpiar, autenticada=False)
+    preguntar(conversation, _PREGUNTAS[0])  # gasta la unica ejecucion
 
-    _atiende(conversation, "quiero participar")  # botones: gratis, funciona igual
+    preguntar(conversation, "quiero participar")  # botones: gratis, funciona igual
     actual = repository.get_conversation(conversation.conversation_id)
     assert actual.active_flow == "PARTICIPATION"
 
-    _atiende(conversation, "en vivo")  # resolver necesitaria el redactor -> fijo de cuota
-    assert _ultima_respuesta(conversation.conversation_id) == (
+    preguntar(conversation, "en vivo")  # resolver necesitaria el redactor -> fijo de cuota
+    assert ultima_respuesta(conversation.conversation_id) == (
         prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
     )
     actual = repository.get_conversation(conversation.conversation_id)
@@ -286,14 +205,14 @@ def test_la_misma_ip_comparte_cuota_entre_sesiones(limpiar, fake_llm, con_rag, c
     cuotas(anon_day=1)
     ip = "ip-compartida-" + uuid.uuid4().hex[:8]
 
-    primera = _conversacion(limpiar)
-    _atiende(primera, _PREGUNTAS[0], ip_hash=ip)
-    assert _ultima_respuesta(primera.conversation_id) == "Respuesta con evidencia."
+    primera = conversacion(limpiar, autenticada=False)
+    preguntar(primera, _PREGUNTAS[0], ip_hash=ip)
+    assert ultima_respuesta(primera.conversation_id) == "Respuesta con evidencia."
 
     # Sesion nueva (otra pestana del mismo actor): el contador de IP ya esta agotado.
-    segunda = _conversacion(limpiar)
-    _atiende(segunda, _PREGUNTAS[1], ip_hash=ip)
-    assert _ultima_respuesta(segunda.conversation_id) == prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
+    segunda = conversacion(limpiar, autenticada=False)
+    preguntar(segunda, _PREGUNTAS[1], ip_hash=ip)
+    assert ultima_respuesta(segunda.conversation_id) == prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
 
 
 def test_sin_ip_cada_sesion_anonima_cuenta_por_su_lado(limpiar, fake_llm, con_rag, cuotas):
@@ -301,11 +220,11 @@ def test_sin_ip_cada_sesion_anonima_cuenta_por_su_lado(limpiar, fake_llm, con_ra
     sesion, que es la otra pata de D-027 — nunca cero frenos."""
     cuotas(anon_day=1)
 
-    primera = _conversacion(limpiar)
-    _atiende(primera, _PREGUNTAS[0])
-    segunda = _conversacion(limpiar)
-    _atiende(segunda, _PREGUNTAS[1])
+    primera = conversacion(limpiar, autenticada=False)
+    preguntar(primera, _PREGUNTAS[0])
+    segunda = conversacion(limpiar, autenticada=False)
+    preguntar(segunda, _PREGUNTAS[1])
 
-    assert _ultima_respuesta(segunda.conversation_id) == "Respuesta con evidencia."
-    _atiende(segunda, _PREGUNTAS[2])
-    assert _ultima_respuesta(segunda.conversation_id) == prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
+    assert ultima_respuesta(segunda.conversation_id) == "Respuesta con evidencia."
+    preguntar(segunda, _PREGUNTAS[2])
+    assert ultima_respuesta(segunda.conversation_id) == prompts.QUOTA_EXHAUSTED_ANON_RESPONSE
