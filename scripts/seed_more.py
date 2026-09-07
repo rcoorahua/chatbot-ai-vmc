@@ -210,6 +210,7 @@ TICKETS = [
         "user_id": "user_101",
         "user_email": "diego.salazar@example.test",
         "status": "PENDING",
+        "priority": "HIGH",  # dashboard: "1 de prioridad alta"
         "handoff_reason": "advisor_request",
         "description": "Duda sobre cómo pagar una adjudicación.",
         "created_at": _t("13:40:00"),
@@ -224,9 +225,26 @@ TICKETS = [
         "assigned_advisor_id": ANA_ID,
         "handoff_reason": "funds_claim",
         "description": "Vehículo adjudicado no aparece en la cuenta.",
+        "missing_data": ["placa_vehiculo"],  # dashboard: "Datos pendientes" de Ana
         "created_at": _t("11:20:00"),
         "assigned_at": _t("11:25:00"),
         "updated_at": _t("11:48:00"),
+    },
+    {
+        "ticket_id": ticket_id_for_conversation("conv_h06"),
+        "conversation_id": "conv_h06",
+        "user_id": "user_106",
+        "user_email": "pedro.castro@example.test",
+        "status": "CLOSED",
+        "assigned_advisor_id": ANA_ID,
+        "handoff_reason": "advisor_request",
+        "description": "Actualización de datos de contacto.",
+        "resolution": "Se actualizaron correo y teléfono en la cuenta del usuario.",
+        "closed_by": ANA_ID,  # en Tickets es el advisor_id real (dashboard: "Cerrados hoy")
+        "created_at": _t("09:10:00"),
+        "assigned_at": _t("09:15:00"),
+        "updated_at": _t("10:00:00"),
+        "closed_at": _t("10:00:00"),
     },
 ]
 
