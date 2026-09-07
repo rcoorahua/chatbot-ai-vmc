@@ -7,7 +7,7 @@ import Button from "@/concorde/components/Button";
 import AvatarZone from "@/concorde/components/AvatarZone";
 import StatusBadge from "@/components/StatusBadge";
 import MessageBubble from "@/components/MessageBubble";
-import { ArrowLeftIcon, PaperclipIcon } from "@/components/icons";
+import { ArrowLeftIcon, ChevronRightIcon, PaperclipIcon } from "@/components/icons";
 import { ApiError, apiErrorMessage, closeConversation, getMessages, postAdvisorMessage, takeConversation } from "@/lib/api";
 import { useAdvisor } from "@/lib/advisor-context";
 import { SENDER_LABEL, formatWaitTime, handoffReasonLabel } from "@/lib/format";
@@ -145,16 +145,18 @@ export default function ConversationDetailPage() {
   const canReply = !assignedToOther && conversation.status === "IN_ATTENTION";
 
   return (
-    // Mobile: una sola columna que scrollea con <main> (nada de scroll interno anidado, que
-    // en pantallas cortas colapsaba el hilo y dejaba el botón de acción flotando sobre la
-    // tarjeta de contexto). Desktop (lg): vuelve el cockpit de alto fijo con scroll propio.
-    <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:flex-row">
-      <section className="flex min-w-0 flex-col rounded-2xl bg-white shadow-sm lg:min-h-0 lg:flex-1">
-        <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-black/5 bg-white px-5 py-4 lg:static">
+    // Mobile y desktop comparten el mismo esqueleto: la <section> del hilo llena su alto
+    // (acotado por <main>) y el ÚNICO scroll es el de los mensajes. Así la cabecera y la
+    // barra de acción quedan fijas —el botón "Tomar" siempre abajo— sin `position:fixed`.
+    // El panel de contexto es un <aside> a la derecha en desktop; en mobile no existe, su
+    // contenido va como bloque plegable al inicio del hilo.
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
+        <header className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-black/5 px-4 py-3.5 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/advisor/inbox"
-              className="flex items-center rounded-lg text-neutral-500 transition hover:text-neutral-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)] lg:hidden"
+              className="-ml-1 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--vmc-color-vault-500)] lg:hidden"
               aria-label="Volver a la cola"
             >
               <ArrowLeftIcon width={18} height={18} />
@@ -187,73 +189,70 @@ export default function ConversationDetailPage() {
           )}
         </header>
 
-        <div className="flex flex-col gap-3 px-5 py-4 lg:min-h-0 lg:flex-1 lg:justify-end lg:overflow-y-auto">
-          {actionError && <p className="text-center text-xs text-[#9A4A0F]">{actionError}</p>}
-          {messages.map((message, i) => {
-            const prev = messages[i - 1];
-            const showLabel =
-              message.message_type !== "SYSTEM" &&
-              (!prev ||
-                prev.message_type === "SYSTEM" ||
-                prev.sender_type !== message.sender_type ||
-                prev.sender_id !== message.sender_id);
-            return (
-              <MessageBubble
-                key={message.message_id}
-                message={message}
-                senderLabel={showLabel ? senderLabelFor(message) : undefined}
-              />
-            );
-          })}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-5">
+          {/* Contexto — en mobile el <aside> no se renderiza; su info va acá, plegable. */}
+          <MobileContext conversation={conversation} now={now} />
 
-          {sendFailure && canReply && (
-            <div className="flex justify-end">
-              <div className="alert-card max-w-md rounded-2xl px-4 py-3 text-sm">
-                No se pudo enviar: &quot;{sendFailure.content}&quot; — {sendFailure.message}
-                <button
-                  type="button"
-                  onClick={() => void sendMessage(sendFailure.clientMessageId, sendFailure.content)}
-                  disabled={sending}
-                  className="mt-1 block text-xs font-semibold underline decoration-2 underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
-                >
-                  Reintentar (RF-037/038 · mismo client_message_id, no duplica)
-                </button>
+          {actionError && <p className="text-center text-xs text-[#9A4A0F]">{actionError}</p>}
+
+          {/* Los mensajes se pegan abajo (convención de chat): crecen hacia arriba. */}
+          <div className="flex flex-1 flex-col justify-end gap-3">
+            {messages.map((message, i) => {
+              const prev = messages[i - 1];
+              const showLabel =
+                message.message_type !== "SYSTEM" &&
+                (!prev ||
+                  prev.message_type === "SYSTEM" ||
+                  prev.sender_type !== message.sender_type ||
+                  prev.sender_id !== message.sender_id);
+              return (
+                <MessageBubble
+                  key={message.message_id}
+                  message={message}
+                  senderLabel={showLabel ? senderLabelFor(message) : undefined}
+                />
+              );
+            })}
+
+            {sendFailure && canReply && (
+              <div className="flex justify-end">
+                <div className="alert-card max-w-md rounded-2xl px-4 py-3 text-sm">
+                  No se pudo enviar: &quot;{sendFailure.content}&quot; — {sendFailure.message}
+                  <button
+                    type="button"
+                    onClick={() => void sendMessage(sendFailure.clientMessageId, sendFailure.content)}
+                    disabled={sending}
+                    className="mt-1 block text-xs font-semibold underline decoration-2 underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
+                  >
+                    Reintentar (RF-037/038 · mismo client_message_id, no duplica)
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        <footer className="sticky bottom-0 z-20 border-t border-black/5 bg-white px-5 py-4 lg:static">
+        <footer className="flex-shrink-0 border-t border-black/5 bg-white px-4 py-3 sm:px-5">
           {isPendingUnassigned ? (
-            <div className="flex flex-col gap-3 rounded-2xl bg-[color:var(--vmc-color-orange-600)]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                {/* En mobile el contexto de la derivación queda fuera de vista (aside abajo);
-                    se repite acá, junto a la decisión de tomar el caso. */}
-                {conversation.handoff_reason && (
-                  <p className="text-sm font-semibold text-[#9A4A0F] lg:hidden">
-                    {handoffReasonLabel(conversation.handoff_reason)}
-                    {conversation.handoff_requested_at && (
-                      <span className="font-normal">
-                        {" "}
-                        · esperando {formatWaitTime(conversation.handoff_requested_at, now)}
-                      </span>
-                    )}
-                  </p>
-                )}
-                <p className="text-sm text-[#9A4A0F]">
-                  Nadie ha tomado este caso todavía. Tómalo para poder responder (RF-029).
-                </p>
-              </div>
-              <Button variant="secondary-sm" onClick={() => void handleTake()} disabled={taking}>
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <p className="text-xs text-neutral-500 sm:flex-1 sm:text-sm">
+                Nadie ha tomado este caso todavía. Tómalo para poder responder.
+              </p>
+              <Button
+                variant="secondary-sm"
+                className="w-full sm:w-auto"
+                onClick={() => void handleTake()}
+                disabled={taking}
+              >
                 {taking ? "Tomando…" : "Tomar conversación"}
               </Button>
             </div>
           ) : assignedToOther ? (
-            <p className="text-center text-sm text-neutral-500">
-              {conversation.assigned_advisor_id} ya tomó este caso — solo lectura.
+            <p className="py-1 text-center text-sm text-neutral-500">
+              Otro asesor ya tomó este caso — solo lectura.
             </p>
           ) : canReply ? (
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-2 sm:gap-3">
               <button
                 type="button"
                 title="Adjuntar imagen (selector / pegado / drag & drop — RF-041)"
@@ -266,21 +265,26 @@ export default function ConversationDetailPage() {
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="Escribe una respuesta…"
                 rows={1}
-                className="min-h-11 flex-1 resize-none rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-[color:var(--vmc-color-vault-500)]"
+                className="min-h-11 min-w-0 flex-1 resize-none rounded-2xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-[color:var(--vmc-color-vault-500)]"
               />
-              <Button variant="secondary-sm" onClick={handleSend} disabled={sending || !draft.trim()}>
+              <Button
+                variant="secondary-sm"
+                className="!min-w-0 flex-shrink-0"
+                onClick={handleSend}
+                disabled={sending || !draft.trim()}
+              >
                 {sending ? "Enviando…" : "Enviar"}
               </Button>
             </div>
           ) : (
-            <p className="text-center text-sm text-neutral-500">
-              Sin handoff activo — el bot está atendiendo (RF-025). Nada que responder desde acá.
+            <p className="py-1 text-center text-sm text-neutral-500">
+              El bot está atendiendo (RF-025). Nada que responder desde acá.
             </p>
           )}
         </footer>
       </section>
 
-      <aside className="flex w-full flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:w-80">
+      <aside className="hidden w-full flex-shrink-0 flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm lg:flex lg:w-80">
         <div>
           <h2 className="text-xs font-bold uppercase tracking-wide text-neutral-500">Usuario</h2>
           <dl className="mt-2.5 space-y-1.5 text-sm">
@@ -326,7 +330,61 @@ function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-neutral-500">{label}</dt>
-      <dd className="text-right font-medium text-[#191C1C]">{value ?? "—"}</dd>
+      <dd className="min-w-0 truncate text-right font-medium text-[#191C1C]">{value ?? "—"}</dd>
+    </div>
+  );
+}
+
+/**
+ * Contexto del caso para mobile: el <aside> de la derecha no se renderiza bajo `lg`, así que
+ * su info va acá, arriba del hilo. La derivación (por qué llegó, cuánto lleva esperando) va
+ * siempre visible; el resto —datos del usuario, resumen de la IA— en un <details> nativo,
+ * plegado salvo que aún nadie haya tomado el caso (ahí el asesor necesita todo para decidir).
+ */
+function MobileContext({ conversation, now }: { conversation: Conversation; now: number }) {
+  const untaken = conversation.status === "PENDING_ADVISOR" && !conversation.assigned_advisor_id;
+  // Abierto por defecto solo si nadie tomó el caso (ahí el asesor necesita todo para decidir);
+  // controlado para que un re-render del sondeo no revierta lo que el asesor plegó/abrió.
+  const [open, setOpen] = useState(untaken);
+  return (
+    <div className="flex flex-col gap-2.5 lg:hidden">
+      {conversation.handoff_reason && (
+        <div className="rounded-xl bg-[color:var(--vmc-color-orange-600)]/10 px-3.5 py-2.5">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-[#9A4A0F]">Derivación</p>
+          <p className="mt-0.5 text-sm text-[#9A4A0F]">{handoffReasonLabel(conversation.handoff_reason)}</p>
+          {conversation.handoff_requested_at && (
+            <p className="mt-0.5 text-xs text-[#9A4A0F]/80">
+              Esperando hace {formatWaitTime(conversation.handoff_requested_at, now)}
+            </p>
+          )}
+        </div>
+      )}
+      <details
+        className="group rounded-xl border border-black/5"
+        open={open}
+        onToggle={(e) => setOpen(e.currentTarget.open)}
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-2.5 text-xs font-bold uppercase tracking-wide text-neutral-500">
+          Detalles del caso
+          <ChevronRightIcon
+            width={14}
+            height={14}
+            className="text-neutral-400 transition-transform group-open:rotate-90"
+          />
+        </summary>
+        <div className="border-t border-black/5 px-3.5 py-2.5">
+          <dl className="space-y-1.5 text-sm">
+            <Field label="Nombre" value={conversation.user_name} />
+            <Field label="Correo" value={conversation.user_email} />
+            <Field label="Empresa" value={conversation.user_company} />
+            <Field label="ID VMC" value={conversation.user_id} />
+          </dl>
+          <p className="mt-2.5 rounded-lg bg-[color:var(--vmc-color-vault-500)]/5 p-2.5 text-sm text-neutral-700">
+            <span className="font-semibold text-[color:var(--vmc-color-vault-700)]">Resumen IA: </span>
+            {conversation.summary ?? "Sin resumen todavía."}
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
