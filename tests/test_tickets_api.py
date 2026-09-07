@@ -209,6 +209,27 @@ def test_tomar_la_conversacion_pone_el_ticket_en_curso(client, limpiar):
     assert ticket["assigned_advisor_id"] == advisor_id and ticket["assigned_at"]
 
 
+def test_volver_a_tomar_el_hilo_reabre_su_ticket(client, limpiar):
+    """Auditoría 2026-09-06: tomar → cerrar → volver a tomar (D-022/D-023) dejaba un ticket
+    CLOSED colgando de una conversación IN_ATTENTION, porque el id es determinista por
+    conversación y `assign` devolvía el cerrado tal cual. Ahora lo reabre."""
+    sesion = _sesion(client, limpiar)
+    hilo_id = sesion["conversation"]["conversation_id"]
+    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    _tomar(client, headers, hilo_id)
+    cierre = client.post(
+        f"/advisor/conversations/{hilo_id}/close", headers=headers, json={"resolution": "Listo"}
+    )
+    assert cierre.status_code == 200, cierre.text
+    assert _ticket(client, headers, hilo_id)["status"] == "CLOSED"
+
+    _tomar(client, headers, hilo_id)
+
+    ticket = _ticket(client, headers, hilo_id)
+    assert ticket["status"] == "IN_PROGRESS" and ticket["assigned_advisor_id"] == advisor_id
+    assert ticket["closed_at"] is None and ticket["resolution"] is None
+
+
 # ───────────────────── AC-T3: el asesor confirma o corrige ─────────────────────
 
 

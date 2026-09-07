@@ -389,6 +389,57 @@ def test_cerrar_un_caso_lo_deja_cerrado_y_de_solo_lectura(client, limpiar):
     assert _handoff(client, sesion, limpiar, subject="Otro caso").status_code == 201
 
 
+def test_la_guarda_de_cerrado_es_atomica_y_no_de_memoria(client, limpiar):
+    """Auditoria 2026-09-06: el chequeo de CLOSED se hacia solo sobre la copia leida, asi que
+    un mensaje que llegaba con el caso recien cerrado desde OTRO request entraba igual.
+    Ahora la condicion viaja en la transaccion: la copia vieja pierde."""
+    from backend.conversations import repository, service
+
+    sesion = _sesion(client, limpiar, autenticado=True)
+    caso_id = _handoff(client, sesion, limpiar).json()["conversation"]["conversation_id"]
+    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    copia_vieja = repository.get_conversation(caso_id)  # leida ANTES del cierre
+    _tomar_y_cerrar(client, headers, caso_id)
+
+    with pytest.raises(service.ConversationClosed):
+        service.post_user_message(
+            copia_vieja, client_message_id="cli-" + uuid.uuid4().hex, content="hola?"
+        )
+    # El asesor tampoco: su copia dice "asignada a mi y en atencion", la fila dice CLOSED.
+    copia_tomada = copia_vieja.model_copy(
+        update={"assigned_advisor_id": advisor_id, "status": "IN_ATTENTION"}
+    )
+    with pytest.raises(service.ConversationClosed):
+        service.post_advisor_message(
+            copia_tomada, advisor_id=advisor_id, advisor_name="Ana",
+            client_message_id="cli-" + uuid.uuid4().hex, content="hola",
+        )
+    # Y cerrar por segunda vez dice que YA estaba cerrado, no "no eres el asesor asignado".
+    segunda = client.post(f"/advisor/conversations/{caso_id}/close", headers=headers)
+    assert segunda.status_code == 409 and "cerrado" in segunda.json()["detail"]
+
+
+def test_la_bandeja_del_asesor_no_se_acorta_por_los_cerrados_recientes(client, limpiar):
+    """Auditoria 2026-09-06: el filtro de CLOSED se aplicaba DESPUES del Limit del GSI, asi
+    que un caso cerrado hace un momento (el mas reciente del indice) tapaba a uno abierto
+    mas viejo y la pagina volvia corta o vacia."""
+    from backend.conversations import service
+
+    sesion = _sesion(client, limpiar, autenticado=True)
+    abierto = _handoff(client, sesion, limpiar, subject="Abierto").json()["conversation"]
+    cerrado = _handoff(client, sesion, limpiar, subject="Cerrado").json()["conversation"]
+    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    tomada = client.post(
+        f"/advisor/conversations/{abierto['conversation_id']}/take", headers=headers
+    )
+    assert tomada.status_code == 200, tomada.text
+    _tomar_y_cerrar(client, headers, cerrado["conversation_id"])
+
+    mios = service.list_inbox(None, advisor_id=advisor_id, limit=1)
+
+    assert [c.conversation_id for c in mios] == [abierto["conversation_id"]]
+
+
 def test_cerrar_el_hilo_del_autenticado_lo_devuelve_al_bot(client, limpiar):
     """AC-A7 sigue valiendo para el hilo permanente: un asesor que lo tomo (D-022) y lo
     cierra lo devuelve al bot; no queda CLOSED. (El anonimo ni se toma: D-031,

@@ -165,6 +165,20 @@ def test_auto_alta_al_primer_login_y_misma_fila_despues(client, limpiar):
     assert otra_vez["last_login_at"]
 
 
+def test_el_login_no_se_reescribe_en_cada_request(client, limpiar, tablas):
+    """Auditoria 2026-09-06: cada request a /advisor hacia un UpdateItem de `last_login_at`
+    (uno por cada sondeo de la bandeja). Dentro de la ventana la fila no se toca."""
+    advisor_id, headers = _asesor_nuevo(client, limpiar)
+    primero = tablas["advisors"].get_item(Key={"advisor_id": advisor_id})["Item"]
+
+    client.get("/advisor/me", headers=headers)
+    client.get("/advisor/me", headers=headers)
+
+    despues = tablas["advisors"].get_item(Key={"advisor_id": advisor_id})["Item"]
+    assert despues["last_login_at"] == primero["last_login_at"]
+    assert despues["updated_at"] == primero["updated_at"]
+
+
 def test_el_asesor_del_seed_se_resuelve_por_sub_y_el_invitado_se_activa(client, tablas):
     ana = client.get("/advisor/me", headers=_bearer("sub-ana-001", name="Ana Torres")).json()
     assert ana["advisor_id"] == ANA_ID

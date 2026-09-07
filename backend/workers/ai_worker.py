@@ -175,6 +175,15 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
         },
     )
 
+    # ── D-029: la pregunta "¿te conecto con un asesor?" vale SOLO para este turno ──
+    # Se resuelve (o se descarta) ANTES de triviales y continuidad: "ok", "vale" o "gracias"
+    # son la respuesta a ESA pregunta, no un cierre de conversacion. Con los triviales
+    # primero, un "ok" recibia "¡Con gusto!", el flujo quedaba vivo y un "si" de mas tarde,
+    # sobre otro tema, abria el formulario (auditoria 2026-09-06).
+    handled, conversation = _settle_handoff_confirm(conversation, message, text)
+    if handled:
+        return
+
     # ── Continuidad (TD-009): ¿el mensaje solo tiene sentido pegado a lo que pregunto el bot? ──
     # Se decide ANTES de los triviales y de la repeticion porque cambia lo que significan: tras
     # "¿te explico el siguiente paso?", un "ok" no es un "gracias" de cierre, y el tercer "si"
@@ -593,9 +602,42 @@ def _current_flow(
 
 def _awaiting_slot(conversation: Conversation) -> bool:
     """Hay un flujo del corpus vigente esperando que el usuario elija (botones en pantalla).
-    La confirmacion de asesor no cuenta: sus "si"/"no" los resuelve el propio flujo."""
+    La confirmacion de asesor no cuenta: la resuelve `_settle_handoff_confirm` antes de que
+    esto se consulte."""
     active = _current_flow(conversation)
     return active is not None and active[2] and active[0].name != flows.HANDOFF_CONFIRM
+
+
+def _settle_handoff_confirm(
+    conversation: Conversation, message: Message, text: str
+) -> tuple[bool, Conversation]:
+    """Resuelve o descarta la pregunta "¿te conecto con un asesor?" (flujo HANDOFF_CONFIRM).
+
+    Devuelve `(atendido, conversacion fresca)`. La pregunta vale para el turno siguiente y
+    nada mas: un si/no (boton o escrito) la resuelve; cualquier otra cosa la descarta y el
+    mensaje sigue el pipeline como si la pregunta no existiera — incluida la deteccion de
+    flujos del corpus, que necesita la fila fresca (sin `active_flow`). Dejarla viva 24 h
+    como a un flujo del corpus haria que un "si" de mañana derivara por un tema olvidado.
+    Antes esto vivia dentro de `_handle_flow`, DESPUES de los triviales: ver `_attend`.
+    """
+    active = _current_flow(conversation)
+    if active is None or active[0].name != flows.HANDOFF_CONFIRM:
+        return False, conversation
+    _definition, step, vigente = active
+    interaction = (message.metadata or {}).get("interaction")
+    value = (
+        flows.validate_interaction(step, interaction, current_version=conversation.flow_version)
+        if interaction is not None
+        else None
+    )
+    if value is None:
+        value = flows.extract_slot_value(step, text)
+    _clear_flow_if_active(conversation)
+    fresh = _refreshed(conversation)
+    if value is None or not vigente:
+        return False, fresh
+    _resolve_handoff_confirm(fresh, message, value)
+    return True, fresh
 
 
 def _refreshed(conversation: Conversation) -> Conversation:
@@ -624,7 +666,7 @@ def _handle_flow(
     ip_hash: str | None = None,
     followup_rule: str | None = None,
 ) -> bool:
-    """True si el flujo guiado atendio el mensaje (D-028). El orden importa:
+    """True si el flujo guiado del CORPUS atendio el mensaje (D-028). El orden importa:
 
     1. flujo activo + click valido o texto que resuelve el slot → responder con la consulta
        canonica y cerrar el flujo;
@@ -649,21 +691,9 @@ def _handle_flow(
             ) if interaction is not None else None
             if value is None:
                 value = flows.extract_slot_value(step, text)
-            if definition.name == flows.HANDOFF_CONFIRM:
-                # Una pregunta de si/no vale para el turno siguiente y nada mas: si el usuario
-                # la ignora y pregunta otra cosa, se limpia. Dejarla viva 24 h como a un flujo
-                # del corpus haria que un "si" de mañana derivara por un tema ya olvidado.
-                _clear_flow_if_active(conversation)
-                if value is not None:
-                    _resolve_handoff_confirm(conversation, message, value)
-                    return True
-                # Ignoro la pregunta y escribio otra cosa: la confirmacion se descarta y el
-                # mensaje sigue como cualquier otro, INCLUIDA la deteccion de flujos de abajo.
-                # Antes se devolvia False aqui y "quiero participar" se saltaba el flujo: iba
-                # al clasificador y al RAG con el texto literal, que no recupera nada, y
-                # volvia a "no tengo ese dato, ¿asesor?" en bucle (sesion real, 2026-09-03).
-                conversation = _refreshed(conversation)
-            elif value is None:
+            # La confirmacion de asesor (HANDOFF_CONFIRM) no llega aqui: `_attend` la
+            # resuelve o descarta antes (`_settle_handoff_confirm`) y pasa la fila fresca.
+            if value is None:
                 if followup_rule in _CERTAIN_CONTINUATIONS:
                     # "si", "listo", "¿y ahora?" con los botones en pantalla: quiere seguir
                     # pero no eligio. Se repiten los botones (gratis) en vez de mandar el

@@ -12,7 +12,10 @@ import uuid
 from backend.advisors import repository
 from backend.advisors.models import Advisor, AdvisorStatus
 from backend.core.auth import CognitoClaims
-from backend.core.clock import utc_now_iso
+from backend.core.clock import minutes_ago_iso, utc_now_iso
+
+# Ventana en la que un asesor ya visto no vuelve a escribir `last_login_at` (ver resolve_advisor).
+_LOGIN_TOUCH_MINUTES = 5
 
 # Namespace fijo para derivar el advisor_id del cognito_sub (RF-006/D-021: un sub, un asesor).
 # Cambiarlo "perderia" los asesores existentes — mismo patron que _USER_CONVERSATION_NAMESPACE
@@ -62,6 +65,20 @@ def resolve_advisor(claims: CognitoClaims) -> Advisor:
     if advisor.status == AdvisorStatus.DISABLED:
         raise AdvisorDisabled(advisor.advisor_id)
 
+    # `last_login_at` es "la ultima vez que se lo vio", no "el ultimo request": escribirlo en
+    # cada llamada era un UpdateItem por sondeo de la bandeja (720 por hora y asesor con el
+    # hilo abierto; auditoria 2026-09-06). Se toca solo si paso la ventana o cambio algo.
+    stale = (
+        advisor.last_login_at is None
+        or advisor.last_login_at < minutes_ago_iso(_LOGIN_TOUCH_MINUTES)
+    )
+    changed = (
+        advisor.status != AdvisorStatus.ACTIVE
+        or bool(claims.name and claims.name != advisor.name)
+        or bool(claims.email and claims.email != advisor.email)
+    )
+    if not (stale or changed):
+        return advisor
     repository.record_login(
         advisor.advisor_id,
         at=now,
