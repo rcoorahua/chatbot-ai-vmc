@@ -435,7 +435,8 @@ chatbot-ai-vmc/
 ├── REQUERIMENTS.md             # spec del MVP en el repo (RF/RNF/RB/AC/D + modelo DynamoDB v1.0)
 ├── PLAN.md                     # este documento
 ├── CLAUDE.md                   # registro de decisiones (leer SIEMPRE antes de implementar)
-└── README.md                   # overview + quickstart dev
+├── README.md                   # overview + quickstart dev
+└── DEPLOYMENT.md               # configuracion del CDK y checklist de despliegue
 ```
 
 Implementado (2026-08-28): `core`, `conversations`, `advisors`, `api/routers/chat.py`,

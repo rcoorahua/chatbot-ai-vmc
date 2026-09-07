@@ -511,7 +511,8 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `dependencies`/`dev` — **no** cubre los `backend/requirements-*.txt` (lo que va a Lambda) ni
   `infra/requirements.txt` (pineados por versión exacta en el propio archivo, sin lock aparte).
 - **Documentación en `docs/`** (desde 2026-09-03): PLAN, REQUERIMENTS, BACKLOG, MAPEO, TEST,
-  BENCHMARK, DESIGN y PRODUCT. En la raíz quedan solo `README.md`, `CLAUDE.md` y `DETAILS.md`.
+  BENCHMARK, DESIGN y PRODUCT. En la raíz quedan solo `README.md`, `DEPLOYMENT.md` (cómo está configurado el CDK y qué
+  falta conectar para desplegar — es lo que lee el equipo de AWS), `CLAUDE.md` y `DETAILS.md`.
   Un doc nuevo va a `docs/`; las menciones sin enlace ("PLAN.md §6" en docstrings y workflows)
   siguen valiendo por el nombre.
 - Locales y **no versionados** (`.gitignore`): `my-usage.md` (chuleta personal), `REFERENCIA/`
