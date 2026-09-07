@@ -13,6 +13,7 @@ class StageConfig:
     account: str | None  # TODO §6.1: account ID por stage (None → cdk usa el del perfil actual)
     region: str  # TODO §6.1: confirmar region con el equipo AWS
     api_memory_mb: int
+    worker_ai_memory_mb: int
     worker_ai_timeout_s: int  # visibility_timeout de ai-jobs = 6x esto (regla cerrada)
     log_retention_days: int
     retain_data: bool  # prod: RemovalPolicy.RETAIN + deletion protection en tablas/bucket
@@ -34,6 +35,7 @@ _CONFIGS = {
         account=None,
         region="us-east-1",
         api_memory_mb=512,
+        worker_ai_memory_mb=1024,
         worker_ai_timeout_s=120,
         log_retention_days=14,
         retain_data=False,
@@ -47,6 +49,7 @@ _CONFIGS = {
         account=None,
         region="us-east-1",
         api_memory_mb=1024,
+        worker_ai_memory_mb=1024,
         worker_ai_timeout_s=120,
         log_retention_days=90,  # retencion de LOGS; la retencion de DATOS es D-014
         retain_data=True,

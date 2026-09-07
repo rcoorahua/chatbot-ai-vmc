@@ -84,8 +84,9 @@ consultan las pruebas de lectura. **El andamiaje vive en `tests/helpers/` (desde
 `conftest.py`. Antes de escribir un `_foo` en un archivo de tests, buscar ahí; si dos
 archivos lo necesitan, va ahí. La suite corre sin claves ni red: nadie simula el SDK.
 
-CI (`.github/workflows/ci.yml`): lint + tests (dynamodb-local 2.5.2 y localstack 3.7 como
-`services`, mismos tags que `docker-compose.yml`) + `cdk synth`, sin credenciales AWS. El CD
+CI (`.github/workflows/ci.yml`): lint (ruff pineado al lock + `node --check` del widget) + tests
+(dynamodb-local 2.5.2 y localstack 3.7 como `services`, mismos tags que `docker-compose.yml`, con
+espera activa a que respondan) + `cdk synth` + lint y build del frontend, sin credenciales AWS. El CD
 (`deploy.yml`) está **maquetado y apagado** (`if: false`) hasta tener cuenta AWS (PLAN.md §6);
 `infra/config.py` lleva `account=None` a propósito.
 
@@ -497,9 +498,10 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
 
 **Invariantes que cruzan archivos (romperlos no lo detecta el linter):**
 
-- El esquema DynamoDB está **duplicado a propósito** en `infra/stacks/subastin_stack.py` (AWS) y
-  `scripts/local_setup.py` (local). Cambiar una clave o un GSI exige tocar **los dos** — si no,
-  las pruebas pasan en local contra un esquema que no existe en stage.
+- El esquema DynamoDB **y el TTL** están **duplicados a propósito** en `infra/stacks/subastin_stack.py`
+  (AWS) y `scripts/local_setup.py` (local, `TABLAS_CON_TTL`). Cambiar una clave, un GSI o el TTL
+  exige tocar **los dos** — si no, las pruebas pasan en local contra un esquema que no existe en
+  stage (hasta 2026-09-07 el TTL solo existía en AWS y el camino de caducidad nunca corría en dev).
 - Los nombres de variable de entorno son el contrato entre los tres entornos: `common_env` del
   stack, `nombres_de_tabla()` de `local_setup.py` y `.env.example` usan **los mismos**
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).

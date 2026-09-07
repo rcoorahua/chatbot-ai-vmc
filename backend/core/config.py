@@ -15,13 +15,20 @@ PROVISIONAL y lleva su D-xxx al lado: cambiarlo es editar una variable, no cazar
 import json
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # `.env` se busca en la RAIZ del repo, no en el directorio de trabajo: un script corrido
+    # desde otra carpeta perdia la configuracion en silencio (auditoria 2026-09-06).
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     stage: str = "dev"
     aws_region: str = "us-east-1"
@@ -268,7 +275,10 @@ def _resolve_secrets_into_env() -> None:
         if not arn:
             continue
         for key, value in _fetch_secret_json(arn).items():
-            os.environ[key] = value
+            # El stack crea cada secreto con sus claves VACIAS hasta el put-secret-value; un
+            # vacio no pisa el entorno, para que el error sea "falta X" y no un valor en blanco.
+            if value:
+                os.environ[key] = value
 
 
 @lru_cache
