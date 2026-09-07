@@ -203,17 +203,25 @@ def create_conversation_with_messages(
 
 
 def update_user_profile(
-    conversation_id: str, *, user_name: str | None, user_email: str | None, updated_at: str
+    conversation_id: str,
+    *,
+    user_name: str | None,
+    user_email: str | None,
+    user_cuu: str | None = None,
+    updated_at: str,
 ) -> None:
     """Refresca la copia minima del usuario (VMC es la fuente de verdad, RF-051)."""
     sets = ["updated_at = :updated_at"]
     values: dict[str, Any] = {":updated_at": updated_at}
-    if user_name is not None:
-        sets.append("user_name = :user_name")
-        values[":user_name"] = user_name
-    if user_email is not None:
-        sets.append("user_email = :user_email")
-        values[":user_email"] = user_email
+    for campo, valor in (
+        ("user_name", user_name),
+        ("user_email", user_email),
+        ("user_cuu", user_cuu),
+    ):
+        if valor is None:
+            continue  # ausente en el JWT: se conserva lo que ya habia, no se borra
+        sets.append(f"{campo} = :{campo}")
+        values[f":{campo}"] = valor
     _conversations().update_item(
         Key={"conversation_id": conversation_id},
         UpdateExpression="SET " + ", ".join(sets),

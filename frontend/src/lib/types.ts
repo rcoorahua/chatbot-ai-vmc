@@ -32,6 +32,9 @@ export interface Conversation {
   user_id: string | null;
   user_name: string | null;
   user_email: string | null;
+  /** D-010: el codigo que VMC le muestra al usuario ("ZEEJ7K"). Solo para identificarlo a la
+   *  vista; no se busca por el. */
+  user_cuu: string | null;
   user_company: string | null;
   /** D-029: asunto del caso y de que hilo salio. */
   title?: string | null;
@@ -102,6 +105,7 @@ export interface Ticket {
   user_type: UserType;
   user_id: string | null;
   user_email: string | null;
+  user_cuu: string | null;
   problem_type: ProblemType;
   category: TicketCategory;
   priority: TicketPriority;
