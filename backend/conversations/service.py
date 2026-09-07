@@ -153,6 +153,24 @@ def _anonymous_ttl() -> int | None:
     return epoch_seconds() + days * 86400 if days > 0 else None
 
 
+# La entrada la traduce a 404 sin importar el repository (regla: los routers hablan con el
+# service; el repository es detalle de esta capa).
+ConversationNotFound = repository.ConversationNotFound
+
+
+def get_conversation(conversation_id: str) -> Conversation | None:
+    return repository.get_conversation(conversation_id)
+
+
+def mark_queue_failed(message: Message) -> None:
+    """RNF-003: el mensaje ya es durable; si la cola de IA fallo se marca QUEUE_FAILED para
+    que un barrido lo re-encole (alarma pendiente en RNF-006), nunca un 500 al usuario."""
+    repository.update_message_status(
+        message.conversation_id, message.message_key, MessageStatus.QUEUE_FAILED
+    )
+    message.status = MessageStatus.QUEUE_FAILED  # la respuesta al widget refleja el estado real
+
+
 def owns(session: ChatSession, conversation: Conversation) -> bool:
     """Autorizacion del chat publico (RNF-005). Autenticado: todo lo suyo (hilo y casos) por
     `user_id`; anonimo: solo la conversacion atada a su token."""
@@ -443,7 +461,12 @@ class ConversationAlreadyTaken(RuntimeError):
 
 class AnonymousConversation(RuntimeError):
     """D-031: la conversacion de un visitante la atiende SOLO el bot; ningun asesor la toma
-    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion."""
+    (ni por intervencion proactiva, D-022). Para hablar con una persona, inicia sesion.
+    Trae la conversacion para que el 409 lleve su estado (como `ConversationAlreadyTaken`)."""
+
+    def __init__(self, conversation: Conversation) -> None:
+        super().__init__("la conversacion de un visitante la atiende solo el bot")
+        self.conversation = conversation
 
 
 def list_inbox(
@@ -474,10 +497,11 @@ def open_thread(
     before: str | None = None,
     after: str | None = None,
     limit: int | None = None,
-) -> tuple[list[Message], bool]:
+) -> tuple[Conversation, list[Message], bool]:
     """El hilo como lo ve el asesor: los ultimos N (RF-033), paginas anteriores con `before`
-    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(mensajes, hay_mas_atras)`.
-    Abrirlo consume los no leidos (RF-035)."""
+    (RF-012) o solo lo nuevo con `after` (sondeo). Devuelve `(conversacion, mensajes,
+    hay_mas_atras)`; abrirlo consume los no leidos (RF-035) y la conversacion devuelta ya lo
+    refleja, para que el router no tenga que rederivarlo."""
     page = limit or get_settings().advisor_thread_page_size
     if after:
         messages = repository.list_messages(conversation.conversation_id, after=after, limit=page)
@@ -488,7 +512,8 @@ def open_thread(
         )
     if conversation.unread_count > 0:
         repository.reset_unread(conversation.conversation_id)
-    return messages, has_more
+        conversation = conversation.model_copy(update={"unread_count": 0})
+    return conversation, messages, has_more
 
 
 def _system_note(
@@ -522,7 +547,7 @@ def take_conversation(
     el estado actual para que la app se actualice sin duplicar atencion. La conversacion de
     un visitante no se toma (D-031)."""
     if conversation.user_type == UserType.ANONYMOUS:
-        raise AnonymousConversation(conversation.conversation_id)
+        raise AnonymousConversation(conversation)
     if conversation.assigned_advisor_id == advisor_id:
         return conversation
     note = _system_note(

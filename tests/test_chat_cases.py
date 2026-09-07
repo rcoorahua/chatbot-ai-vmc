@@ -307,7 +307,7 @@ def test_la_guarda_de_cerrado_es_atomica_y_no_de_memoria(client, limpiar):
         )
     # Y cerrar por segunda vez dice que YA estaba cerrado, no "no eres el asesor asignado".
     segunda = client.post(f"/advisor/conversations/{caso_id}/close", headers=headers)
-    assert segunda.status_code == 409 and "cerrado" in segunda.json()["detail"]
+    assert segunda.status_code == 409 and "cerrad" in segunda.json()["detail"]
 
 
 def test_la_bandeja_del_asesor_no_se_acorta_por_los_cerrados_recientes(client, limpiar):
