@@ -27,7 +27,6 @@ import pytest
 from backend.agent import prompts, related
 from backend.agent.rag import Fragment, RagResult
 from backend.core.config import get_settings
-from backend.workers import ai_worker
 from tests.helpers.fakes import FakeLLM, install_llm
 from tests.helpers.scenario import (
     atiende,
@@ -85,7 +84,7 @@ def indice(monkeypatch, request):
         ]
         return RagResult(relevant=relevant, discarded=discarded, threshold=0.84)
 
-    monkeypatch.setattr(ai_worker.rag, "retrieve", buscar)
+    monkeypatch.setattr("backend.agent.rag.retrieve", buscar)
     return consultas
 
 
@@ -316,7 +315,7 @@ def test_una_pregunta_del_articulo_mas_alla_de_top_k_sale_como_boton(
     relevant = [intro, _frag(REG, FORM_Q, 0.8581), _frag(REG, CLAVE, 0.8531),
                 _frag(REG, COMO, 0.8525)]
     monkeypatch.setattr(
-        ai_worker.rag, "retrieve",
+        "backend.agent.rag.retrieve",
         lambda text, **kwargs: RagResult(
             relevant=relevant, discarded=[], threshold=0.84,
             overflow=[_frag(REG, PJ, 0.8490)],

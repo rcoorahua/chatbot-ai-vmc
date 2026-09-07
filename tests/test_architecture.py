@@ -11,8 +11,9 @@ Criterios:
   AC-AR3  los helpers que viven en `core` no se vuelven a definir por ahi: un `def normalize`
           o un `def _is_condition_failure` nuevo fuera de `core` es la señal de que alguien
           copio en vez de importar (auditoria 2026-09-06).
-  AC-AR4  los routers (`api/`) hablan con los `service`, nunca con un `repository`: las claves
-          y GSIs son detalle de cada dominio, y un router que los toca se salta las reglas.
+  AC-AR4  las entradas (`api/`, `workers/`) hablan con los `service`, nunca con un
+          `repository`: las claves y GSIs son detalle de cada dominio, y una entrada que los
+          toca se salta las reglas.
 
 Puro: recorre los archivos con `ast`, sin importar nada del backend.
 """
@@ -101,8 +102,8 @@ def test_las_dependencias_van_en_una_sola_direccion(relative, tree):
 
 
 @pytest.mark.parametrize("relative,tree", _modules(), ids=lambda x: x if isinstance(x, str) else "")
-def test_los_routers_no_tocan_ningun_repository(relative, tree):
-    if not relative.startswith("api/"):
+def test_las_entradas_no_tocan_ningun_repository(relative, tree):
+    if not relative.startswith(("api/", "workers/")):
         return
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom) or not (node.module or "").startswith("backend."):

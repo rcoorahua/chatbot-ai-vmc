@@ -462,7 +462,7 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   `core/{config,aws,auth,clock,jobs}.py`, `conversations/*`, `api/routers/chat.py`, `widget/`.
   **Mensajería del asesor implementada** (adelanto de F5, 2026-08-27): `advisors/*`,
   `api/routers/advisor.py`, `api/dev_auth.py`; falta el módulo `tickets` (D-008) y D-010.
-  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` compone debounce
+  **Pipeline IA implementado (F2+F3, 2026-08-28)**: `workers/ai_worker.py` (la entrada; desde 2026-09-07 las piezas viven en `workers/ai/`: `trace`, `state`, `window`, `accounting`, `replies`, `faq`, `guided`, con dependencias en un sentido) compone debounce
   (D-020) → triviales (D-006) → clasificador (reglas→Gemini, TD-008) → RAG/redacción → handoff
   mínimo, con registro en `AIUsage` (`agent/usage.py`); el bot responde (local:
   `scripts/run_ai_worker.py`). **Guardrails y golden set (D-024..D-026, 2026-08-28)**:

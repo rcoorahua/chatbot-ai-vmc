@@ -26,55 +26,44 @@ Flujo por job (cada paso con su decision al lado):
     la proporcion de trafico que no paga tokens es la metrica que justifica D-006 y las reglas.
  8. Slack (RF-028) queda pendiente de D-016; el ticket, del modulo tickets (F5).
 
-Timeout largo y memoria propia (distintos de la Lambda api). visibility_timeout de la cola ≥ 6x
-el timeout de esta funcion.
+Este archivo es la ENTRADA (`handler`, `_process`, `_attend`); las piezas viven en
+`workers/ai/` (ver su `__init__`). Timeout largo y memoria propia (distintos de la Lambda
+api). visibility_timeout de la cola ≥ 6x el timeout de esta funcion.
 """
 
 import logging
-from datetime import timedelta
 
-from backend.agent import (
-    flows,
-    followups,
-    guardrails,
-    prompts,
-    quota,
-    rag,
-    related,
-    trivial,
-    usage,
-    writer,
-)
+from backend.agent import followups, guardrails, prompts, related, trivial
 from backend.agent.classifier import ClassificationResult, classify
 from backend.agent.heuristics import classify_by_rules
 from backend.agent.intents import Intent
-from backend.conversations import forms, repository, service
+from backend.conversations import service
 from backend.conversations.models import (
     Conversation,
     ConversationStatus,
     Message,
     MessageStatus,
     SenderType,
-    UserType,
 )
 from backend.core import llm
-from backend.core.clock import minutes_ago_iso, to_iso, utc_now, utc_now_iso
-from backend.core.config import get_settings
 from backend.core.jobs import AIJob
-from backend.core.metadata import SOURCES, InteractionType, interaction_of, link, with_interaction
 from backend.core.observability import configure_logging, content_preview
+from backend.workers.ai import guided, state, window
+from backend.workers.ai.accounting import record_classification, record_free
+from backend.workers.ai.faq import answer_faq
+from backend.workers.ai.replies import (
+    is_anonymous,
+    offer_handoff_form,
+    reply_fixed,
+    spend_quota_or_reply,
+)
+from backend.workers.ai.trace import ctx, log_skip
 
 configure_logging()
 logger = logging.getLogger(__name__)
 
-_GOOGLE = "GOOGLE"
-
-# Reglas de `followups.is_continuation` que no dejan duda: un acuse ("si", "listo") o un pedido
-# explicito de seguir ("y luego?"). Con ellas el clasificador sobra. "responde_al_bot" (texto
-# corto cualquiera tras una pregunta del bot) es mas debil y sigue clasificandose con modelo.
-_CERTAIN_CONTINUATIONS = frozenset({"acuse", "pide_seguir"})
-
-# Respuesta fija por tipo de guardrail de entrada (D-024). El texto vive en prompts.py.
+# Respuesta fija por tipo de guardrail de entrada (D-024). El texto vive en prompts.py. Un
+# tipo nuevo sin respuesta propia cae en la de manipulacion en vez de tumbar el job.
 _GUARDRAIL_RESPONSES = {
     guardrails.PROMPT_INJECTION: prompts.GUARDRAIL_INJECTION_RESPONSE,
     guardrails.PRIVACY_REQUEST: prompts.GUARDRAIL_PRIVACY_RESPONSE,
@@ -95,27 +84,22 @@ def handler(event: dict, context) -> dict:
 
 def _process(body: str) -> None:
     job = AIJob.model_validate_json(body)
-    conversation = repository.get_conversation(job.conversation_id)
+    conversation = service.get_conversation(job.conversation_id)
     if conversation is None:
         logger.warning("Job para conversacion inexistente", extra={"job": job.conversation_id})
         return
-    message = repository.get_message(job.conversation_id, job.message_key)
+    message = service.get_message(job.conversation_id, job.message_key)
     if message is None or message.sender_type != SenderType.USER:
         return
     if message.status == MessageStatus.PROCESSED:
-        logger.debug(
-            "ai.job.duplicate",
-            extra={"conversation_id": job.conversation_id, "message_id": job.message_id},
-        )
+        logger.debug("ai.job.duplicate", extra=ctx(conversation, message))
         return  # SQS entrega al menos una vez: la re-entrega de un job atendido no repite nada
     logger.debug(
         "ai.job.received",
-        extra={
-            "conversation_id": job.conversation_id,
-            "message_id": job.message_id,
-            "status": str(conversation.status),
-            "bot_enabled": conversation.bot_enabled,
-        },
+        extra=ctx(
+            conversation, message,
+            status=str(conversation.status), bot_enabled=conversation.bot_enabled,
+        ),
     )
 
     try:
@@ -124,11 +108,9 @@ def _process(body: str) -> None:
         else:
             _attend(conversation, message, ip_hash=job.ip_hash)
     except Exception:
-        repository.update_message_status(
-            job.conversation_id, job.message_key, MessageStatus.FAILED
-        )
+        service.set_message_status(message, MessageStatus.FAILED)
         raise
-    repository.update_message_status(job.conversation_id, job.message_key, MessageStatus.PROCESSED)
+    service.set_message_status(message, MessageStatus.PROCESSED)
 
 
 def _while_bot_off(conversation: Conversation) -> None:
@@ -139,41 +121,33 @@ def _while_bot_off(conversation: Conversation) -> None:
         sent = service.send_wait_message_once(conversation, prompts.HANDOFF_WAIT_RESPONSE)
     logger.info(
         "ai.bot_off",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "status": str(conversation.status),
-            "wait_message_sent_now": sent,
-        },
+        extra=ctx(conversation, status=str(conversation.status), wait_message_sent_now=sent),
     )
 
 
 def _attend(conversation: Conversation, message: Message, ip_hash: str | None = None) -> None:
-    window = service.context_window(conversation.conversation_id)
-    block = _trailing_user_block(window)
+    context = service.context_window(conversation.conversation_id)
+    block = window.trailing_user_block(context)
     block_keys = [m.message_key for m in block]
 
     if message.message_key not in block_keys:
         # El hilo ya siguio (hay respuesta posterior): job viejo, nada que responder.
-        _log_skip(conversation, message, "already_answered")
+        log_skip(conversation, message, "already_answered")
         return
     if message.message_key != block_keys[-1]:
         # D-020: hay un mensaje mas nuevo; su job respondera el bloque completo.
-        _log_skip(conversation, message, "newer_message")
+        log_skip(conversation, message, "newer_message")
         return
 
     text = "\n".join(m.content for m in block if m.content).strip()
-    if not text:
-        return
     logger.debug(
         "ai.attend",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "user_type": str(conversation.user_type),
-            "block_messages": len(block),
-            "window_messages": len(window),
-            "text": content_preview(text),
-        },
+        extra=ctx(
+            conversation, message,
+            user_type=str(conversation.user_type),
+            block_messages=len(block), window_messages=len(context),
+            text=content_preview(text),
+        ),
     )
 
     # ── D-029: la pregunta "¿te conecto con un asesor?" vale SOLO para este turno ──
@@ -181,7 +155,7 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # son la respuesta a ESA pregunta, no un cierre de conversacion. Con los triviales
     # primero, un "ok" recibia "¡Con gusto!", el flujo quedaba vivo y un "si" de mas tarde,
     # sobre otro tema, abria el formulario (auditoria 2026-09-06).
-    handled, conversation = _settle_handoff_confirm(conversation, message, text)
+    handled, conversation = guided.settle_handoff_confirm(conversation, message, text)
     if handled:
         return
 
@@ -190,34 +164,35 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # "¿te explico el siguiente paso?", un "ok" no es un "gracias" de cierre, y el tercer "si"
     # seguido no es un mensaje repetido: es el paso 3 de una explicacion que el propio bot
     # pidio continuar (conversaciones reales del 2026-09-03). Reglas sobre texto, sin modelo.
-    bot_asked = followups.bot_asked_something(_last_bot_open_question(window))
-    continuation, followup_rule = followups.is_continuation(text, bot_asked=bot_asked)
+    bot_asked = followups.bot_asked_something(window.last_bot_open_question(context))
+    _continuation, followup_rule = followups.is_continuation(text, bot_asked=bot_asked)
+    certain_continuation = followup_rule in followups.CERTAIN_CONTINUATIONS
 
     # ── D-006: triviales, sin llamada IA ──
     kind = trivial.match_trivial(text)
-    answering = bot_asked or _awaiting_slot(conversation)
+    answering = bot_asked or state.awaiting_slot(conversation)
     if kind == "thanks" and followup_rule == "acuse" and answering:
         # "ok", "listo", "vale" contestan la pregunta abierta del bot (o sus botones en
         # pantalla): la explicacion sigue. "gracias" o "chau" no son acuses y cierran siempre.
         kind = None
     if kind == "greeting":
-        _reply_fixed(conversation, message, prompts.TRIVIAL_GREETING_RESPONSE, "trivial_greeting")
+        reply_fixed(conversation, message, prompts.TRIVIAL_GREETING_RESPONSE, "trivial_greeting")
         return
     if kind == "thanks":
-        _reply_fixed(conversation, message, prompts.TRIVIAL_THANKS_RESPONSE, "trivial_thanks")
+        reply_fixed(conversation, message, prompts.TRIVIAL_THANKS_RESPONSE, "trivial_thanks")
         return
     if kind == "identity":
-        _reply_fixed(conversation, message, prompts.TRIVIAL_IDENTITY_RESPONSE, "trivial_identity")
+        reply_fixed(conversation, message, prompts.TRIVIAL_IDENTITY_RESPONSE, "trivial_identity")
         return
     # Un acuse ("si", "listo") o un "y luego?" nunca es "repetido": responde a la ULTIMA
     # pregunta del bot aunque use la misma palabra que la vez anterior. Solo las reglas
     # seguras: un texto corto cualquiera repetido (tambien un intento de manipulacion) sigue
     # recibiendo el aviso de repetido y luego silencio, que es lo que D-024 quiere.
-    if followup_rule not in _CERTAIN_CONTINUATIONS and _is_repeat(text, window, block_keys):
-        if _already_warned_repeat(window):
-            _record_free(conversation, message, source="trivial_repeat_silent")
+    if not certain_continuation and window.is_repeat(text, context, block_keys):
+        if window.already_warned_repeat(context):
+            record_free(conversation, message, source="trivial_repeat_silent")
         else:
-            _reply_fixed(conversation, message, prompts.TRIVIAL_REPEAT_RESPONSE, "trivial_repeat")
+            reply_fixed(conversation, message, prompts.TRIVIAL_REPEAT_RESPONSE, "trivial_repeat")
         return
 
     # ── D-024 / RF-052: guardrails de entrada, sin llamada IA ──
@@ -226,61 +201,49 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     verdict = guardrails.check_input(text)
     if verdict is not None:
         # Un intento de manipulacion no deja un flujo colgado esperando datos (MAPEO.md §4.2).
-        _clear_flow_if_active(conversation)
-        _reply_fixed(
-            conversation, message, _GUARDRAIL_RESPONSES[verdict.kind],
+        state.clear_flow_if_active(conversation)
+        reply_fixed(
+            conversation, message,
+            _GUARDRAIL_RESPONSES.get(verdict.kind, prompts.GUARDRAIL_INJECTION_RESPONSE),
             f"guardrail:{verdict.kind}:{verdict.rule}",
         )
         return
 
-    # ── D-030: clic en una pregunta hermana (botones bajo la ultima respuesta con evidencia) ──
-    # Antes de los flujos y del clasificador: la pregunta ya es canonica (es una pregunta del
-    # corpus tal cual) y el clic se valida contra el ultimo mensaje del bot, no contra el
-    # payload. Va directo al RAG; clasificarla costaria una llamada para decir "FAQ". Y antes
-    # de `_handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no debe
-    # abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    interaction = interaction_of(message.metadata)
-    offered = _last_bot_metadata(window, block_keys)
-    # ── D-031: clic en "Contactar asesor" (el ultimo boton bajo la respuesta) ──
-    # Se reconoce por estructura, no por el texto: ni clasificador ni modelo. Autenticado:
-    # formulario (D-029); anonimo: invitacion a iniciar sesion. Un "quiero un asesor" escrito
-    # de la nada sigue el camino normal (reglas o modelo) y termina en el mismo sitio.
+    # ── D-030 / D-031: clic en un boton bajo la ultima respuesta con evidencia ──
+    # Antes de los flujos y del clasificador: el clic se valida contra el ultimo mensaje del
+    # bot, no contra el payload. "Contactar asesor" se reconoce por estructura (ni
+    # clasificador ni modelo); una pregunta hermana ya es canonica y va directo al RAG. Y
+    # antes de `handle_flow` a proposito: "¿Como participo en una En Vivo?" como boton no
+    # debe abrir el flujo de participacion con sus propios botones — ya se eligio que preguntar.
+    interaction = window.clicked_interaction(message)
+    offered = window.last_bot_metadata(context, block_keys)
     if related.is_advisor_click(interaction, offered):
         logger.info(
             "ai.advisor.click",
-            extra={
-                "conversation_id": conversation.conversation_id,
-                "message_id": message.message_id,
-                "anonymous": anonymous,
-            },
+            extra=ctx(conversation, message, anonymous=is_anonymous(conversation)),
         )
-        _offer_handoff_form(conversation, message, reason="advisor_button",
-                            intent=Intent.ADVISOR, response=prompts.HANDOFF_OFFER_RESPONSE)
+        offer_handoff_form(conversation, message, reason="advisor_button")
         return
     related_query = related.resolve_click(interaction, offered)
     if related_query is not None:
-        if not _spend_quota_or_reply(conversation, message, ip_hash):
+        if not spend_quota_or_reply(conversation, message, ip_hash):
             return
         logger.info(
             "ai.related.click",
-            extra={
-                "conversation_id": conversation.conversation_id,
-                "message_id": message.message_id,
-                "query": content_preview(related_query),
-            },
+            extra=ctx(conversation, message, query=content_preview(related_query)),
         )
-        _answer_faq(
-            conversation, message, related_query, window, block_keys, anonymous,
-            source_prefix="related:",
+        answer_faq(
+            conversation, message, related_query, context, block_keys, source_prefix="related:"
         )
         return
 
     # ── D-028: flujos guiados con quick replies (MAPEO.md) — reglas y estado, sin IA ──
     # Antes del clasificador a proposito: un click de boton ya trae la intencion estructurada
     # y una respuesta corta ("En Vivo") solo tiene sentido con el estado del flujo.
-    if _handle_flow(conversation, message, text, window, block_keys, anonymous=anonymous,
-                    ip_hash=ip_hash, followup_rule=followup_rule):
+    if guided.handle_flow(
+        conversation, message, text, context, block_keys,
+        ip_hash=ip_hash, followup_rule=followup_rule,
+    ):
         return
 
     # ── T-09 / D-027: tope de ejecuciones de IA por actor ──
@@ -290,11 +253,11 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
     # recibe la respuesta fija de cuota. En dev todo esta en 0 y este bloque no toca la tabla.
     rules_verdict = classify_by_rules(text)
     needs_model = rules_verdict.intent is None or rules_verdict.intent == Intent.FAQ
-    if needs_model and not _spend_quota_or_reply(conversation, message, ip_hash):
+    if needs_model and not spend_quota_or_reply(conversation, message, ip_hash):
         return  # cuota agotada: ya salio la respuesta fija, gratis
 
     # ── RF-015/016: clasificar (reglas → tier FAST; Gemini orquesta por TD-008) ──
-    if rules_verdict.intent is None and followup_rule in _CERTAIN_CONTINUATIONS:
+    if rules_verdict.intent is None and certain_continuation:
         # "si", "listo", "y luego?": la intencion es seguir con lo que se estaba explicando.
         # Clasificarlo con un modelo no aporta y cuesta una llamada (el redactor ya la hara,
         # D-027). Las reglas de asesor y catalogo corrieron antes: un "quiero un asesor"
@@ -306,765 +269,19 @@ def _attend(conversation: Conversation, message: Message, ip_hash: str | None = 
             usage=llm.empty_usage(),
         )
     else:
-        classification = classify(text, _last_bot_message(window))
-    _record_classification(conversation, message, classification)
+        # Las reglas ya corrieron arriba: se le pasan para no evaluarlas dos veces.
+        classification = classify(text, window.last_bot_text(context), heuristic=rules_verdict)
+    record_classification(conversation, message, classification)
     if classification.intent == Intent.OTHER:
-        _reply_fixed(conversation, message, prompts.OTHER_INTENT_RESPONSE, "fixed_other",
-                     intent=classification.intent)
+        reply_fixed(conversation, message, prompts.OTHER_INTENT_RESPONSE, "fixed_other",
+                    intent=classification.intent)
     elif classification.intent == Intent.CATALOG:
         # Fijo mientras D-011 (contrato HERALD) siga abierta; T-23 lo reemplaza.
-        _reply_fixed(conversation, message, prompts.CATALOG_FALLBACK_RESPONSE, "fixed_catalog",
-                     intent=classification.intent)
+        reply_fixed(conversation, message, prompts.CATALOG_FALLBACK_RESPONSE, "fixed_catalog",
+                    intent=classification.intent)
     elif classification.intent == Intent.ADVISOR:
         # D-029: el autenticado deriva por formulario (el bot ofrece la tarjeta y sigue
         # atendiendo hasta que la envie); el anonimo recibe la invitacion a iniciar sesion (D-031).
-        _offer_handoff_form(conversation, message,
-                            reason=classification.rule or "advisor_intent",
-                            intent=classification.intent, response=prompts.HANDOFF_OFFER_RESPONSE)
+        offer_handoff_form(conversation, message, reason=classification.rule or "advisor_intent")
     else:
-        _answer_faq(conversation, message, text, window, block_keys, anonymous)
-
-
-# ─────────────────────────────────── Rutas de respuesta ───────────────────────────────────
-
-
-def _answer_faq(
-    conversation: Conversation,
-    message: Message,
-    text: str,
-    window: list[Message],
-    block_keys: list[str],
-    anonymous: bool,
-    source_prefix: str = "",
-) -> None:
-    """FAQ con RAG (RF-017): recuperar, redactar con evidencia, y sin evidencia derivar en vez
-    de inventar (RF-018 / AC-002).
-
-    `text` es lo que se busca y se redacta: para un mensaje normal es lo que escribio el
-    usuario; para un paso de flujo resuelto (D-028) es la consulta canonica, que si recupera
-    evidencia donde "En Vivo" a secas no lo haria. `source_prefix` deja el rastro del flujo
-    en AIUsage ("flow:PARTICIPATION:LIVE:model") sin perder la capa que decidio.
-
-    Lo que se BUSCA no siempre es lo que se REDACTA: si el mensaje es una continuacion ("ya
-    estoy ahi", "y luego?"), la consulta al indice es la que dio evidencia a la ultima
-    respuesta del bot (`_previous_query`, `agent/followups.py`). Sin eso, un mensaje que solo
-    tiene sentido pegado al anterior no se parece a nada del corpus y el caso derivaba por
-    "falta de evidencia" teniendo el articulo correcto entre los descartados. El redactor
-    sigue recibiendo el texto original mas el historial, que es lo que necesita para
-    contestar con naturalidad.
-    """
-    consulta = followups.build_query(
-        text,
-        previous_question=_previous_query(window, block_keys),
-        last_bot_message=_last_bot_open_question(window),
-    )
-    if consulta.rule == "responde_al_bot":
-        # La regla debil: un texto corto tras una pregunta del bot puede ser la respuesta
-        # ("en la web") o un tema nuevo dicho a medias ("y los subascoins"). Lo decide el
-        # indice, no una adivinanza: si el texto se sostiene solo, gana el texto; si no, la
-        # pregunta previa. Cuesta una consulta mas a Pinecone, ninguna a un modelo.
-        literal = rag.retrieve(text)
-        if literal.relevant:
-            consulta = followups.Query(text=text, contextualized=False, rule="literal")
-            retrieved = literal
-        else:
-            retrieved = rag.retrieve(consulta.text)
-    else:
-        retrieved = rag.retrieve(consulta.text)
-    fragments = retrieved.relevant
-    logger.debug(
-        "ai.rag",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "results": len(fragments),
-            "siblings": len(retrieved.siblings),
-            "discarded": len(retrieved.discarded),
-            "threshold": retrieved.threshold,
-            # Si la regla de continuidad intervino, se ve aqui sin reproducir la charla.
-            "contextualized": consulta.contextualized,
-            "followup_rule": consulta.rule,
-            "best_score": round(
-                max((f.score for f in retrieved.all_fragments), default=0.0), 3
-            ),
-            "topics": [f.topic for f in fragments][:5],
-        },
-    )
-    result = writer.write_answer(
-        text,
-        [fragment.as_context() for fragment in fragments],
-        history=_history(window, block_keys),
-        # D-030: la sesion ya sabe si tiene cuenta; el redactor no lo pregunta.
-        user_state=prompts.WRITER_USER_ANONYMOUS if anonymous
-        else prompts.WRITER_USER_AUTHENTICATED,
-    )
-    if result.guardrail:
-        # El modelo respondio pero se salio de la evidencia (cifra o enlace ajenos, fuga del
-        # prompt): se registra aparte de "sin evidencia" porque el arreglo es distinto (prompt
-        # o corpus, no umbral del RAG).
-        source = f"guardrail:{result.guardrail}"
-    elif result.error:
-        # Habia evidencia y el proveedor no respondio (cuota, timeout, 5xx): tampoco es "sin
-        # evidencia". Queda con status ERROR y la causa, que es lo que la consola muestra.
-        source = "model_unavailable"
-    else:
-        source = "model" if result.model else "fallback"
-    source = source_prefix + source
-    usage.record_execution(
-        conversation_id=conversation.conversation_id,
-        message_id=message.message_id,
-        execution_type=usage.RESPONSE,
-        intent=str(Intent.FAQ),
-        source=source,
-        provider=_GOOGLE if result.model else usage.NO_PROVIDER,
-        model=result.model,
-        usage=result.usage,
-        estimated_cost_usd=_cost(llm.ModelTier.ANSWER, result.model, result.usage),
-        latency_ms=result.latency_ms,
-        rag_used=bool(fragments),
-        rag_results_count=len(fragments),
-        # TODOS los hits, tambien los que no superaron el umbral: cuando la respuesta cae en
-        # "sin evidencia", la consola de dev necesita ver que trajo el indice y con que score
-        # para juzgar el retrieval (y el umbral) sin reproducir la consulta a mano.
-        rag_fragments=[
-            {
-                "topic": f.topic,
-                "score": f.score,
-                "source_url": f.source_url,
-                "relevant": f in retrieved.relevant,
-                "sibling": f.sibling,
-            }
-            for f in retrieved.all_fragments
-        ],
-        rag_min_score=retrieved.threshold,
-        handoff_triggered=not result.has_evidence,
-        status=usage.ERROR if result.error else usage.SUCCESS,
-        error=result.error,
-    )
-    if result.has_evidence:
-        # La consulta que dio la evidencia viaja con la respuesta: si el usuario contesta "si"
-        # o "y luego?", la continuacion busca con ESTA consulta (`_previous_query`).
-        # D-030: ademas la fuente (chip) y las otras preguntas del articulo (botones), las
-        # dos sacadas de la evidencia sin llamar a nada. Ojo: con `interaction` en la
-        # metadata, `_last_bot_open_question` deja de ver esta respuesta como pregunta
-        # abierta — correcto, porque ya no termina preguntando si continuar.
-        metadata: dict = {
-            followups.RAG_QUERY_KEY: consulta.text,
-            SOURCES: related.sources(fragments),
-        }
-        metadata.update(
-            related.related_metadata(
-                # La pregunta respondida se detecta contra lo que se BUSCO (la consulta), no
-                # contra el texto crudo: en un paso de flujo o una continuacion el texto no
-                # describe el tema y la consulta si. `candidates` y no `all_fragments`: los
-                # hits mas alla de top_k tambien cuentan (persona juridica era el quinto).
-                # El ultimo boton es siempre "Contactar asesor" (D-031).
-                related.related_questions(consulta.text, fragments, retrieved.candidates),
-            )
-        )
-        _bot_says(conversation, result.text, metadata=metadata)
-    elif result.error:
-        # El dato existe, el redactor no contesto: se dice la verdad (no "no tengo ese dato"),
-        # se invita a reintentar y se ofrece el asesor con los mismos botones de si/no.
-        _offer_handoff_confirm(
-            conversation, message, text=prompts.MODEL_UNAVAILABLE_CONFIRM_RESPONSE
-        )
-    else:
-        _offer_handoff_confirm(conversation, message)
-
-
-def _offer_handoff_form(
-    conversation: Conversation,
-    message: Message,
-    *,
-    reason: str,
-    intent: Intent,
-    response: str,
-) -> None:
-    """D-029: pedir asesor ya no deriva de inmediato. El bot ofrece la TARJETA de formulario
-    (asunto y detalle; correo si el JWT no lo trajo) y la derivacion la hace
-    `POST /chat/.../handoff` cuando el usuario la envia. Hasta entonces el bot sigue
-    encendido: quien ignora la tarjeta puede seguir preguntando. Al anonimo no se le ofrece
-    nada que llenar (D-031): se le pide iniciar sesion, con el boton al login de VMC."""
-    # Con un humano en camino, ningun flujo guiado sigue esperando datos (MAPEO.md §4.2).
-    _clear_flow_if_active(conversation)
-    if conversation.user_type == UserType.ANONYMOUS:
-        _reply_login(conversation, message, prompts.ANON_LOGIN_RESPONSE,
-                     source=f"login:{reason}", intent=intent)
-        return
-    _bot_says(conversation, response,
-              metadata=forms.handoff_form_spec(needs_email=not conversation.user_email))
-    logger.info(
-        "ai.handoff.offer",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "reason": reason,
-            "intent": str(intent),
-        },
-    )
-    _record_free(conversation, message, source=f"handoff_offer:{reason}",
-                 intent=str(intent), handoff=True)
-
-
-def _reply_login(
-    conversation: Conversation,
-    message: Message,
-    text: str,
-    *,
-    source: str,
-    intent: Intent | None,
-) -> None:
-    """D-031: la salida fija del anonimo hacia el login de VMC (pidio asesor, dijo que si a
-    la pregunta de asesor, o agoto su cuota). El enlace viaja como boton
-    (`interaction.type = LINKS`, el widget lo dibuja bajo la burbuja), nunca dentro del
-    texto (D-025/D-030). Gratis."""
-    links = with_interaction(
-        InteractionType.LINKS,
-        options=[link(prompts.LOGIN_LINK_LABEL, get_settings().vmc_login_url)],
-    )
-    _bot_says(conversation, text, metadata=links)
-    _record_free(conversation, message, source=source, intent=str(intent) if intent else None)
-
-
-def _offer_handoff_confirm(
-    conversation: Conversation, message: Message, *, text: str | None = None
-) -> None:
-    """Sin evidencia (RF-018): se reconoce el limite y se PREGUNTA si quiere un asesor.
-    `text` reemplaza al mensaje de "no tengo ese dato" cuando el motivo es otro (el modelo
-    no respondio: `prompts.MODEL_UNAVAILABLE_CONFIRM_RESPONSE`).
-
-    Revision de D-029 (2026-09-02, Aaron): antes esto publicaba el formulario de una, y el
-    usuario terminaba con una tarjeta de datos delante sin haber pedido nada. Ahora sale la
-    pregunta con botones si/no y el formulario espera a que conteste que si.
-
-    Ojo con lo que NO cambia: cuando el usuario PIDE un asesor (intent ADVISOR), el formulario
-    sigue saliendo directo — volver a preguntarle "¿quieres un asesor?" a quien acaba de
-    pedirlo es un turno de mas por nada.
-
-    El anonimo recibe la MISMA pregunta (D-031: el sistema no lo distingue aqui); lo que
-    cambia es la respuesta a su "si": iniciar sesion en vez del formulario
-    (`_offer_handoff_form`).
-    """
-    # Se RELEE la conversacion: si en este mismo job se limpio un flujo guiado (un paso que se
-    # resolvio y no trajo evidencia), `conversation.flow_version` quedo viejo y la transicion
-    # fallaria por condicion — dejando al usuario sin pregunta y sin respuesta. Lo encontro
-    # tests/test_ai_worker_flows.py::...sin_evidencia_al_resolver...
-    current = repository.get_conversation(conversation.conversation_id) or conversation
-    definition = flows.FLOWS[flows.HANDOFF_CONFIRM]
-    _offer_flow_step(
-        current, message, definition, definition.steps[0],
-        text=text or prompts.FAQ_NO_EVIDENCE_CONFIRM_RESPONSE,
-    )
-
-
-def _reply_fixed(
-    conversation: Conversation,
-    message: Message,
-    text: str,
-    source: str,
-    *,
-    intent: Intent | None = None,
-) -> None:
-    _bot_says(conversation, text)
-    _record_free(conversation, message, source=source,
-                 intent=str(intent) if intent else None)
-
-
-def _bot_says(conversation: Conversation, text: str, *, metadata: dict | None = None) -> None:
-    """Toda respuesta del bot sale por aqui: arrastra el TTL de la conversacion anonima
-    (D-029) para que sus mensajes caduquen con ella."""
-    service.post_bot_message(
-        conversation.conversation_id, text, metadata=metadata, expires_at=conversation.expires_at
-    )
-
-
-# ───────────────────────── Flujos guiados (D-028, mapeo en MAPEO.md) ─────────────────────────
-
-
-def _current_flow(
-    conversation: Conversation,
-) -> tuple[flows.FlowDefinition, flows.FlowStep, bool] | None:
-    """(definicion, paso, vigente) del flujo activo; None si no hay flujo o ya no existe la
-    definicion (un deploy pudo retirarla: el estado viejo no debe romper nada)."""
-    if not conversation.active_flow:
-        return None
-    definition = flows.FLOWS.get(conversation.active_flow)
-    step = definition.step(conversation.flow_step or "") if definition else None
-    if definition is None or step is None:
-        return None
-    expired = bool(conversation.flow_expires_at) and conversation.flow_expires_at <= utc_now_iso()
-    return definition, step, not expired
-
-
-def _awaiting_slot(conversation: Conversation) -> bool:
-    """Hay un flujo del corpus vigente esperando que el usuario elija (botones en pantalla).
-    La confirmacion de asesor no cuenta: la resuelve `_settle_handoff_confirm` antes de que
-    esto se consulte."""
-    active = _current_flow(conversation)
-    return active is not None and active[2] and active[0].name != flows.HANDOFF_CONFIRM
-
-
-def _settle_handoff_confirm(
-    conversation: Conversation, message: Message, text: str
-) -> tuple[bool, Conversation]:
-    """Resuelve o descarta la pregunta "¿te conecto con un asesor?" (flujo HANDOFF_CONFIRM).
-
-    Devuelve `(atendido, conversacion fresca)`. La pregunta vale para el turno siguiente y
-    nada mas: un si/no (boton o escrito) la resuelve; cualquier otra cosa la descarta y el
-    mensaje sigue el pipeline como si la pregunta no existiera — incluida la deteccion de
-    flujos del corpus, que necesita la fila fresca (sin `active_flow`). Dejarla viva 24 h
-    como a un flujo del corpus haria que un "si" de mañana derivara por un tema olvidado.
-    Antes esto vivia dentro de `_handle_flow`, DESPUES de los triviales: ver `_attend`.
-    """
-    active = _current_flow(conversation)
-    if active is None or active[0].name != flows.HANDOFF_CONFIRM:
-        return False, conversation
-    _definition, step, vigente = active
-    interaction = interaction_of(message.metadata)
-    value = (
-        flows.validate_interaction(step, interaction, current_version=conversation.flow_version)
-        if interaction is not None
-        else None
-    )
-    if value is None:
-        value = flows.extract_slot_value(step, text)
-    _clear_flow_if_active(conversation)
-    fresh = _refreshed(conversation)
-    if value is None or not vigente:
-        return False, fresh
-    _resolve_handoff_confirm(fresh, message, value)
-    return True, fresh
-
-
-def _refreshed(conversation: Conversation) -> Conversation:
-    """La fila fresca tras limpiar un flujo: `flow_version` acaba de cambiar y cualquier
-    transicion hecha con la copia vieja pierde la carrera por condicion — y un
-    `_offer_flow_step` que la pierde no publica nada: el usuario se queda sin respuesta."""
-    return repository.get_conversation(conversation.conversation_id) or conversation
-
-
-def _clear_flow_if_active(conversation: Conversation) -> None:
-    """Limpieza best-effort: si otro proceso movio el flujo primero, no hay nada que hacer."""
-    if conversation.active_flow:
-        repository.clear_flow_state(
-            conversation.conversation_id, expected_version=conversation.flow_version
-        )
-
-
-def _handle_flow(
-    conversation: Conversation,
-    message: Message,
-    text: str,
-    window: list[Message],
-    block_keys: list[str],
-    *,
-    anonymous: bool,
-    ip_hash: str | None = None,
-    followup_rule: str | None = None,
-) -> bool:
-    """True si el flujo guiado del CORPUS atendio el mensaje (D-028). El orden importa:
-
-    1. flujo activo + click valido o texto que resuelve el slot → responder con la consulta
-       canonica y cerrar el flujo;
-    2. flujo activo + texto que NO resuelve → interrupcion FAQ: el flujo queda esperando y el
-       mensaje sigue el pipeline normal (False);
-    3. sin flujo + disparador con el dato ya en el texto ("participar en una En Vivo") →
-       respuesta directa, sin botones ni estado;
-    4. sin flujo + disparador sin dato → persistir el paso y ofrecer los botones (sin IA).
-    """
-    active = _current_flow(conversation)
-    if active is not None:
-        definition, step, vigente = active
-        if not vigente:
-            # Vencio (24 h): se limpia y este mensaje se atiende como cualquier otro —
-            # incluida la deteccion de flujos de abajo, que necesita la fila fresca.
-            _clear_flow_if_active(conversation)
-            conversation = _refreshed(conversation)
-        else:
-            interaction = interaction_of(message.metadata)
-            value = flows.validate_interaction(
-                step, interaction, current_version=conversation.flow_version
-            ) if interaction is not None else None
-            if value is None:
-                value = flows.extract_slot_value(step, text)
-            # La confirmacion de asesor (HANDOFF_CONFIRM) no llega aqui: `_attend` la
-            # resuelve o descarta antes (`_settle_handoff_confirm`) y pasa la fila fresca.
-            if value is None:
-                if followup_rule in _CERTAIN_CONTINUATIONS:
-                    # "si", "listo", "¿y ahora?" con los botones en pantalla: quiere seguir
-                    # pero no eligio. Se repiten los botones (gratis) en vez de mandar el
-                    # acuse al indice, donde no recupera nada y terminaba en "no tengo ese
-                    # dato, ¿quieres un asesor?" (bateria real del 2026-09-03).
-                    _offer_flow_step(conversation, message, definition, step)
-                    return True
-                return False  # interrupcion: el flujo espera hasta resolverse o vencer
-            else:
-                # T-09/D-027: resolver el paso llama al redactor (pagado). Con la cuota
-                # agotada el flujo QUEDA esperando: al renovarse, "en vivo" lo resuelve igual.
-                if not _spend_quota_or_reply(conversation, message, ip_hash):
-                    return True
-                _clear_flow_if_active(conversation)
-                _answer_flow_step(
-                    conversation, message, definition, step, value, window, block_keys,
-                    anonymous=anonymous,
-                )
-                return True
-
-    flow_name = flows.detect_flow_start(text)
-    if flow_name is None:
-        return False
-    definition = flows.FLOWS[flow_name]
-    step = definition.steps[0]
-    direct = flows.extract_slot_value(step, text)
-    if direct is not None:
-        if not _spend_quota_or_reply(conversation, message, ip_hash):
-            return True
-        _answer_flow_step(
-            conversation, message, definition, step, direct, window, block_keys,
-            anonymous=anonymous,
-        )
-        return True
-    # Ofrecer los botones no llama a ningun modelo: no gasta cuota ni se bloquea por ella.
-    _offer_flow_step(conversation, message, definition, step)
-    return True
-
-
-def _offer_flow_step(
-    conversation: Conversation,
-    message: Message,
-    definition: flows.FlowDefinition,
-    step: flows.FlowStep,
-    *,
-    text: str | None = None,
-) -> None:
-    """Persiste el paso y publica la pregunta con quick replies. Cero llamadas IA.
-
-    `text` reemplaza al del paso cuando quien ofrece ya tiene su propio mensaje (la
-    confirmacion de asesor lo usa para no partir "no tengo el dato" y "¿quieres un asesor?"
-    en dos burbujas seguidas del bot).
-    """
-    expires_at = to_iso(utc_now() + timedelta(hours=flows.FLOW_TTL_HOURS))
-    version = repository.set_flow_state(
-        conversation.conversation_id,
-        flow=definition.name,
-        step=step.action_id,
-        slots={},
-        expires_at=expires_at,
-        expected_version=conversation.flow_version,
-    )
-    if version is None:
-        # Otro job gano la transicion (rafaga D-020): ese publico los botones, aqui silencio.
-        _log_skip(conversation, message, "flow_race")
-        return
-    _bot_says(
-        conversation,
-        text or step.prompt,
-        metadata=flows.quick_replies_metadata(definition, step, version),
-    )
-    _record_free(conversation, message, source=f"flow:{definition.name}:offered")
-
-
-def _resolve_handoff_confirm(
-    conversation: Conversation, message: Message, value: str
-) -> None:
-    """El usuario contesto la pregunta de "¿te conecto con un asesor?". Gratis en los dos
-    caminos: publicar el formulario o despedirse no cuesta ninguna llamada a modelo."""
-    logger.info(
-        "ai.handoff.confirm",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "value": value,
-        },
-    )
-    if value == "YES":
-        _offer_handoff_form(
-            conversation, message, reason="faq_no_evidence", intent=Intent.ADVISOR,
-            response=prompts.HANDOFF_OFFER_RESPONSE,
-        )
-        return
-    _reply_fixed(
-        conversation, message, prompts.HANDOFF_DECLINED_RESPONSE, "handoff_declined",
-        intent=Intent.ADVISOR,
-    )
-
-
-def _answer_flow_step(
-    conversation: Conversation,
-    message: Message,
-    definition: flows.FlowDefinition,
-    step: flows.FlowStep,
-    value: str,
-    window: list[Message],
-    block_keys: list[str],
-    *,
-    anonymous: bool,
-) -> None:
-    """Paso resuelto: RAG + redactor con la consulta canonica del valor elegido."""
-    query = step.canonical_queries.get(value)
-    if not query:
-        # Definicion incompleta (enum acepta un valor sin consulta): mejor el pipeline comun
-        # que un KeyError que deje el mensaje sin respuesta.
-        logger.warning(
-            "flow.sin_consulta_canonica",
-            extra={"flow": definition.name, "step": step.action_id, "value": value},
-        )
-        query = f"{step.prompt} {step.label_for(value) or value}"
-    logger.info(
-        "ai.flow.resolved",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "flow": definition.name,
-            "step": step.action_id,
-            "value": value,
-        },
-    )
-    _answer_faq(
-        conversation, message, query, window, block_keys, anonymous,
-        source_prefix=f"flow:{definition.name}:{value}:",
-    )
-
-
-# ───────────────────────── Cuota de IA (T-09 / D-027, rev. 2026-09-01) ─────────────────────────
-
-
-def _quota_kwargs(conversation: Conversation, ip_hash: str | None) -> dict:
-    return {
-        "anonymous": conversation.user_type == UserType.ANONYMOUS,
-        "user_id": conversation.user_id,
-        "conversation_id": conversation.conversation_id,
-        "ip_hash": ip_hash,
-    }
-
-
-def _spend_quota_or_reply(
-    conversation: Conversation, message: Message, ip_hash: str | None
-) -> bool:
-    """True = hay cuota (y queda gastada 1 ejecucion); False = agotada y ya se respondio el
-    mensaje fijo. Con los topes en 0 (dev) siempre True sin tocar la tabla."""
-    anonymous = conversation.user_type == UserType.ANONYMOUS
-    if not quota.enabled(anonymous=anonymous):
-        return True
-    qk = _quota_kwargs(conversation, ip_hash)
-    if quota.exhausted(**qk):
-        _reply_quota(conversation, message)
-        return False
-    quota.spend(**qk)
-    return True
-
-
-def _reply_quota(conversation: Conversation, message: Message) -> None:
-    """Respuesta fija de cuota agotada (gratis): al anonimo lo orienta a iniciar sesion, con
-    el boton (duplica su cuota y habilita el asesor, D-027/D-031); al autenticado, a pedir un
-    asesor — ruta que sale por reglas y funciona sin modelo."""
-    if conversation.user_type == UserType.ANONYMOUS:
-        _reply_login(conversation, message, prompts.QUOTA_EXHAUSTED_ANON_RESPONSE,
-                     source="quota:exhausted", intent=None)
-        return
-    _reply_fixed(conversation, message, prompts.QUOTA_EXHAUSTED_AUTH_RESPONSE, "quota:exhausted")
-
-
-# ──────────────────────────────────── Apoyos del flujo ────────────────────────────────────
-
-
-def _log_skip(conversation: Conversation, message: Message, reason: str) -> None:
-    logger.debug(
-        "ai.debounce.skip",
-        extra={
-            "conversation_id": conversation.conversation_id,
-            "message_id": message.message_id,
-            "reason": reason,
-        },
-    )
-
-
-def _trailing_user_block(window: list[Message]) -> list[Message]:
-    """Los mensajes USER consecutivos al final del hilo: la rafaga que se responde junta."""
-    block: list[Message] = []
-    for item in reversed(window):
-        if item.sender_type != SenderType.USER:
-            break
-        block.append(item)
-    return list(reversed(block))
-
-
-def _is_repeat(text: str, window: list[Message], block_keys: list[str]) -> bool:
-    """D-006: el mismo texto ya fue enviado (y atendido) hace poco. Solo mira mensajes USER
-    anteriores al bloque actual: los del bloque son la misma rafaga, no una repeticion."""
-    cutoff = minutes_ago_iso(get_settings().trivial_repeat_window_minutes)
-    for item in window:
-        if item.message_key in block_keys or item.sender_type != SenderType.USER:
-            continue
-        if item.created_at >= cutoff and trivial.same_message(item.content or "", text):
-            return True
-    return False
-
-
-def _already_warned_repeat(window: list[Message]) -> bool:
-    """El aviso de repeticion sale una vez: a la segunda repeticion, silencio (el mensaje
-    queda guardado igual)."""
-    last_bot = _last_bot_message(window)
-    return last_bot == prompts.TRIVIAL_REPEAT_RESPONSE
-
-
-def _last_bot_message(window: list[Message]) -> str | None:
-    for item in reversed(window):
-        if item.sender_type == SenderType.BOT and item.content:
-            return item.content
-    return None
-
-
-def _last_bot_open_question(window: list[Message]) -> str | None:
-    """El último mensaje del bot, SOLO si era una pregunta abierta.
-
-    Un mensaje con botones que ESPERAN respuesta (los de un flujo, el sí/no del asesor, el
-    formulario) tambien termina en "?", pero es una pregunta ESTRUCTURADA: sus respuestas
-    validas las resuelve la maquinaria de flujos, y cualquier otra cosa que escriba el usuario
-    es un tema nuevo, no la continuacion del anterior. Devolverla aqui hacia que "mejor dime
-    cuanto es la comision", escrito despues de "¿quieres un asesor?", heredara el tema viejo
-    y se buscara la pregunta equivocada.
-
-    Las preguntas hermanas y el mensaje sugerido de asesor (RELATED_QUESTIONS, D-030/D-031)
-    o un enlace (LINKS) NO cuentan: son sugerencias sin estado, y desde D-031 van bajo toda
-    respuesta con evidencia — si cerraran la pregunta, un "listo" o "y luego?" nunca seria
-    continuacion.
-    """
-    for item in reversed(window):
-        if item.sender_type != SenderType.BOT or not item.content:
-            continue
-        interaction = interaction_of(item.metadata) or {}
-        if interaction.get("type") in _AWAITING_ANSWER:
-            return None
-        return item.content
-    return None
-
-
-# Interacciones que dejan al bot ESPERANDO una respuesta estructurada (ver arriba).
-_AWAITING_ANSWER = frozenset({flows.QUICK_REPLIES, forms.HANDOFF_FORM})
-
-
-def _last_bot_metadata(window: list[Message], block_keys: list[str]) -> dict | None:
-    """La metadata del ultimo mensaje del bot antes de la rafaga actual: ahi estan los
-    botones de preguntas hermanas (D-030) contra los que se valida un clic. Se lee del
-    mensaje persistido, nunca del payload del clic."""
-    for item in reversed(window):
-        if item.message_key in block_keys:
-            continue
-        if item.sender_type == SenderType.BOT:
-            return item.metadata
-        if item.sender_type == SenderType.USER:
-            continue
-        return None  # una nota de sistema o un asesor en medio: los botones ya no valen
-    return None
-
-
-def _previous_user_texts(window: list[Message], block_keys: list[str]) -> list[str]:
-    """Lo que el usuario escribio ANTES de la rafaga actual, en orden cronologico. Es de donde
-    `followups` saca la pregunta que da tema a una continuacion."""
-    return [
-        item.content
-        for item in window
-        if item.sender_type == SenderType.USER
-        and item.message_key not in block_keys
-        and item.content
-    ]
-
-
-def _previous_query(window: list[Message], block_keys: list[str]) -> str | None:
-    """La consulta que sostiene una continuacion: la que dio evidencia a la ultima respuesta
-    del bot (viaja en su metadata, `followups.RAG_QUERY_KEY`) y, si esa respuesta no la trae
-    (fija, con botones, o anterior a este campo), la ultima pregunta del usuario del historial.
-
-    Preferir la de la respuesta cubre dos casos que el historial no cubre: un paso de flujo
-    (D-028), cuya evidencia salio de la consulta canonica y no del texto del boton ("Oferta
-    En Vivo" recupera peor), y una explicacion de varios "si" seguidos, donde la pregunta
-    original ya quedo fuera de la mirada hacia atras de `last_user_question`.
-    """
-    for item in reversed(window):
-        if item.message_key in block_keys or item.sender_type != SenderType.BOT:
-            continue
-        query = (item.metadata or {}).get(followups.RAG_QUERY_KEY)
-        if query:
-            return str(query)
-        break  # la ultima respuesta del bot no salio del indice: decide el historial
-    return followups.last_user_question(_previous_user_texts(window, block_keys))
-
-
-def _history(window: list[Message], block_keys: list[str]) -> list[dict[str, str]]:
-    """La ventana como turnos user/assistant para el redactor, sin el bloque actual (ese viaja
-    como el mensaje) y sin notas SYSTEM (son eventos, no conversacion)."""
-    history: list[dict[str, str]] = []
-    for item in window:
-        if item.message_key in block_keys or not item.content:
-            continue
-        if item.sender_type == SenderType.USER:
-            history.append({"role": "user", "content": item.content})
-        elif item.sender_type in (SenderType.BOT, SenderType.ADVISOR):
-            history.append({"role": "assistant", "content": item.content})
-    return history
-
-
-# ─────────────────────────────── Contabilidad (AIUsage, T-04) ───────────────────────────────
-
-
-def _cost(tier: llm.ModelTier, model: str | None, tokens: dict[str, int] | None) -> float:
-    """Costo con el precio vigente del modelo que REALMENTE respondio (regla de
-    llm-cost-optimizer: nunca un numero recordado despues). Importa pasar el modelo: el
-    respaldo del tier tiene otra tarifa y cobrarlo con la del principal subestima."""
-    return llm.cost_for(model, tokens, tier=tier)
-
-
-def _record_classification(
-    conversation: Conversation, message: Message, classification: ClassificationResult
-) -> None:
-    called_model = classification.source == "model"
-    if classification.error:
-        # El clasificador no lo loguea (es hoja): aqui, con la conversacion, queda el rastro.
-        logger.warning(
-            "ai.classifier.llm_error",
-            extra={
-                "conversation_id": conversation.conversation_id,
-                "message_id": message.message_id,
-                "error": classification.error,
-            },
-        )
-    usage.record_execution(
-        conversation_id=conversation.conversation_id,
-        message_id=message.message_id,
-        execution_type=usage.CLASSIFICATION,
-        intent=str(classification.intent),
-        source=classification.rule or classification.source,
-        provider=_GOOGLE if called_model else usage.NO_PROVIDER,
-        model=classification.model,
-        usage=classification.usage,
-        estimated_cost_usd=_cost(llm.ModelTier.FAST, classification.model, classification.usage),
-        latency_ms=classification.latency_ms,
-        status=usage.ERROR if classification.error else usage.SUCCESS,
-        error=classification.error,
-    )
-
-
-def _record_free(
-    conversation: Conversation,
-    message: Message,
-    *,
-    source: str,
-    intent: str | None = None,
-    handoff: bool = False,
-) -> None:
-    """Registra una decision que no pago tokens — la metrica que justifica D-006 y las reglas."""
-    usage.record_execution(
-        conversation_id=conversation.conversation_id,
-        message_id=message.message_id,
-        execution_type=usage.RESPONSE,
-        intent=intent,
-        source=source,
-        provider=usage.NO_PROVIDER,
-        model=None,
-        usage=None,
-        estimated_cost_usd=0.0,
-        latency_ms=0,
-        handoff_triggered=handoff,
-    )
+        answer_faq(conversation, message, text, context, block_keys)

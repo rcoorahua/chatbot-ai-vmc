@@ -25,7 +25,6 @@ import pytest
 
 from backend.agent import flows, prompts
 from backend.core import llm
-from backend.workers import ai_worker
 from tests.helpers.fakes import FakeLLM, install_llm
 from tests.helpers.scenario import atiende, conversacion, escribe, fresca, respuestas_bot, usos_de
 
@@ -62,7 +61,7 @@ def indice(monkeypatch):
         bajo = Fragment(text="Registro", topic="Registro", score=0.79)
         return RagResult(relevant=[], discarded=[bajo], threshold=0.84)
 
-    monkeypatch.setattr(ai_worker.rag, "retrieve", buscar)
+    monkeypatch.setattr("backend.agent.rag.retrieve", buscar)
     return consultas
 
 
