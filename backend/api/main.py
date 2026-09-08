@@ -16,20 +16,26 @@ from backend.core.observability import configure_logging
 configure_logging()
 app = FastAPI(title="Subastin API")
 
+# Solo en dev local: imita al JWT authorizer de Cognito para /advisor y /dashboard. En AWS el
+# authorizer esta en el API Gateway (T1) y este middleware no se instala (dev_auth.py).
+# Va ANTES que CORS a proposito: `add_middleware` antepone, asi que agregarlo primero lo deja
+# por DENTRO de CORS y sus 401 salen con las cabeceras CORS. Al reves (como estuvo hasta el
+# 2026-09-08) el navegador veia el 401 sin `Access-Control-Allow-Origin`, lo reportaba como
+# error de CORS y el `fetch` fallaba con un TypeError: la app del asesor mostraba "No se pudo
+# conectar con el servidor" en vez de "sesion invalida", que es lo que de verdad pasaba.
+if dev_auth.should_install():
+    app.add_middleware(dev_auth.DevCognitoAuthorizer)
+
 # El widget corre en el dominio de VMC y llama a la API en otro: sin CORS el navegador bloquea
 # todo. La API no usa cookies (el token de sesion viaja en Authorization), asi que no hace falta
 # `allow_credentials` y "*" es seguro en dev; en stage/prod CORS_ALLOWED_ORIGINS acota a VMC.
+# En AWS el preflight lo responde el propio API Gateway (cors_preflight del stack).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().allowed_origins,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-# Solo en dev local: imita al JWT authorizer de Cognito para /advisor y /dashboard. En AWS el
-# authorizer esta en el API Gateway (T1) y este middleware no se instala (dev_auth.py).
-if dev_auth.should_install():
-    app.add_middleware(dev_auth.DevCognitoAuthorizer)
 
 # RNF-006: una linea por peticion (metodo, ruta, estado, duracion) y el motivo de cada rechazo.
 # Va AL FINAL a proposito: `add_middleware` antepone, asi que el ultimo en agregarse es el mas
