@@ -46,7 +46,8 @@ PJ = "¿Puedo registrarme como persona jurídica?"
 CLAVE = "He olvidado mi contraseña, ¿cómo puedo recuperar el ingreso a mi cuenta?"
 FORM_Q = "Estoy intentando registrarme, pero el formulario me impide realizarlo, ¿qué puedo hacer?"
 RESPUESTA = "Para registrarte entra a vmcsubastas.com y dale a Regístrate 🙂"
-# D-031: el mensaje sugerido que cierra toda lista de hermanas.
+# El mensaje sugerido de asesor que cerraba toda lista hasta el 2026-09-08 (ya no se ofrece,
+# pero sigue guardado en las respuestas anteriores).
 ASESOR = related.ADVISOR_OPTION_LABEL
 
 
@@ -101,23 +102,54 @@ def test_la_respuesta_lleva_fuente_y_preguntas_hermanas(limpiar, modelo, indice)
     assert respuesta.metadata["sources"] == [{"title": REG, "url": REG_URL}]
     interaction = respuesta.metadata["interaction"]
     assert interaction["type"] == related.RELATED_QUESTIONS
-    assert [o["label"] for o in interaction["options"]] == [PJ, CLAVE, ASESOR], (
-        "sin la respondida, sin la introduccion, sin el articulo de comision; el asesor al final"
+    assert [o["label"] for o in interaction["options"]] == [PJ, CLAVE], (
+        "sin la respondida, sin la introduccion, sin el articulo de comision, sin asesor"
     )
-    assert all(o["query"] == o["label"] for o in interaction["options"][:-1])
+    assert all(o["query"] == o["label"] for o in interaction["options"])
     assert respuesta.metadata["rag_query"] == "¿Cómo me registro en VMC?"
 
 
-# ───────────── D-031: el ultimo mensaje sugerido es el asesor y su clic va por reglas ─────────────
+# ────── El boton de asesor ya no se ofrece, pero los ya guardados siguen funcionando ──────
 
 
-def _clic_de_asesor(conversation):
-    botones = respuestas_bot(conversation.conversation_id)[-1].metadata["interaction"]
+def _con_boton_de_asesor_guardado(tablas, conversation):
+    """Deja la ULTIMA respuesta del bot como quedaron las anteriores al 2026-09-08: con el
+    mensaje sugerido de asesor al final. Se escribe directo en la tabla porque el codigo ya no
+    lo genera, y lo que se prueba es justamente que esas filas viejas sigan sirviendo."""
+    ultima = respuestas_bot(conversation.conversation_id)[-1]
+    metadata = dict(ultima.metadata)
+    metadata["interaction"] = dict(metadata["interaction"])
+    metadata["interaction"]["options"] = [
+        *metadata["interaction"]["options"],
+        {"label": ASESOR, "value": related.ADVISOR_OPTION_VALUE, "kind": "handoff"},
+    ]
+    tablas["messages"].update_item(
+        Key={"conversation_id": ultima.conversation_id, "message_key": ultima.message_key},
+        UpdateExpression="SET #m = :m",
+        ExpressionAttributeNames={"#m": "metadata"},
+        ExpressionAttributeValues={":m": metadata},
+    )
+    return metadata["interaction"]
+
+
+def _clic_de_asesor(tablas, conversation):
+    botones = _con_boton_de_asesor_guardado(tablas, conversation)
     asesor = botones["options"][-1]
-    assert asesor == {"label": ASESOR, "value": related.ADVISOR_OPTION_VALUE, "kind": "handoff"}
     return escribe(fresca(conversation), asesor["label"], interaction={
         "action_id": botones["action_id"], "value": asesor["value"],
     })
+
+
+def test_una_respuesta_nueva_no_ofrece_asesor(limpiar, modelo, indice):
+    # 2026-09-08 (Aaron): el bot esta para quitarle carga a los asesores; ofrecer una persona
+    # debajo de una respuesta que SI resolvio empuja al reves.
+    conversation = conversacion(limpiar)
+
+    atiende(escribe(conversation, "¿Cómo me registro en VMC?"))
+
+    opciones = respuestas_bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]
+    assert ASESOR not in [o["label"] for o in opciones]
+    assert related.ADVISOR_OPTION_VALUE not in [o["value"] for o in opciones]
 
 
 def test_el_clic_en_el_boton_de_asesor_ofrece_el_formulario_sin_modelo(
@@ -127,7 +159,7 @@ def test_el_clic_en_el_boton_de_asesor_ofrece_el_formulario_sin_modelo(
     atiende(escribe(conversation, "¿Cómo me registro en VMC?"))
     antes = len(modelo.classify_calls())
 
-    click = _clic_de_asesor(conversation)
+    click = _clic_de_asesor(tablas, conversation)
     atiende(click)
 
     ultima = respuestas_bot(conversation.conversation_id)[-1]
@@ -147,7 +179,7 @@ def test_el_visitante_que_pulsa_el_boton_de_asesor_recibe_el_login(
     atiende(escribe(conversation, "¿Cómo me registro en VMC?"))
     antes = len(modelo.classify_calls())
 
-    click = _clic_de_asesor(conversation)
+    click = _clic_de_asesor(tablas, conversation)
     atiende(click)
 
     ultima = respuestas_bot(conversation.conversation_id)[-1]
@@ -328,4 +360,4 @@ def test_una_pregunta_del_articulo_mas_alla_de_top_k_sale_como_boton(
     labels = [o["label"] for o in
               respuestas_bot(conversation.conversation_id)[-1].metadata["interaction"]["options"]]
     # Por score del indice (el orden real de esa prueba): persona juridica entra tercera.
-    assert labels == [FORM_Q, CLAVE, PJ, ASESOR]
+    assert labels == [FORM_Q, CLAVE, PJ]
