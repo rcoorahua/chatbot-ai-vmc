@@ -231,6 +231,13 @@ def nombres_de_cola() -> tuple[str, str]:
     return ("subastin-dev-ai-jobs", "subastin-dev-notifications")
 
 
+# ESPEJO de infra/stacks/subastin_stack.py (regla cerrada: visibility >= 6x el timeout del
+# worker: 120 s el de IA, 30 s el de notificaciones; infra/config.py). Con el default de SQS
+# (30 s), un job de IA que tardara mas se reentregaba a medio procesar y el bot respondia DOS
+# veces la misma pregunta (2026-09-08). tests/test_local_setup.py lo compara con infra/config.
+VISIBILITY_TIMEOUT_S = {"subastin-dev-ai-jobs": 720, "subastin-dev-notifications": 180}
+
+
 def crear_colas_y_bucket(verbose: bool = True) -> None:
     """SQS y S3 en LocalStack. No bloquea si LocalStack no esta arriba (es opcional para tests)."""
     comunes = {
@@ -244,6 +251,13 @@ def crear_colas_y_bucket(verbose: bool = True) -> None:
         sqs = cliente_sqs()
         for cola in nombres_de_cola():
             sqs.create_queue(QueueName=cola)
+            # create_queue es idempotente pero NO cambia los atributos de una cola que ya
+            # existe: se fijan aparte para que local_setup/reset_local repetidos converjan.
+            # Con la URL del endpoint de .env y no la que devuelve LocalStack (exige DNS).
+            sqs.set_queue_attributes(
+                QueueUrl=f"{endpoint}/000000000000/{cola}",
+                Attributes={"VisibilityTimeout": str(VISIBILITY_TIMEOUT_S[cola])},
+            )
             if verbose:
                 print(f"  cola lista: {cola}")
                 if cola.endswith("ai-jobs"):

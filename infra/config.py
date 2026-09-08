@@ -6,6 +6,13 @@ PENDIENTE (bloqueado por PLAN.md §6): account IDs y region los define el equipo
 
 from dataclasses import dataclass
 
+# Regla cerrada (CLAUDE.md): visibility_timeout de cada cola >= 6x el timeout de su worker; si
+# no, SQS reentrega el job a medio procesar y el bot responde dos veces. El timeout del worker
+# de IA varia por stage (StageConfig.worker_ai_timeout_s); el de notificaciones no. ESPEJO en
+# scripts/local_setup.py (VISIBILITY_TIMEOUT_S), comparado por tests/test_local_setup.py.
+VISIBILITY_FACTOR = 6
+WORKER_NOTIFY_TIMEOUT_S = 30
+
 
 @dataclass(frozen=True)
 class StageConfig:
