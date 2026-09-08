@@ -50,7 +50,7 @@ from aws_cdk import (
 from aws_cdk import (
     aws_sqs as sqs,
 )
-from config import StageConfig
+from config import VISIBILITY_FACTOR, WORKER_NOTIFY_TIMEOUT_S, StageConfig
 from constructs import Construct
 
 # Directorio real que contiene el paquete `backend/` (repo root) — NO `backend/` en sí. Los
@@ -317,7 +317,7 @@ class SubastinStack(Stack):
             "AiJobs",
             queue_name=f"{prefix}-ai-jobs",
             # Regla cerrada: visibility >= 6x timeout del worker (si no, SQS re-entrega en proceso).
-            visibility_timeout=Duration.seconds(6 * cfg.worker_ai_timeout_s),
+            visibility_timeout=Duration.seconds(VISIBILITY_FACTOR * cfg.worker_ai_timeout_s),
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=ai_jobs_dlq),
             # D-020 (cerrada): el debounce viaja como DelaySeconds por mensaje (core/jobs.py).
         )
@@ -328,7 +328,7 @@ class SubastinStack(Stack):
             self,
             "Notifications",
             queue_name=f"{prefix}-notifications",
-            visibility_timeout=Duration.seconds(6 * 30),
+            visibility_timeout=Duration.seconds(VISIBILITY_FACTOR * WORKER_NOTIFY_TIMEOUT_S),
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=notifications_dlq),
         )
 
@@ -458,7 +458,7 @@ class SubastinStack(Stack):
             code=_lambda_code("requirements-worker-notify.txt"),
             handler="backend.workers.notify_worker.handler",
             runtime=lambda_.Runtime.PYTHON_3_12,
-            timeout=Duration.seconds(30),
+            timeout=Duration.seconds(WORKER_NOTIFY_TIMEOUT_S),
             log_group=_log_group("WorkerNotify"),
             # Sin `environment` arrancaba con STAGE=dev: en prod habria logueado en DEBUG y
             # con contenido (auditoria 2026-09-06). Mismo entorno base que las otras dos.

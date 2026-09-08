@@ -394,7 +394,11 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   botones sí/no son la respuesta a ESA pregunta, no un botón de asesor, y se entienden
   también escritos); (c) "quiero un asesor" escrito de la nada sí pasa por el orquestador
   (reglas o modelo) y termina en el mismo sitio. Lo único que distingue al anónimo es la
-  respuesta final (`_offer_handoff_form`): iniciar sesión en vez del formulario. El lado
+  respuesta final (`_offer_handoff_form`): iniciar sesión en vez del formulario. **(2026-09-08)**
+  El redactor **no anuncia** al asesor ni el botón: la regla 8 de `WRITER_SYSTEM` decía "si el
+  contexto manda a contactarnos, di que puede pedir un asesor con el botón Contactar asesor", y
+  en "¿cómo me registro?" lo dijo porque un fragmento vecino hablaba de contactarnos. Ahora el
+  asesor está siempre debajo como mensaje sugerido y el texto solo lo ofrece si no puede resolver. El lado
   autenticado (formulario → caso → ticket) queda como está: Aaron lo revisará aparte. **Formulario del
   autenticado en un solo paso** (asunto, detalle y correo si el JWT no lo trajo; el "dos
   pasos" era por los cinco campos del anónimo) y **solo lo ofrece el bot**;
@@ -525,6 +529,12 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   (AWS) y `scripts/local_setup.py` (local, `TABLAS_CON_TTL`). Cambiar una clave, un GSI o el TTL
   exige tocar **los dos** — si no, las pruebas pasan en local contra un esquema que no existe en
   stage (hasta 2026-09-07 el TTL solo existía en AWS y el camino de caducidad nunca corría en dev).
+  **Lo mismo con las colas (2026-09-08)**: el *visibility timeout* (regla "≥ 6× el timeout del
+  worker") vive en `infra/config.py` (`VISIBILITY_FACTOR`, `WORKER_NOTIFY_TIMEOUT_S`) y su
+  espejo en `local_setup.VISIBILITY_TIMEOUT_S`, comparados por `tests/test_local_setup.py`.
+  Antes la cola local usaba el default de SQS (30 s) y un job de IA de más de 30 s se
+  reentregaba a medio procesar: el bot respondió DOS veces la misma pregunta. `create_queue`
+  no cambia atributos de una cola existente, por eso `local_setup` llama `set_queue_attributes`.
 - Los nombres de variable de entorno son el contrato entre los tres entornos: `common_env` del
   stack, `nombres_de_tabla()` de `local_setup.py` y `.env.example` usan **los mismos**
   (`TABLE_*`, `IMAGES_BUCKET`, `AI_JOBS_QUEUE_URL`, `*_ENDPOINT_URL`).
