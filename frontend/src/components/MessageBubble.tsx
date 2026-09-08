@@ -44,8 +44,12 @@ export default function MessageBubble({
     );
   }
 
+  // Quien lee esto es el ASESOR: a la derecha va su lado de la conversacion (lo que el
+  // escribio y lo que Subastin respondio por el), a la izquierda el usuario. Antes el bot caia
+  // a la izquierda junto al usuario y el hilo se leia como si Subastin fuera el cliente.
   const isAdvisor = message.sender_type === "ADVISOR";
-  const align = isAdvisor ? "items-end" : "items-start";
+  const isOurs = isAdvisor || message.sender_type === "BOT";
+  const align = isOurs ? "items-end" : "items-start";
   const bubbleColor = isAdvisor
     ? "text-white"
     : message.sender_type === "BOT"

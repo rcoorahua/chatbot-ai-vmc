@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Button from "@/concorde/components/Button";
@@ -44,6 +44,15 @@ export default function ConversationDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const loading = loadedId !== id && loadError?.id !== id;
+
+  // El hilo abre abajo, en lo ULTIMO que se dijo: es lo que el asesor necesita leer primero.
+  // Sin esto el contenedor arranca arriba (en el mensaje mas viejo) y hay que bajar a mano.
+  // `scrollTop` directo y no `scrollIntoView`: mueve solo este contenedor, no la pagina.
+  const hiloRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const hilo = hiloRef.current;
+    if (hilo) hilo.scrollTop = hilo.scrollHeight;
+  }, [messages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,7 +199,10 @@ export default function ConversationDetailPage() {
           )}
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-5">
+        <div
+          ref={hiloRef}
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 sm:px-5"
+        >
           {/* Contexto — en mobile el <aside> no se renderiza; su info va acá, plegable. */}
           <MobileContext conversation={conversation} now={now} />
 

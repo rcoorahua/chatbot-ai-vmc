@@ -16,17 +16,22 @@ ninguna llamada:
   el siguiente paso?" que el redactor prometia y que costaba una llamada de ~1.900 tokens de
   entrada por 30 de salida en cada "si" (medido 2026-09-03, conversacion real).
 
-Lo que NO hace (y se probo): decidir POR CONTEXTO cuando ofrecer un asesor. La primera
-version ponia un boton "Contactar con un asesor" si la respuesta o su evidencia decian
-"contactanos", y salio en "¿como me registro?" porque un fragmento vecino del articulo lo
-decia. Despues hubo un badge permanente en el compositor del widget que abria el formulario
-sin pasar por el bot; D-031 (2026-09-05, Aaron) lo retiro: el asesor se llega SOLO por la
-conversacion. Por eso, debajo de toda respuesta con evidencia, el ULTIMO boton sugerido es
-siempre "Contactar asesor" (`ADVISOR_OPTION_LABEL`). Su clic se reconoce por ESTRUCTURA
-(`is_advisor_click`: el evento apunta a esa opcion del ultimo mensaje del bot), sin
-clasificador ni modelo — autenticado: formulario (D-029); anonimo: invitacion a iniciar
-sesion. Un "quiero un asesor" escrito de la nada si pasa por el orquestador (reglas o
-modelo), que termina en el mismo sitio.
+Lo que NO hace (y se probo tres veces): ofrecer un asesor debajo de una respuesta. (1) La
+primera version ponia un boton "Contactar con un asesor" si la respuesta o su evidencia
+decian "contactanos", y salio en "¿como me registro?" porque lo decia un fragmento vecino.
+(2) Despues hubo un badge permanente en el compositor del widget, que D-031 retiro. (3) En su
+lugar, D-031 cerraba SIEMPRE la lista con un mensaje sugerido "Contactar asesor"; se retiro el
+2026-09-08 (Aaron) por el motivo de fondo del proyecto: el bot existe para QUITAR carga a los
+asesores, y una salida a una persona ofrecida en cada respuesta empuja justo al reves.
+
+Hoy el asesor se llega solo si el usuario lo pide ("quiero un asesor", por reglas o modelo) o
+si el bot se queda SIN evidencia y pregunta si conectarlo (flujo HANDOFF_CONFIRM). Es decir:
+cuando el bot resuelve, no ofrece a nadie; cuando no puede, lo ofrece el.
+
+`is_advisor_click` se conserva a proposito aunque ya no se ofrezca: las respuestas que ya
+estan guardadas en DynamoDB si traen esa opcion, y un clic sobre una de ellas tiene que
+seguir funcionando (autenticado: formulario, D-029; anonimo: invitacion a iniciar sesion) en
+vez de degradarse a texto suelto.
 
 Modulo puro (regla de `backend/__init__.py`): definiciones y funciones sin I/O. Quien compone
 esto con el repositorio y el widget es `workers/ai_worker.py`.
@@ -51,9 +56,10 @@ RELATED_QUESTIONS = str(InteractionType.RELATED_QUESTIONS)
 RELATED_ACTION_ID = "RELATED_QUESTION"
 # Cuantas preguntas hermanas como maximo: mas de tres ya no es una sugerencia, es un menu.
 MAX_RELATED = 3
-# El mensaje sugerido de asesor que cierra la lista (D-031). El clic se reconoce por su
-# `value` contra el ultimo mensaje del bot (`is_advisor_click`), no por el texto: asi no
-# toca ningun modelo aunque la etiqueta no caiga en una regla.
+# El mensaje sugerido de asesor que cerraba la lista hasta el 2026-09-08. YA NO SE OFRECE
+# (ver el docstring), pero las respuestas ya guardadas si lo traen: el clic se sigue
+# reconociendo por su `value` contra el ultimo mensaje del bot (`is_advisor_click`), no por
+# el texto, asi no toca ningun modelo aunque la etiqueta no caiga en una regla.
 ADVISOR_OPTION_LABEL = "Contactar asesor"
 ADVISOR_OPTION_VALUE = "ADVISOR"
 
@@ -185,14 +191,17 @@ def related_metadata(questions: list[str]) -> dict:
 
     Cada pregunta lleva su `query`: es lo que va al RAG al hacer clic, y el servidor lo lee de
     AQUI (del mensaje persistido), no del payload del clic — editar el HTML no inventa
-    consultas. Sin `flow_version`: no hay estado que versionar. La ultima opcion es siempre
-    el mensaje sugerido de asesor (D-031), sin `query`: su clic sigue el pipeline como texto.
+    consultas. Sin `flow_version`: no hay estado que versionar.
+
+    Solo preguntas: el asesor ya no se ofrece aqui (2026-09-08, ver el docstring del modulo).
+    Sin preguntas hermanas no hay interaccion — devuelve `{}` y la respuesta sale sin botones.
     """
+    if not questions:
+        return {}
     options = [
         choice(question, f"Q{index}", query=question)
         for index, question in enumerate(questions, start=1)
     ]
-    options.append(choice(ADVISOR_OPTION_LABEL, ADVISOR_OPTION_VALUE, kind="handoff"))
     return with_interaction(RELATED_QUESTIONS, action_id=RELATED_ACTION_ID, options=options)
 
 

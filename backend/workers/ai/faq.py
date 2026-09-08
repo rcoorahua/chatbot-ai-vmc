@@ -111,7 +111,8 @@ def answer_faq(
                 # contra el texto crudo: en un paso de flujo o una continuacion el texto no
                 # describe el tema y la consulta si. `candidates` y no `all_fragments`: los
                 # hits mas alla de top_k tambien cuentan (persona juridica era el quinto).
-                # El ultimo boton es siempre "Contactar asesor" (D-031).
+                # Solo preguntas: el asesor ya no se ofrece bajo una respuesta que SI
+                # resolvio (2026-09-08, Aaron: el bot esta para quitar carga a los asesores).
                 related.related_questions(consulta.text, fragments, retrieved.candidates),
             )
         )

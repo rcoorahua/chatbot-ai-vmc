@@ -394,11 +394,18 @@ Reflejadas en PLAN.md §2/§4/§9 y REQUERIMENTS.md §6. Código: `core/auth.py`
   botones sí/no son la respuesta a ESA pregunta, no un botón de asesor, y se entienden
   también escritos); (c) "quiero un asesor" escrito de la nada sí pasa por el orquestador
   (reglas o modelo) y termina en el mismo sitio. Lo único que distingue al anónimo es la
-  respuesta final (`_offer_handoff_form`): iniciar sesión en vez del formulario. **(2026-09-08)**
-  El redactor **no anuncia** al asesor ni el botón: la regla 8 de `WRITER_SYSTEM` decía "si el
-  contexto manda a contactarnos, di que puede pedir un asesor con el botón Contactar asesor", y
-  en "¿cómo me registro?" lo dijo porque un fragmento vecino hablaba de contactarnos. Ahora el
-  asesor está siempre debajo como mensaje sugerido y el texto solo lo ofrece si no puede resolver. El lado
+  respuesta final (`_offer_handoff_form`): iniciar sesión en vez del formulario.
+  **REVISADA el 2026-09-08 (Aaron): bajo una respuesta CON evidencia ya no se ofrece asesor.**
+  (a) El redactor no lo nombra — la regla 8 de `WRITER_SYSTEM` decía "si el contexto manda a
+  contactarnos, di que puede pedir un asesor con el botón Contactar asesor" y salía en "¿cómo me
+  registro?" porque lo decía un fragmento vecino; (b) `related.related_metadata` ya **no** cierra
+  la lista con "Contactar asesor" (y sin preguntas hermanas devuelve `{}`, sin botones). Motivo
+  de fondo: el bot existe para QUITAR carga a los asesores, y ofrecer una persona en cada
+  respuesta empuja al revés. Quedan dos vías, las dos intencionales: el usuario lo pide (reglas
+  o modelo) o el bot **no tiene evidencia** y pregunta sí/no (`HANDOFF_CONFIRM`). Cuando el bot
+  resuelve no ofrece a nadie; cuando no puede, lo ofrece él. `related.is_advisor_click` y sus
+  constantes **se conservan**: las respuestas ya guardadas en DynamoDB traen ese botón y su clic
+  debe seguir abriendo el formulario en vez de degradarse a texto. El lado
   autenticado (formulario → caso → ticket) queda como está: Aaron lo revisará aparte. **Formulario del
   autenticado en un solo paso** (asunto, detalle y correo si el JWT no lo trajo; el "dos
   pasos" era por los cinco campos del anónimo) y **solo lo ofrece el bot**;

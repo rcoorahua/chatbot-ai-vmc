@@ -175,7 +175,17 @@ ASESOR = {
 }
 
 
-def test_la_metadata_lleva_la_consulta_de_cada_boton_y_cierra_con_el_de_asesor():
+def _metadata_con_asesor(*preguntas: str) -> dict:
+    """Una respuesta como las que quedaron GUARDADAS antes del 2026-09-08, con el mensaje
+    sugerido de asesor al final. Ya no se genera, pero sus clics tienen que seguir valiendo."""
+    meta = related.related_metadata(list(preguntas))
+    meta["interaction"]["options"].append(ASESOR)
+    return meta
+
+
+def test_la_metadata_lleva_la_consulta_de_cada_boton_y_ninguna_mas():
+    # 2026-09-08 (Aaron): la lista es SOLO preguntas del articulo. El asesor no se ofrece bajo
+    # una respuesta que si resolvio — el bot esta para quitarle carga a los asesores.
     meta = related.related_metadata(["¿A?", "¿B?"])
     assert meta == {
         "interaction": {
@@ -184,16 +194,22 @@ def test_la_metadata_lleva_la_consulta_de_cada_boton_y_cierra_con_el_de_asesor()
             "options": [
                 {"label": "¿A?", "value": "Q1", "query": "¿A?"},
                 {"label": "¿B?", "value": "Q2", "query": "¿B?"},
-                ASESOR,
             ],
         }
     }
-    # D-031: sin hermanas, el mensaje sugerido de asesor igual va al final de la respuesta.
-    assert related.related_metadata([])["interaction"]["options"] == [ASESOR]
 
 
-def test_el_boton_de_asesor_se_reconoce_por_estructura_y_no_tiene_consulta():
-    meta = related.related_metadata(["¿A?"])
+def test_sin_hermanas_la_respuesta_sale_sin_botones():
+    # Antes quedaba el de asesor solo; ahora no hay interaccion que dibujar. `{}` y no una
+    # lista vacia: con `interaction` presente el widget dibujaria un bloque vacio y
+    # `last_bot_open_question` (followups) trataria la respuesta como pregunta con botones.
+    assert related.related_metadata([]) == {}
+
+
+def test_el_boton_de_asesor_ya_guardado_se_reconoce_por_estructura():
+    # Respuestas anteriores al cambio siguen en DynamoDB con ese boton: un clic sobre una de
+    # ellas tiene que abrir el formulario, no degradarse a texto suelto.
+    meta = _metadata_con_asesor("¿A?")
     click = {"action_id": related.RELATED_ACTION_ID, "value": related.ADVISOR_OPTION_VALUE}
     assert related.resolve_click(click, meta) is None, "no es una pregunta hermana"
     assert related.is_advisor_click(click, meta) is True
@@ -203,6 +219,8 @@ def test_el_boton_de_asesor_se_reconoce_por_estructura_y_no_tiene_consulta():
     assert related.is_advisor_click(click, {"interaction": {"type": "QUICK_REPLIES"}}) is False
     assert related.is_advisor_click(click, None) is False
     assert related.is_advisor_click(None, meta) is False
+    # Y en una respuesta NUEVA ese value ya no existe: el clic no encuentra opcion.
+    assert related.is_advisor_click(click, related.related_metadata(["¿A?"])) is False
 
 
 def test_el_clic_se_resuelve_contra_la_metadata_del_bot():
