@@ -566,7 +566,11 @@ TD-006 **cerrada** (2026-08-24): la v0 (WhatsApp+Gemini) se eliminó del repo; b
   ERROR), así que en prod (INFO) los problemas saltan solos y el tráfico normal no. **Se
   instala AL FINAL en `api/main.py`**: `add_middleware` antepone, así que el último agregado es
   el más externo; instalado antes quedaba por dentro del authorizer de dev y sus 401 no dejaban
-  rastro. Nunca registra el cuerpo, la cabecera `Authorization` ni la query cruda: por ahí van
+  rastro. **El authorizer de dev, en cambio, va ANTES que CORS (2026-09-08)**: agregado primero
+  queda por DENTRO de `CORSMiddleware`, así sus 401 salen con `Access-Control-Allow-Origin`. Al
+  revés, el navegador descartaba el 401 como error de CORS y `fetch` fallaba con un TypeError:
+  la app del asesor decía "No se pudo conectar con el servidor" cuando lo que faltaba era el
+  token (`tests/test_api_cors.py` lo fija). Nunca registra el cuerpo, la cabecera `Authorization` ni la query cruda: por ahí van
   los mensajes, el formulario de handoff y el token de sesión. La ruta
   `GET /dev/conversations/{id}/ai-usage` (`api/routers/dev.py`) alimenta la consola de
   `widget/test.html`; con `DEV_OBSERVABILITY=0` (prod) responde 404. Nunca loguear contenido

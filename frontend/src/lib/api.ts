@@ -52,7 +52,9 @@ export class ApiError extends Error {
 export function apiErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) {
-      return "Sesión de asesor inválida o vencida. (dev: pega un token nuevo con setAdvisorToken() en la consola).";
+      // `setAdvisorToken` es un export del bundle: NO existe en la consola del navegador, asi
+      // que decirle al dev que lo llame no lo desbloquea. Se nombra la clave real.
+      return "Sesión de asesor inválida o vencida. (dev: genera un token con `python -m scripts.advisor_token` y guárdalo con localStorage.setItem('subastin_advisor_token', '<token>')).";
     }
     if (typeof err.detail === "string") return err.detail;
     if (err.detail && typeof err.detail === "object" && "detail" in err.detail) {
