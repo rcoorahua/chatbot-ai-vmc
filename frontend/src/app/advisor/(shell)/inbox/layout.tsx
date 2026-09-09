@@ -128,8 +128,11 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all(ALL_STATUSES.map((status) => getConversations({ status, limit: 100 })))
-      .then((byStatus) => {
+    async function load(): Promise<void> {
+      try {
+        const byStatus = await Promise.all(
+          ALL_STATUSES.map((status) => getConversations({ status, limit: 100 })),
+        );
         if (cancelled) return;
         const found = byStatus.flat();
         // El backend no promete un orden total entre estados abiertos y cerrados — el mismo
@@ -144,13 +147,30 @@ function InboxLayoutContent({ children }: { children: ReactNode }) {
             : b.last_message_at.localeCompare(a.last_message_at);
         });
         setResult({ conversations: sorted });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setResult({ error: apiErrorMessage(err) });
-      });
+      } catch (err) {
+        // Un fallo del sondeo no debe borrar una cola que ya cargó: solo se muestra el error
+        // si todavía no había lista (carga inicial).
+        if (!cancelled) {
+          setResult((prev) => (prev && "conversations" in prev ? prev : { error: apiErrorMessage(err) }));
+        }
+      }
+    }
+    void load(); // primera carga siempre
+    // Sondeo de la cola (TD-001: polling, no WebSocket): se re-carga cada 12 s para que un caso
+    // nuevo o un cambio de estado aparezca sin recargar. Salta el fetch con la pestaña oculta
+    // pero sigue reprogramando (así revive al volver); `setTimeout` encadenado y no `setInterval`
+    // para que un `Promise.all` lento (4 peticiones) no apile el siguiente ciclo.
+    let timer: ReturnType<typeof setTimeout>;
+    function tick(): void {
+      timer = setTimeout(async () => {
+        if (!document.hidden) await load();
+        if (!cancelled) tick();
+      }, 12_000);
+    }
+    tick();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, []);
 
