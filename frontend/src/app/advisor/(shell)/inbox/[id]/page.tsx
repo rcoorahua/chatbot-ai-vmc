@@ -21,7 +21,20 @@ import type { Conversation, Message } from "@/lib/types";
  *
  * ponytail: solo el último `getMessages` (20 mensajes, sin paginar) — `has_more`/`next_before`
  * ya vienen del backend; agregar "ver anteriores" cuando haga falta, no antes.
+ *
+ * El hilo se sondea (TD-001: polling, no WebSocket): tras la carga inicial, un bucle pide
+ * `getMessages(id, { after })` cada 4 s y hace append de lo nuevo — sin esto el asesor no ve
+ * los mensajes del usuario ni del bot hasta recargar. Pausa con la pestaña oculta.
  */
+
+/** Añade solo los mensajes cuyo `message_id` no está ya en la lista. Lo usan el sondeo y el
+ *  envío del asesor: sin el dedupe, el eco del propio POST y el que trae el siguiente tick se
+ *  duplican si se cruzan. */
+function appendNuevos(prev: Message[], entrantes: Message[]): Message[] {
+  const vistos = new Set(prev.map((m) => m.message_id));
+  const nuevos = entrantes.filter((m) => !vistos.has(m.message_id));
+  return nuevos.length ? [...prev, ...nuevos] : prev;
+}
 export default function ConversationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { advisor } = useAdvisor();
@@ -45,6 +58,9 @@ export default function ConversationDetailPage() {
 
   const loading = loadedId !== id && loadError?.id !== id;
 
+  // SK del último mensaje entregado — cursor del sondeo (`getMessages(..., { after })`).
+  const afterRef = useRef<string | null>(null);
+
   // El hilo abre abajo, en lo ULTIMO que se dijo: es lo que el asesor necesita leer primero.
   // Sin esto el contenedor arranca arriba (en el mensaje mas viejo) y hay que bajar a mano.
   // `scrollTop` directo y no `scrollIntoView`: mueve solo este contenedor, no la pagina.
@@ -61,6 +77,7 @@ export default function ConversationDetailPage() {
         if (cancelled) return;
         setConversation(page.conversation);
         setMessages(page.messages);
+        afterRef.current = page.next_after;
         setLoadedId(id);
       })
       .catch((err: unknown) => {
@@ -71,6 +88,38 @@ export default function ConversationDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  // Sondeo del hilo (TD-001). El backend ya da el cursor incremental (`after=` → `next_after`);
+  // acá solo se llama en bucle, se hace append de lo nuevo (dedupe por `message_id`, así el eco
+  // del propio envío no duplica) y se refresca la conversación (estado, no leídos). `setTimeout`
+  // recursivo y no `setInterval`: una petición lenta no apila la siguiente.
+  useEffect(() => {
+    if (loadedId !== id) return; // espera a la carga inicial de este id
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function tick(): Promise<void> {
+      if (!stop && !document.hidden && afterRef.current) {
+        try {
+          const page = await getMessages(id, { after: afterRef.current });
+          if (!stop) {
+            setConversation(page.conversation);
+            if (page.messages.length) {
+              setMessages((prev) => appendNuevos(prev, page.messages));
+              afterRef.current = page.next_after ?? afterRef.current;
+            }
+          }
+        } catch {
+          /* transitorio — el próximo tick reintenta */
+        }
+      }
+      if (!stop) timer = setTimeout(() => void tick(), 4000);
+    }
+    timer = setTimeout(() => void tick(), 4000);
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [id, loadedId]);
 
   function senderLabelFor(message: Message): string {
     if (message.sender_type === "USER") return conversation?.user_name ?? "Usuario";
@@ -112,7 +161,8 @@ export default function ConversationDetailPage() {
     setSendFailure(null);
     try {
       const { message } = await postAdvisorMessage(id, clientMessageId, content);
-      setMessages((prev) => [...prev, message]);
+      setMessages((prev) => appendNuevos(prev, [message]));
+      afterRef.current = message.message_key; // el propio envío ya es el último: el sondeo no lo re-trae
       setDraft("");
     } catch (err) {
       // Mismo client_message_id: reintentar no duplica (RF-037/038), sea cual sea el error.
