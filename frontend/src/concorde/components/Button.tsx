@@ -497,11 +497,6 @@ const BUTTON_STYLES = `
   font-weight: 700;
   opacity: 0.92;
 }
-/* Debajo de sm el nombre se esconde (mismo patrón que "Bienvenido,") — sin texto,
-   el padding derecho de 16px sobra y deja el círculo descentrado dentro del pill. */
-@media (max-width: 639.98px) {
-  .pvbtn-auth-d { padding: 0 4px; gap: 0; }
-}
 
 /* ── prefers-reduced-motion ──────────────────────────────────────────── */
 /* ── negotiable (teal → vault) · sync EXACTO del SVG export de Figma ────
@@ -846,6 +841,28 @@ export function UserIcon(): JSX.Element {
   );
 }
 
+// Ícono calendario — paths EXACTOS del SVG de Figma (Secondary/Small "Agenda tu visita").
+// stroke currentColor → en pressed hereda #e1e3e2 igual que en Figma.
+export function CalendarIcon(): JSX.Element {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="6" y="7" width="12" height="11" rx="2" />
+      <path d="M6 11h12" />
+      <path d="M9 5.5v3" />
+      <path d="M15 5.5v3" />
+    </svg>
+  );
+}
 
 // ── Variant → class map ───────────────────────────────────────────────────
 
@@ -889,13 +906,8 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     content = (
       <>
         {icon ? <span className="pvbtn-auth-d-icon">{icon}</span> : null}
-        {/* Bajo `sm` solo queda el avatar: "Bienvenido, {nombre}" completo ya no cabe
-            junto al nav y forzaba el pill a su propia fila (ver globals.css/mobile).
-            El nombre usa sr-only (no hidden): sigue anunciándose a lectores de pantalla
-            aunque visualmente desaparezca — "hidden" lo sacaría también del árbol de a11y
-            y el botón quedaría sin nombre accesible en mobile. */}
-        <span className="hidden sm:inline">Bienvenido,&nbsp;</span>
-        <span className="pvbtn-auth-d-username sr-only sm:not-sr-only sm:inline">{username ?? children}</span>
+        Bienvenido,{" "}
+        <span className="pvbtn-auth-d-username">{username ?? children}</span>
       </>
     );
   } else {

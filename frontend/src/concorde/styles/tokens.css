@@ -1,0 +1,61 @@
+/**
+ * tokens.css — Set de tokens central de Voyager DS (consumido por todos los componentes Concorde)
+ *
+ * FUENTE DE VERDAD: variables de Figma (vía /concorde-sync).
+ * Estos valores son la SEMILLA tomada de .claude/concorde/token-map.json (extraídos del
+ * preview de Voyager). El paso 2 (concorde-sync → Agent C) los sobrescribe con los valores
+ * reales de Figma, y al ser un único :root, el cambio se propaga a TODOS los componentes.
+ *
+ * Regla: los componentes referencian estas variables con fallback —
+ *   color: var(--vmc-color-orange-600, oklch(0.72 0.16 55));
+ * Editar AQUÍ (no en cada componente) cuando cambie un valor sistémico de color/tipografía/spacing.
+ */
+
+:root {
+  /* ── Color · brand orange ── (hex exactos de Figma · component set Button) ─ */
+  --vmc-color-orange-700: #d46e20; /* Primary/Pressed stop-a */
+  --vmc-color-orange-600: #ed8936; /* Primary/Default stop-a */
+  --vmc-color-orange-400: #fbc47d; /* Primary/Hover   stop-a */
+  --vmc-color-orange-900: #b73700; /* Ghost/Outline Pressed stop-b */
+
+  /* ── Color · vault (purple) ── (hex exactos de Figma) ─────────────────── */
+  --vmc-color-vault-900: #22005c; /* Secondary/Pressed stop-b */
+  --vmc-color-vault-700: #3b1782; /* Secondary/Default stop-b */
+  --vmc-color-vault-600: #5a35c2; /* Primary/Pressed stop-b · Secondary/Hover stop-b */
+  --vmc-color-vault-500: #8460e5; /* Primary/Default stop-b · Secondary/Default stop-a */
+  --vmc-color-vault-400: #ae8eff; /* Primary/Hover stop-b · Secondary/Hover stop-a */
+  --vmc-color-vault-300: oklch(0.82 0.13 285);
+  --vmc-color-vault-200: oklch(0.87 0.09 285);
+
+  /* ── Color · teal (Negotiable) ── (hex exactos de Figma) ──────────────── */
+  --vmc-color-teal-600: #009095; /* Negotiable/Pressed stop-a */
+  --vmc-color-teal-500: #00aeb1; /* Negotiable/Default stop-a */
+  --vmc-color-teal-400: #00cccc; /* Negotiable/Hover   stop-a */
+
+  /* ── Color · ghost/outline tints ──────────────────────────────────────── */
+  --vmc-color-orange-tint: #fff0e2; /* Ghost/Outline Hover stop-b */
+
+  /* ── Color · neutral / base ───────────────────────────────────────────── */
+  --vmc-color-base-white: #ffffff;
+  --vmc-color-neutral-400: oklch(0.72 0.02 220);
+  --vmc-color-neutral-700: #99a1af;
+  --vmc-color-background-disabled: #e1e3e2;
+  --vmc-color-icon-disabled: #e1e3e2;
+
+  /* ── Radius ───────────────────────────────────────────────────────────── */
+  --vmc-radius-full: 9999px;
+
+  /* ── Tipografía ───────────────────────────────────────────────────────── */
+  /* --vmc-font-display lo define next/font en layout.tsx (Plus Jakarta Sans) */
+  --vmc-text-label-lg: 15px; /* Button md  · weight 600 */
+  --vmc-text-label-md: 14px; /* Button sm  · weight 600 */
+
+  /* ── Spacing · escala de componentes ──────────────────────────────────── */
+  --vmc-space-button-px-md: 56px;
+  --vmc-space-button-px-ghost: 28px;
+  --vmc-space-button-height-md: 48px;
+  --vmc-space-button-height-sm: 40px;
+  --vmc-space-likebutton-size-sm: 32px;
+  --vmc-space-likebutton-size-md: 44px;
+  --vmc-space-likebutton-size-lg: 60px;
+}

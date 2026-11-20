@@ -96,7 +96,7 @@ function MiniBars({ rows, color }: { rows: { label: string; value: number }[]; c
 }
 
 function StatTile({ value, label, hint, tone }: { value: string; label: string; hint: string; tone: Tone }) {
-  const bg = tone === "alert" ? STATUS_BG.PENDING_ADVISOR : tone === "ok" ? STATUS_BG.IN_ATTENTION : "#ffffff";
+  const bg = tone === "alert" ? STATUS_BG.PENDING_ADVISOR : tone === "ok" ? STATUS_BG.IN_ATTENTION : "var(--vmc-color-base-white)";
   const num =
     tone === "alert" ? STATUS_DEEP_COLOR.PENDING_ADVISOR : tone === "ok" ? STATUS_DEEP_COLOR.IN_ATTENTION : INK;
   return (

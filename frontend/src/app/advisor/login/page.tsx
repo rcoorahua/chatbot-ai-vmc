@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Button from "@/concorde/components/Button";
+import { Button } from "@/concorde";
 
 /**
  * Mock de login — RF-006: cuentas de asesor por invitación + Cognito. No hay Cognito real
@@ -18,7 +18,7 @@ export default function AdvisorLoginPage() {
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.06]"
         style={{
-          backgroundImage: "radial-gradient(circle, #ffffff 1px, transparent 1px)",
+          backgroundImage: "radial-gradient(circle, var(--vmc-color-base-white) 1px, transparent 1px)",
           backgroundSize: "24px 24px",
         }}
         aria-hidden
