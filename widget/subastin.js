@@ -2801,8 +2801,8 @@
 
   const CSS = `
     /* ── Design system Concorde/VMC ───────────────────────────────────────────────────────
-       Los tokens son los mismos de frontend/src/app/globals.css (vault, orange, teal) para que
-       el widget y la app del asesor se vean del mismo producto. Van como variables locales y no
+       Los tokens --vmc-* son los de Concorde (tokens.css), los mismos que importa la app del
+       asesor, para que el widget y el panel se vean del mismo producto. Van como variables locales y no
        heredadas de la pagina: el widget se embebe en VMC y :host { all: initial } corta toda
        herencia a proposito, para que el CSS del anfitrion no lo deforme.
        Patrones tomados de src/concorde/: borde en gradiente (doble background-image con
@@ -2811,15 +2811,23 @@
     :host { all: initial; }
     * { box-sizing: border-box; }
     .root {
-      --vault-400: #ae8eff; --vault-500: #8460e5; --vault-600: #5a35c2;
-      --vault-700: #3b1782; --vault-900: #22005c;
-      --orange-400: #fbc47d; --orange-600: #ed8936; --orange-700: #d46e20;
-      --teal-500: #00aeb1;
+      /* Escala de Concorde, mismos nombres y valores que src/styles/tokens.css de
+         AaronCoorahua/ConcordeV2 master (copiada en frontend/src/concorde/styles/tokens.css).
+         Al cambiar un valor alla, se cambia aqui. */
+      --vmc-color-orange-900: #b73700; --vmc-color-orange-700: #d46e20;
+      --vmc-color-orange-600: #ed8936; --vmc-color-orange-400: #fbc47d;
+      --vmc-color-orange-tint: #fff0e2;
+      --vmc-color-vault-900: #22005c; --vmc-color-vault-700: #3b1782;
+      --vmc-color-vault-600: #5a35c2; --vmc-color-vault-500: #8460e5;
+      --vmc-color-vault-400: #ae8eff;
+      --vmc-color-teal-600: #009095; --vmc-color-teal-500: #00aeb1; --vmc-color-teal-400: #00cccc;
+      --vmc-color-base-white: #ffffff; --vmc-color-neutral-700: #99a1af;
+      --vmc-radius-full: 9999px;
+      --vmc-font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       /* "Live": el magenta→rosa de VMC (alert card / En Vivo), compartido con Concorde. */
       --live-500: #cc00ff; --live-600: #ff0066;
       --ink: #191c1c; --ink-soft: #55556a; --ink-faint: #7a7a8c;
-      --surface: #ffffff; --surface-soft: #f7f7fb; --line: #ececf3;
-      --radius-pill: 9999px;
+      --surface: var(--vmc-color-base-white); --surface-soft: #f7f7fb; --line: #ececf3;
       /* Una sola curva para todo el widget: distintas velocidades, misma personalidad. */
       --ease: cubic-bezier(.25, .8, .25, 1);
       /* Salida larga y sin rebote para hover: el movimiento se frena solo en vez de chocar. */
@@ -2828,23 +2836,23 @@
       --ease-press: cubic-bezier(.34, .8, .3, 1);
       --shadow-vault: 0 12px 30px rgba(32, 0, 104, .13);
       --shadow-card: 0 2px 10px rgba(32, 0, 104, .08);
-      font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: var(--vmc-font-display);
       font-size: 15px; line-height: 1.5; color: var(--ink);
       -webkit-font-smoothing: antialiased;
     }
     button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
-    :focus-visible { outline: 2px solid var(--vault-500); outline-offset: 2px; }
+    :focus-visible { outline: 2px solid var(--vmc-color-vault-500); outline-offset: 2px; }
 
     /* ── Boton flotante ──────────────────────────────────────────────────────────────────
        Mismo lenguaje que el boton primario de Concorde: relleno en gradiente vault, borde en
        gradiente y halo desenfocado que aparece al pasar el cursor. */
     .launcher {
       position: fixed; right: 20px; bottom: 20px; width: 60px; height: 60px;
-      border-radius: var(--radius-pill); border: 2px solid transparent;
-      color: #fff; display: grid; place-items: center; z-index: 2147483000;
+      border-radius: var(--vmc-radius-full); border: 2px solid transparent;
+      color: var(--vmc-color-base-white); display: grid; place-items: center; z-index: 2147483000;
       background-image:
-        linear-gradient(150deg, var(--vault-500) 0%, var(--vault-700) 100%),
-        linear-gradient(135deg, #cfbaff 0%, #ffffff 35%, var(--vault-400) 65%, #cfbaff 100%);
+        linear-gradient(150deg, var(--vmc-color-vault-500) 0%, var(--vmc-color-vault-700) 100%),
+        linear-gradient(135deg, #cfbaff 0%, var(--vmc-color-base-white) 35%, var(--vmc-color-vault-400) 65%, #cfbaff 100%);
       background-origin: padding-box, border-box;
       background-clip: padding-box, border-box;
       box-shadow: rgba(255, 255, 255, .22) 0 1px 0 2px inset, rgba(32, 0, 104, .32) 0 8px 22px;
@@ -2871,9 +2879,9 @@
     .launcher.is-open .launcher-icon { transform: scale(1.06); }
     .badge {
       position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; padding: 0 6px;
-      border-radius: var(--radius-pill); border: 2px solid #fff;
-      background: linear-gradient(150deg, var(--orange-600), var(--orange-700));
-      color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center;
+      border-radius: var(--vmc-radius-full); border: 2px solid var(--vmc-color-base-white);
+      background: linear-gradient(150deg, var(--vmc-color-orange-600), var(--vmc-color-orange-700));
+      color: var(--vmc-color-base-white); font-size: 12px; font-weight: 700; display: grid; place-items: center;
       box-shadow: 0 2px 8px rgba(212, 110, 32, .45);
     }
     /* Sin esto el atributo hidden no gana al display del selector de clase. */
@@ -2919,9 +2927,9 @@
        negativo): da profundidad sin sombras pesadas. */
     .home { background: var(--surface-soft); }
     .home-header {
-      position: relative; overflow: hidden; padding: 22px 22px 34px; color: #fff;
+      position: relative; overflow: hidden; padding: 22px 22px 34px; color: var(--vmc-color-base-white);
       border-radius: 0 0 24px 24px;
-      background-image: linear-gradient(150deg, var(--vault-500) 0%, var(--vault-700) 58%, var(--vault-900) 100%);
+      background-image: linear-gradient(150deg, var(--vmc-color-vault-500) 0%, var(--vmc-color-vault-700) 58%, var(--vmc-color-vault-900) 100%);
     }
     .home-header::after {
       content: ""; position: absolute; inset: -60% -10% auto -10%; height: 220px;
@@ -2961,15 +2969,15 @@
     /* Igual que el boton primario de Concorde: naranja que vira a vault, con brillo al pasar. */
     .cta-icon {
       position: relative; overflow: hidden; width: 38px; height: 38px; flex: none;
-      border-radius: var(--radius-pill); color: #fff; display: grid; place-items: center;
+      border-radius: var(--vmc-radius-full); color: var(--vmc-color-base-white); display: grid; place-items: center;
       transform: rotate(90deg);
-      background-image: linear-gradient(160deg, var(--orange-600) 0%, var(--orange-600) 40%, var(--vault-500) 100%);
+      background-image: linear-gradient(160deg, var(--vmc-color-orange-600) 0%, var(--vmc-color-orange-600) 40%, var(--vmc-color-vault-500) 100%);
       box-shadow: rgba(255, 255, 255, .28) 0 1px 0 1px inset, rgba(237, 137, 54, .3) 0 2px 8px;
       transition: box-shadow .34s var(--ease-soft), transform .34s var(--ease-soft);
     }
     .cta-icon::before {
       content: ""; position: absolute; inset: 0; border-radius: inherit;
-      background-image: linear-gradient(220deg, var(--orange-400) 0%, var(--vault-400) 100%);
+      background-image: linear-gradient(220deg, var(--vmc-color-orange-400) 0%, var(--vmc-color-vault-400) 100%);
       opacity: 0; transition: opacity .3s var(--ease);
     }
     .cta-icon svg { position: relative; z-index: 1; }
@@ -2979,7 +2987,7 @@
       box-shadow: rgba(255,255,255,.28) 0 1px 0 1px inset, rgba(132, 96, 229, .3) 0 8px 20px;
     }
     .search { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 6px 0; font-weight: 600; color: var(--ink); }
-    .search svg { color: var(--vault-500); transition: transform .3s var(--ease-soft); }
+    .search svg { color: var(--vmc-color-vault-500); transition: transform .3s var(--ease-soft); }
     .search:hover svg { transform: scale(1.1); }
     .list { list-style: none; margin: 0; padding: 0; }
     .list li { border-top: 1px solid var(--line); }
@@ -2991,7 +2999,7 @@
     .list li > button:hover { background: rgba(132, 96, 229, .06); padding-left: 9px; }
     .list li > button:active { background: rgba(132, 96, 229, .11); transition-duration: .12s; }
     .list li > button small { display: block; color: var(--ink-faint); font-size: 12.5px; }
-    .list li > button svg { color: var(--vault-500); flex: none; transition: transform .3s var(--ease-soft); }
+    .list li > button svg { color: var(--vmc-color-vault-500); flex: none; transition: transform .3s var(--ease-soft); }
     .list li > button:hover svg { transform: translateX(4px); }
     .list-nested { margin-left: 14px; }
     .muted { color: var(--ink-faint); margin: 8px 0 0; font-size: 13.5px; }
@@ -3000,8 +3008,8 @@
     .banner p { margin: 0 0 6px; }
     .banner-error { background: #fff1f0; color: #8a1c12; }
     .banner-warn { background: #fff8e6; color: #7a5200; }
-    .link { color: var(--vault-600); text-decoration: underline; font-weight: 600; transition: color .18s var(--ease); }
-    .link:hover { color: var(--vault-500); }
+    .link { color: var(--vmc-color-vault-600); text-decoration: underline; font-weight: 600; transition: color .18s var(--ease); }
+    .link:hover { color: var(--vmc-color-vault-500); }
 
     /* ── Barras superiores ───────────────────────────────────────────────────────────────
        Cabecera clara con una linea de acento vault: separa sin el peso de un borde gris. */
@@ -3017,16 +3025,16 @@
     .status-line { display: flex; align-items: center; gap: 5px; }
     .status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, .55); animation: status-pulse 2s infinite; }
     .icon-btn {
-      width: 36px; height: 36px; border-radius: var(--radius-pill); display: grid; place-items: center;
+      width: 36px; height: 36px; border-radius: var(--vmc-radius-full); display: grid; place-items: center;
       color: var(--ink-soft); flex: none;
       transition: background-color .26s var(--ease-soft), color .26s var(--ease-soft), transform .26s var(--ease-soft);
     }
-    .icon-btn:hover { background: rgba(132, 96, 229, .09); color: var(--vault-600); }
+    .icon-btn:hover { background: rgba(132, 96, 229, .09); color: var(--vmc-color-vault-600); }
     .icon-btn:active { transform: scale(.94); transition-duration: .14s; }
     .avatar {
-      width: 36px; height: 36px; border-radius: var(--radius-pill); color: #fff; font-weight: 700;
+      width: 36px; height: 36px; border-radius: var(--vmc-radius-full); color: var(--vmc-color-base-white); font-weight: 700;
       display: grid; place-items: center; flex: none;
-      background-image: linear-gradient(150deg, var(--vault-500), var(--vault-700));
+      background-image: linear-gradient(150deg, var(--vmc-color-vault-500), var(--vmc-color-vault-700));
       box-shadow: 0 2px 8px rgba(32, 0, 104, .22);
     }
     .avatar-lg {
@@ -3050,7 +3058,7 @@
       overflow-anchor: auto;
     }
     .thread::-webkit-scrollbar, .home-body::-webkit-scrollbar, .help-body::-webkit-scrollbar, .article::-webkit-scrollbar { width: 8px; }
-    .thread::-webkit-scrollbar-thumb, .home-body::-webkit-scrollbar-thumb, .help-body::-webkit-scrollbar-thumb, .article::-webkit-scrollbar-thumb { background: rgba(132, 96, 229, .22); border-radius: var(--radius-pill); }
+    .thread::-webkit-scrollbar-thumb, .home-body::-webkit-scrollbar-thumb, .help-body::-webkit-scrollbar-thumb, .article::-webkit-scrollbar-thumb { background: rgba(132, 96, 229, .22); border-radius: var(--vmc-radius-full); }
     .thread::-webkit-scrollbar-thumb:hover, .home-body::-webkit-scrollbar-thumb:hover { background: rgba(132, 96, 229, .38); }
     .ready { text-align: center; color: var(--ink-faint); font-size: 13.5px; margin-bottom: 10px; }
     .day { align-self: center; font-size: 11.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
@@ -3072,14 +3080,14 @@
     .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; max-width: 82%; }
     .quick-replies.is-new { animation: greeting-in .4s var(--ease-soft) both; }
     .qr {
-      border: 1.5px solid var(--vault-500); background: var(--surface); color: var(--vault-600);
-      border-radius: var(--radius-pill); padding: 8px 15px; font: inherit; font-size: 14px;
+      border: 1.5px solid var(--vmc-color-vault-500); background: var(--surface); color: var(--vmc-color-vault-600);
+      border-radius: var(--vmc-radius-full); padding: 8px 15px; font: inherit; font-size: 14px;
       font-weight: 600; cursor: pointer;
       transition: background-color .18s var(--ease), color .18s var(--ease), transform .18s var(--ease);
     }
-    .qr:hover { background: var(--vault-500); color: #fff; transform: translateY(-1px); }
+    .qr:hover { background: var(--vmc-color-vault-500); color: var(--vmc-color-base-white); transform: translateY(-1px); }
     .qr:active { transform: none; }
-    .qr-solid { background: var(--vault-500); color: #fff; }
+    .qr-solid { background: var(--vmc-color-vault-500); color: var(--vmc-color-base-white); }
     .qr-solid:disabled { opacity: .6; cursor: default; transform: none; }
     /* Un enlace con la misma pinta que un boton (D-031: "Iniciar sesión"). */
     a.qr { display: inline-flex; align-items: center; text-decoration: none; }
@@ -3098,9 +3106,9 @@
     .sources-label { flex: none; }
     .source-link {
       display: inline-flex; align-items: center; gap: 3px; min-width: 0;
-      color: var(--vault-600); text-decoration: underline; text-underline-offset: 2px;
+      color: var(--vmc-color-vault-600); text-decoration: underline; text-underline-offset: 2px;
     }
-    .source-link:hover { color: var(--vault-700); }
+    .source-link:hover { color: var(--vmc-color-vault-700); }
     .source-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .source-link svg { flex: none; opacity: .7; }
     /* Texto de la burbuja en bloques (D-030): pasos con sangria colgante y aire entre ellos,
@@ -3108,7 +3116,7 @@
     .bubble-text { display: block; }
     .bubble-text .line, .bubble-text .li { display: block; }
     .bubble-text .li { display: flex; gap: 6px; margin-top: 5px; }
-    .bubble-text .li-n { flex: none; font-weight: 600; color: var(--vault-600); }
+    .bubble-text .li-n { flex: none; font-weight: 600; color: var(--vmc-color-vault-600); }
     .bubble-mine .bubble-text .li-n { color: rgba(255, 255, 255, .85); }
     .bubble-text .li-t { min-width: 0; }
     .bubble-text .after-gap { margin-top: 10px; }
@@ -3117,7 +3125,7 @@
     .bubble-text .li .stamp { float: none; margin: 0 -3px -2px auto; align-self: flex-end; }
     .banner-anon {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      background: rgba(132, 96, 229, .08); color: var(--vault-700);
+      background: rgba(132, 96, 229, .08); color: var(--vmc-color-vault-700);
     }
     .banner-anon .link { flex: none; }
     /* ── Formulario de asesor (D-029; rediseño D-030) ── */
@@ -3138,10 +3146,10 @@
     .form-head strong { font-size: 15px; }
     .form-close {
       flex: none; width: 28px; height: 28px; margin: -4px -6px 0 0; display: grid; place-items: center;
-      border: 0; background: none; border-radius: var(--radius-pill); color: var(--ink-faint); cursor: pointer;
+      border: 0; background: none; border-radius: var(--vmc-radius-full); color: var(--ink-faint); cursor: pointer;
       transition: background-color .18s var(--ease), color .18s var(--ease);
     }
-    .form-close:hover { background: rgba(132, 96, 229, .1); color: var(--vault-600); }
+    .form-close:hover { background: rgba(132, 96, 229, .1); color: var(--vmc-color-vault-600); }
     .form-card .req { color: #d64545; font-weight: 700; }
     @keyframes form-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
     .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -3151,7 +3159,7 @@
       font: inherit; font-size: 14px; color: inherit; background: var(--surface); width: 100%;
       border: 1.5px solid var(--line-strong); border-radius: 12px; padding: 9px 11px;
     }
-    .form-card input:focus, .form-card textarea:focus { outline: none; border-color: var(--vault-500); }
+    .form-card input:focus, .form-card textarea:focus { outline: none; border-color: var(--vmc-color-vault-500); }
     .form-card .is-invalid { border-color: #d64545; }
     .form-card textarea { min-height: 72px; resize: vertical; }
     .form-error { margin: 0; color: #8a1c12; font-size: 12.5px; }
@@ -3166,7 +3174,7 @@
     .inbox-row { display: flex; align-items: center; gap: 12px; width: 100%; }
     .inbox-icon {
       display: inline-flex; width: 40px; height: 40px; border-radius: 50%; flex: none;
-      align-items: center; justify-content: center; background: rgba(132, 96, 229, .1); color: var(--vault-600);
+      align-items: center; justify-content: center; background: rgba(132, 96, 229, .1); color: var(--vmc-color-vault-600);
     }
     .inbox-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
     .inbox-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
@@ -3174,8 +3182,8 @@
     .inbox-time { color: var(--ink-faint); font-size: 12px; flex: none; }
     .inbox-preview { color: var(--ink-soft); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chip {
-      flex: none; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill);
-      background: rgba(237, 137, 54, .15); color: var(--orange-700);
+      flex: none; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--vmc-radius-full);
+      background: rgba(237, 137, 54, .15); color: var(--vmc-color-orange-700);
     }
     .chip-live { background: rgba(20, 160, 130, .15); color: #0f6f5c; }
     .chip-closed { background: rgba(0, 0, 0, .07); color: var(--ink-faint); }
@@ -3187,8 +3195,8 @@
     .jump {
       position: absolute; right: 14px; bottom: 14px; z-index: 2;
       display: flex; align-items: center; gap: 5px; padding: 6px 12px 6px 9px;
-      border-radius: var(--radius-pill); color: #fff; font-size: 12.5px; font-weight: 700;
-      background-image: linear-gradient(150deg, var(--vault-500), var(--vault-700));
+      border-radius: var(--vmc-radius-full); color: var(--vmc-color-base-white); font-size: 12.5px; font-weight: 700;
+      background-image: linear-gradient(150deg, var(--vmc-color-vault-500), var(--vmc-color-vault-700));
       box-shadow: 0 6px 18px rgba(32, 0, 104, .3);
       animation: jump-in .3s var(--ease-soft) both;
       transition: transform .3s var(--ease-soft), box-shadow .3s var(--ease-soft);
@@ -3211,12 +3219,12 @@
     .row.is-first:not(.row-mine) .bubble { border-top-left-radius: 6px; }
     .row.is-first.row-mine .bubble { border-top-right-radius: 6px; }
     .bubble-mine {
-      color: #fff; border: 0; padding: 8px 13px 8px 12px;
-      background-image: linear-gradient(150deg, var(--vault-500) 0%, var(--vault-700) 100%);
+      color: var(--vmc-color-base-white); border: 0; padding: 8px 13px 8px 12px;
+      background-image: linear-gradient(150deg, var(--vmc-color-vault-500) 0%, var(--vmc-color-vault-700) 100%);
       box-shadow: 0 2px 8px rgba(32, 0, 104, .16);
     }
     /* Nombre del asesor: solo en el primer mensaje de su grupo (el bot no lo necesita). */
-    .bubble-who { display: block; font-size: 12.5px; font-weight: 700; color: var(--vault-600); margin-bottom: 2px; }
+    .bubble-who { display: block; font-size: 12.5px; font-weight: 700; color: var(--vmc-color-vault-600); margin-bottom: 2px; }
     .bubble-text { display: inline; }
     /* La hora va dentro de la burbuja, abajo a la derecha: flota, asi que si cabe se acomoda al
        final de la ultima linea y si no, baja sola. Es el comportamiento de WhatsApp. */
@@ -3240,7 +3248,7 @@
     .avatar.is-lottie > svg { width: 150% !important; height: 150% !important; flex: none; }
     .typing i {
       width: 7px; height: 7px; border-radius: 50%; display: block;
-      background: linear-gradient(150deg, var(--vault-500), var(--live-500));
+      background: linear-gradient(150deg, var(--vmc-color-vault-500), var(--live-500));
       animation: typing-dot 1.4s infinite var(--ease-soft);
     }
     .typing i:nth-child(2) { animation-delay: .18s; }
@@ -3255,7 +3263,7 @@
     }
     .spinner {
       display: block; width: 26px; height: 26px; border-radius: 50%;
-      border: 2.5px solid rgba(132, 96, 229, .22); border-top-color: var(--vault-500);
+      border: 2.5px solid rgba(132, 96, 229, .22); border-top-color: var(--vmc-color-vault-500);
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -3275,12 +3283,12 @@
     .composer { padding: 10px 12px 9px; border-top: 1px solid var(--line); background: var(--surface); }
     .composer-box {
       display: flex; flex-direction: column; border: 1.5px solid transparent; border-radius: 20px;
-      background-image: linear-gradient(#fff, #fff), linear-gradient(338deg, var(--vault-500) 0%, #fff8f1 100%);
+      background-image: linear-gradient(var(--vmc-color-base-white), var(--vmc-color-base-white)), linear-gradient(338deg, var(--vmc-color-vault-500) 0%, #fff8f1 100%);
       background-origin: border-box; background-clip: padding-box, border-box;
       transition: box-shadow .22s var(--ease), background-image .22s var(--ease);
     }
     .composer-box:focus-within {
-      background-image: linear-gradient(#fff, #fff), linear-gradient(148deg, var(--orange-600) 0%, var(--vault-500) 100%);
+      background-image: linear-gradient(var(--vmc-color-base-white), var(--vmc-color-base-white)), linear-gradient(148deg, var(--vmc-color-orange-600) 0%, var(--vmc-color-vault-500) 100%);
       box-shadow: rgba(237, 137, 54, .18) 0 2px 10px;
     }
     .composer-field { position: relative; min-width: 0; display: flex; }
@@ -3288,15 +3296,15 @@
     .composer-actions .send { margin-left: auto; }
     .tool {
       width: 36px; height: 36px; display: grid; place-items: center; flex: none;
-      border: 0; background: none; border-radius: var(--radius-pill); color: var(--ink-soft);
+      border: 0; background: none; border-radius: var(--vmc-radius-full); color: var(--ink-soft);
       cursor: pointer; transition: background-color .18s var(--ease), color .18s var(--ease);
     }
-    .tool:hover:not([disabled]) { background: rgba(132, 96, 229, .1); color: var(--vault-600); }
+    .tool:hover:not([disabled]) { background: rgba(132, 96, 229, .1); color: var(--vmc-color-vault-600); }
     .tool[disabled] { color: var(--ink-faint); opacity: .55; cursor: default; }
     /* El contador solo aparece cerca del tope (lo decide el JS) y se posa sobre el borde. */
     .counter {
       position: absolute; right: 12px; bottom: -7px; z-index: 1;
-      background: var(--surface); padding: 0 6px; border-radius: var(--radius-pill);
+      background: var(--surface); padding: 0 6px; border-radius: var(--vmc-radius-full);
       font-size: 11px; font-weight: 700; color: var(--ink-faint);
       animation: fade-in .2s var(--ease) both;
     }
@@ -3310,14 +3318,14 @@
     .composer textarea::placeholder { color: #6b7280; }
     .send {
       position: relative; overflow: hidden; width: 42px; height: 42px; flex: none;
-      border-radius: var(--radius-pill); color: #fff; display: grid; place-items: center;
-      background-image: linear-gradient(160deg, var(--orange-600) 0%, var(--orange-600) 40%, var(--vault-500) 100%);
+      border-radius: var(--vmc-radius-full); color: var(--vmc-color-base-white); display: grid; place-items: center;
+      background-image: linear-gradient(160deg, var(--vmc-color-orange-600) 0%, var(--vmc-color-orange-600) 40%, var(--vmc-color-vault-500) 100%);
       box-shadow: rgba(255, 255, 255, .28) 0 1px 0 1px inset, rgba(237, 137, 54, .3) 0 2px 8px;
       transition: transform .3s var(--ease-soft), box-shadow .34s var(--ease-soft);
     }
     .send::before {
       content: ""; position: absolute; inset: 0; border-radius: inherit;
-      background-image: linear-gradient(220deg, var(--orange-400) 0%, var(--vault-400) 100%);
+      background-image: linear-gradient(220deg, var(--vmc-color-orange-400) 0%, var(--vmc-color-vault-400) 100%);
       opacity: 0; transition: opacity .3s var(--ease);
     }
     .send svg { position: relative; z-index: 1; transition: transform .3s var(--ease-soft); }
@@ -3339,16 +3347,16 @@
     /* -1px para que la barra tape la linea del borde y no quede flotando sobre ella. */
     .nav-item::after {
       content: ""; position: absolute; top: -1px; left: 50%; width: 34px; height: 3px;
-      border-radius: 0 0 3px 3px; background: linear-gradient(90deg, var(--vault-500), var(--vault-700));
+      border-radius: 0 0 3px 3px; background: linear-gradient(90deg, var(--vmc-color-vault-500), var(--vmc-color-vault-700));
       transform: translate(-50%, -3px) scaleX(0); transform-origin: center;
       transition: transform .36s var(--ease-soft);
     }
-    .nav-item:hover { color: var(--vault-600); background: rgba(132, 96, 229, .045); }
+    .nav-item:hover { color: var(--vmc-color-vault-600); background: rgba(132, 96, 229, .045); }
     .nav-item:active { background: rgba(132, 96, 229, .09); transition-duration: .12s; }
     .nav-item svg { transition: transform .32s var(--ease-soft); }
     .nav-item:hover svg { transform: translateY(-2px); }
     .nav-item.is-active svg { transform: translateY(-1px); }
-    .nav-item.is-active { color: var(--vault-600); font-weight: 600; }
+    .nav-item.is-active { color: var(--vmc-color-vault-600); font-weight: 600; }
     .nav-item.is-active::after { transform: translate(-50%, 0) scaleX(1); }
 
     .help-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
