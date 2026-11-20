@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import Button, { UserIcon } from "@/concorde/components/Button";
+import { Button, UserIcon } from "@/concorde";
 import { clearAdvisorToken } from "@/lib/api";
 import { AdvisorProvider, useAdvisor } from "@/lib/advisor-context";
 
@@ -66,7 +66,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
     // la barra de scroll del navegador. <main> es el único que scrollea (si una pantalla como
     // Dashboard tiene más contenido del que cabe) — Bandeja, que sí cabe siempre, usa `h-full`
     // para llenar exactamente lo que <main> le da, sin calcular pixeles del header a mano.
-    <div className="flex h-dvh flex-col overflow-hidden bg-[#f7f7fb]">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <header className="z-20 flex flex-shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-black/5 bg-white px-4 py-3 sm:px-6">
         <div className="flex items-center gap-4 sm:gap-6">
           <p className="text-lg font-bold text-[color:var(--vmc-color-vault-700)]">Subastín</p>
@@ -93,6 +93,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
         <div ref={menuRef} className="relative">
           <Button
             variant="sm-logged-in"
+            className="advisor-user-pill"
             icon={<UserIcon />}
             username={error ? "Sin sesión" : (advisor?.name ?? advisor?.email ?? "…")}
             aria-haspopup="menu"

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import AvatarZone from "@/concorde/components/AvatarZone";
+import { AvatarZone } from "@/concorde";
 import { formatWaitTime, STATUS_LABEL } from "@/lib/format";
 import { STATUS_COLOR } from "@/lib/status-colors";
 import type { Conversation } from "@/lib/types";

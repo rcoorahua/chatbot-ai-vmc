@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Button from "@/concorde/components/Button";
+import { Button } from "@/concorde";
 
 /**
  * El widget público (RF-001) vive en widget/subastin.js, fuera de este proyecto (PLAN.md).

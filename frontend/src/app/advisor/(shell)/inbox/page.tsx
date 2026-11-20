@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import Button from "@/concorde/components/Button";
+import { Button } from "@/concorde";
 import { apiErrorMessage, getConversations } from "@/lib/api";
 import { formatWaitTime } from "@/lib/format";
 import type { Conversation } from "@/lib/types";

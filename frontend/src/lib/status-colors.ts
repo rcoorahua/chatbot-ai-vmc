@@ -1,15 +1,15 @@
 import type { ConversationStatus } from "./types";
 
 /**
- * UNA paleta por estado para el pill (StatusBadge), el punto de la cola (QueueRow) y las
+ * UNA paleta por estado para el pill de estado (dashboard), el punto de la cola (QueueRow) y las
  * barras del dashboard. Antes cada componente traia la suya y CLOSED ya tenia dos grises
  * distintos (#C7C9CC en la cola, #99A1AF en el dashboard; auditoria 2026-09-06).
  */
 export const STATUS_COLOR: Record<ConversationStatus, string> = {
-  BOT_ATTENDING: "#8460E5",
-  PENDING_ADVISOR: "#ED8936",
-  IN_ATTENTION: "#00AEB1",
-  CLOSED: "#99A1AF",
+  BOT_ATTENDING: "var(--vmc-color-vault-500)",
+  PENDING_ADVISOR: "var(--vmc-color-orange-600)",
+  IN_ATTENTION: "var(--vmc-color-teal-500)",
+  CLOSED: "var(--vmc-color-neutral-700)",
 };
 
 /** Fondo suave del pill. */
@@ -22,7 +22,7 @@ export const STATUS_BG: Record<ConversationStatus, string> = {
 
 /** Tono oscuro (texto del pill, cifras del dashboard): el unico seguro en contraste sobre blanco. */
 export const STATUS_DEEP_COLOR: Record<ConversationStatus, string> = {
-  BOT_ATTENDING: "#3B1782",
+  BOT_ATTENDING: "var(--vmc-color-vault-700)",
   PENDING_ADVISOR: "#9A4A0F",
   IN_ATTENTION: "#00696B",
   CLOSED: "#5C6266",

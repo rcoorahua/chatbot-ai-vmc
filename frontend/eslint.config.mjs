@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Concorde se instala tal cual desde su registry y no se edita aquí (src/concorde/index.ts):
+    // sus avisos se corrigen en AaronCoorahua/ConcordeV2, no en esta copia.
+    "src/concorde/components/**",
   ]),
 ]);
 

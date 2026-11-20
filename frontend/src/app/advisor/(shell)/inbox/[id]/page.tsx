@@ -3,15 +3,34 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import Button from "@/concorde/components/Button";
-import AvatarZone from "@/concorde/components/AvatarZone";
-import StatusBadge from "@/components/StatusBadge";
-import MessageBubble from "@/components/MessageBubble";
-import { ArrowLeftIcon, ChevronRightIcon, PaperclipIcon } from "@/components/icons";
+import { AvatarZone, Button, ChatBubble, StatusTag } from "@/concorde";
+import type { StatusTone } from "@/concorde";
+import { ArrowLeftIcon, ChevronRightIcon, ImageIcon, PaperclipIcon } from "@/components/icons";
 import { ApiError, apiErrorMessage, closeConversation, getMessages, postAdvisorMessage, takeConversation } from "@/lib/api";
 import { useAdvisor } from "@/lib/advisor-context";
-import { SENDER_LABEL, formatWaitTime, handoffReasonLabel } from "@/lib/format";
-import type { Conversation, Message } from "@/lib/types";
+import {
+  SENDER_LABEL,
+  STATUS_LABEL,
+  SYSTEM_EVENT_LABEL,
+  formatTimestamp,
+  formatWaitTime,
+  handoffReasonLabel,
+  linkify,
+} from "@/lib/format";
+import type { Conversation, ConversationStatus, Message } from "@/lib/types";
+
+/**
+ * StatusTag de Concorde solo trae dos tonos de texto (violeta «progress» y gris «wait»; «live»
+ * pinta un EN VIVO fijo de subasta). El texto del estado distingue los cuatro; el color por
+ * estado sigue en el punto de la cola (QueueRow). Si hace falta un tono por estado, se agrega
+ * en Concorde y se reinstala, no aquí.
+ */
+const STATUS_TONE: Record<ConversationStatus, StatusTone> = {
+  BOT_ATTENDING: "progress",
+  IN_ATTENTION: "progress",
+  PENDING_ADVISOR: "wait",
+  CLOSED: "wait",
+};
 
 /**
  * Vista de conversación del cockpit (RF-033/034/035/036/037/038). Vive dentro
@@ -180,11 +199,11 @@ export default function ConversationDetailPage() {
                 {conversation.user_name ?? "Usuario anónimo"}
               </p>
               <span className="mt-0.5 inline-flex sm:hidden">
-                <StatusBadge status={conversation.status} />
+                <StatusTag tone={STATUS_TONE[conversation.status]}>{STATUS_LABEL[conversation.status]}</StatusTag>
               </span>
             </div>
             <span className="hidden flex-shrink-0 sm:inline-flex">
-              <StatusBadge status={conversation.status} />
+              <StatusTag tone={STATUS_TONE[conversation.status]}>{STATUS_LABEL[conversation.status]}</StatusTag>
             </span>
           </div>
           {canReply && (
@@ -218,12 +237,50 @@ export default function ConversationDetailPage() {
                   prev.message_type === "SYSTEM" ||
                   prev.sender_type !== message.sender_type ||
                   prev.sender_id !== message.sender_id);
+              if (message.message_type === "SYSTEM") {
+                return (
+                  <div key={message.message_id} className="my-2 flex justify-center">
+                    <span className="rounded-full bg-neutral-200 px-3 py-1 text-xs font-medium text-neutral-600">
+                      {SYSTEM_EVENT_LABEL[message.content ?? ""] ?? message.content}
+                    </span>
+                  </div>
+                );
+              }
+              // Quien lee es el ASESOR: a la derecha (mine) va su lado —lo que escribió y lo que
+              // Subastín respondió por él—, a la izquierda el usuario. Quién habló lo dice la
+              // etiqueta de arriba, que solo sale cuando cambia el remitente.
+              // RF-039 excluye edición/borrado, búsqueda y "escribiendo": no agregarlas aquí.
+              const mine = message.sender_type === "ADVISOR" || message.sender_type === "BOT";
               return (
-                <MessageBubble
-                  key={message.message_id}
-                  message={message}
-                  senderLabel={showLabel ? senderLabelFor(message) : undefined}
-                />
+                <div key={message.message_id} className="flex flex-col gap-1">
+                  {showLabel && (
+                    <span className={`px-1 text-xs font-semibold text-neutral-500 ${mine ? "self-end" : ""}`}>
+                      {senderLabelFor(message)}
+                    </span>
+                  )}
+                  <ChatBubble
+                    mine={mine}
+                    time={formatTimestamp(message.created_at)}
+                    sender={showLabel ? undefined : senderLabelFor(message)}
+                  >
+                    {message.message_type === "IMAGE" ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <ImageIcon width={16} height={16} />
+                        Imagen adjunta
+                      </span>
+                    ) : (
+                      linkify(message.content ?? "").map((part, j) =>
+                        part.href ? (
+                          <a key={j} href={part.href} target="_blank" rel="noreferrer">
+                            {part.text}
+                          </a>
+                        ) : (
+                          <span key={j}>{part.text}</span>
+                        ),
+                      )
+                    )}
+                  </ChatBubble>
+                </div>
               );
             })}
 
